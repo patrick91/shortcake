@@ -16,4 +16,7 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
-dev = []
+dev = [
+    "pytest>=8.0.0",
+    "inline-snapshot>=0.13.0",
+]
