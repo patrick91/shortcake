@@ -4,6 +4,8 @@ import re
 import subprocess
 import typer
 
+from shortcake import config
+
 app = typer.Typer(help="Shortcake CLI - A CLI built with typer and uv")
 
 
@@ -54,10 +56,11 @@ def _generate_branch_name(commit_message: str, keep_emoji: bool = False) -> str:
 
 
 @app.command()
-def create(keep_emoji: bool = typer.Option(False, "--keep-emoji", "-e", help="Keep emojis in branch name")):
+def create():
     """Create a stack with a new branch and commit.
     
-    Supports emojis in commit messages. Use --keep-emoji to preserve them in branch names.
+    Supports emojis in commit messages. Emoji handling in branch names is controlled
+    by the keep_emoji configuration setting (use 'shortcake config set keep_emoji true/false').
     
     Note: Future enhancement will include gitmoji integration.
     """
@@ -67,6 +70,9 @@ def create(keep_emoji: bool = typer.Option(False, "--keep-emoji", "-e", help="Ke
     if not commit_message.strip():
         typer.echo("Error: Commit message cannot be empty", err=True)
         raise typer.Exit(1)
+    
+    # Get keep_emoji setting from config
+    keep_emoji = config.get_keep_emoji()
     
     # Generate branch name from commit message
     branch_name = _generate_branch_name(commit_message, keep_emoji=keep_emoji)
@@ -138,6 +144,71 @@ def edit():
 def modify():
     """Alias for edit - Edit the current stack by amending the commit."""
     edit()
+
+
+@app.command(name="config")
+def config_cmd(
+    action: str = typer.Argument(..., help="Action to perform: 'get', 'set', or 'list'"),
+    key: str = typer.Argument(None, help="Configuration key (e.g., 'keep_emoji')"),
+    value: str = typer.Argument(None, help="Configuration value (for 'set' action)"),
+):
+    """Manage shortcake configuration.
+    
+    Examples:
+        shortcake config list - List all configuration settings
+        shortcake config get keep_emoji - Get a specific setting
+        shortcake config set keep_emoji true - Set a configuration value
+    """
+    if action == "list":
+        # List all configuration settings
+        cfg = config.load_config()
+        if not cfg:
+            typer.echo("No configuration settings found.")
+            typer.echo(f"Configuration file: {config.get_config_path()}")
+        else:
+            typer.echo("Current configuration:")
+            for k, v in cfg.items():
+                typer.echo(f"  {k} = {v}")
+            typer.echo(f"\nConfiguration file: {config.get_config_path()}")
+    
+    elif action == "get":
+        if not key:
+            typer.echo("Error: Key is required for 'get' action", err=True)
+            raise typer.Exit(1)
+        
+        cfg = config.load_config()
+        if key in cfg:
+            typer.echo(f"{key} = {cfg[key]}")
+        else:
+            typer.echo(f"Configuration key '{key}' not found")
+            typer.echo(f"Available keys: {', '.join(cfg.keys()) if cfg else 'none'}")
+    
+    elif action == "set":
+        if not key or value is None:
+            typer.echo("Error: Both key and value are required for 'set' action", err=True)
+            raise typer.Exit(1)
+        
+        # Handle boolean values
+        if key == "keep_emoji":
+            if value.lower() in ("true", "1", "yes"):
+                config.set_keep_emoji(True)
+                typer.echo(f"Set {key} = true")
+            elif value.lower() in ("false", "0", "no"):
+                config.set_keep_emoji(False)
+                typer.echo(f"Set {key} = false")
+            else:
+                typer.echo(f"Error: Invalid value for {key}. Use 'true' or 'false'", err=True)
+                raise typer.Exit(1)
+        else:
+            # Generic key-value setting
+            cfg = config.load_config()
+            cfg[key] = value
+            config.save_config(cfg)
+            typer.echo(f"Set {key} = {value}")
+    
+    else:
+        typer.echo(f"Error: Unknown action '{action}'. Use 'list', 'get', or 'set'", err=True)
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":

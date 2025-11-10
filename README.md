@@ -56,30 +56,23 @@ This command helps you create stacked PRs by:
 
 **Emoji Support:**
 - Commit messages fully support emojis
-- By default, emojis are removed from branch names
-- Use `--keep-emoji` (or `-e`) to preserve emojis in branch names
+- Emoji handling in branch names is controlled by the `keep_emoji` configuration setting
+- Use `shortcake config set keep_emoji true` to preserve emojis in branch names
+- Use `shortcake config set keep_emoji false` to remove emojis from branch names (default)
 
 **Note:** Future enhancement will include gitmoji integration for conventional emoji commits.
 
-Options:
-- `--keep-emoji` / `-e`: Keep emojis in the generated branch name
-
 Example:
 ```bash
-# Basic usage
-uv run shortcake create
-# You'll be prompted: Enter commit message: Add new feature
-# Creates branch: add-new-feature
-# Creates commit: Add new feature
-
-# With emojis (removed from branch name by default)
+# Basic usage (emojis removed from branch name by default)
 uv run shortcake create
 # You'll be prompted: Enter commit message: 🚀 Add rocket feature
 # Creates branch: add-rocket-feature
 # Creates commit: 🚀 Add rocket feature
 
-# Keep emojis in branch name
-uv run shortcake create --keep-emoji
+# Configure to keep emojis in branch names
+uv run shortcake config set keep_emoji true
+uv run shortcake create
 # You'll be prompted: Enter commit message: 🔥 Add fire feature
 # Creates branch: 🔥-add-fire-feature
 # Creates commit: 🔥 Add fire feature
@@ -98,6 +91,34 @@ Example:
 uv run shortcake edit
 # or
 uv run shortcake modify
+```
+
+### `config`
+Manage shortcake configuration settings.
+
+Configuration is stored in `~/.shortcake/config.json` in your home directory.
+
+Available settings:
+- `keep_emoji`: Whether to keep emojis in branch names (true/false, default: false)
+
+**Actions:**
+- `list` - List all configuration settings
+- `get <key>` - Get a specific configuration value
+- `set <key> <value>` - Set a configuration value
+
+Example:
+```bash
+# List all configuration
+uv run shortcake config list
+
+# Get a specific setting
+uv run shortcake config get keep_emoji
+
+# Set keep_emoji to true
+uv run shortcake config set keep_emoji true
+
+# Set keep_emoji to false
+uv run shortcake config set keep_emoji false
 ```
 
 ## Development
