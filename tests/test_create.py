@@ -11,6 +11,11 @@ from .conftest import GitEditorScript
 runner = CliRunner()
 
 
+def stage_all(repo_path: Path) -> None:
+    """Helper to stage all changes in the repository."""
+    subprocess.run(["git", "add", "."], cwd=repo_path, check=True, capture_output=True)
+
+
 def test_create_help():
     result = runner.invoke(app, ["create", "--help"])
 
@@ -31,6 +36,7 @@ def test_create_basic_success(
     commit_message = "🚀 Add new feature"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 0
@@ -73,6 +79,7 @@ def test_create_with_keep_emoji_true(
     commit_message = "🚀 Add rocket feature"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 0
@@ -105,6 +112,7 @@ def test_create_with_long_message(
     commit_message = "Add a very long feature name that exceeds fifty characters in length"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 0
@@ -140,6 +148,7 @@ def test_create_with_special_characters(
     commit_message = "Fix: bug in @user's code (issue #123)!"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 0
@@ -166,6 +175,7 @@ def test_create_with_multiple_spaces(
     commit_message = "Add    feature   with    spaces"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 0
@@ -184,6 +194,7 @@ def test_create_error_empty_commit_message(
     # set GIT_EDITOR to false which exits with error
     monkeypatch.setenv("GIT_EDITOR", "false")
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 1
@@ -200,6 +211,7 @@ def test_create_error_only_emoji_message(
     commit_message = "🚀🔥⭐"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 1
@@ -227,6 +239,7 @@ def test_create_error_branch_already_exists(
 ):
     test_file = isolated_git_repo / "test.txt"
     test_file.write_text("content")
+    stage_all(isolated_git_repo)
 
     subprocess.run(
         ["git", "branch", "add-feature"],
@@ -269,6 +282,7 @@ def test_create_with_leading_trailing_whitespace(
     commit_message = "   Add feature with whitespace   "
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 0
@@ -285,6 +299,7 @@ def test_create_with_consecutive_hyphens(
     commit_message = "Add --- multiple --- hyphens"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 0
@@ -301,6 +316,7 @@ def test_create_with_very_short_message(
     commit_message = "Go"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 0
@@ -317,6 +333,7 @@ def test_create_with_only_hyphens(
     commit_message = "--- --- ---"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 1
@@ -335,6 +352,7 @@ def test_create_with_emoji_at_start(
     commit_message = "🚀 Launch feature"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 0
@@ -351,6 +369,7 @@ def test_create_with_emoji_in_middle(
     commit_message = "Add 🚀 feature"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 0
@@ -367,6 +386,7 @@ def test_create_with_emoji_at_end(
     commit_message = "Add feature 🚀"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 0
@@ -383,6 +403,7 @@ def test_create_with_unicode_characters(
     commit_message = "添加新功能"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 0
@@ -407,6 +428,7 @@ def test_create_with_exactly_50_chars(
     commit_message = "Add a very long feature name that is exactly right"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 0
@@ -430,6 +452,7 @@ def test_create_with_multiline_commit_message(
     commit_message = "Add feature\n\nThis is the body of the commit message"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 0
@@ -452,6 +475,7 @@ def test_create_config_persist_across_invocations(
 
     test_file = isolated_git_repo / "config_test1.txt"
     test_file.write_text("test1")
+    stage_all(isolated_git_repo)
 
     commit_message = "🚀 First feature"
     git_editor_script(commit_message)
@@ -469,6 +493,7 @@ def test_create_config_persist_across_invocations(
 
     test_file2 = isolated_git_repo / "config_test2.txt"
     test_file2.write_text("test2")
+    stage_all(isolated_git_repo)
 
     commit_message2 = "⭐ Second feature"
     git_editor_script(commit_message2)
@@ -513,6 +538,7 @@ def test_create_with_numbers_only(
     commit_message = "Fix issue 12345"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 0
@@ -529,8 +555,90 @@ def test_create_with_uppercase_letters(
     commit_message = "ADD NEW FEATURE"
     git_editor_script(commit_message)
 
+    stage_all(isolated_git_repo)
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 0
     expected_branch = "add-new-feature"
     assert f"Created and switched to branch: {expected_branch}" in result.stdout
+
+
+def test_create_stacked_branches(
+    isolated_git_repo: Path, isolated_config: Path, git_editor_script: GitEditorScript
+):
+    # Create first branch with first commit
+    test_file1 = isolated_git_repo / "feature1.txt"
+    test_file1.write_text("first feature")
+    stage_all(isolated_git_repo)
+
+    commit_message1 = "Add first feature"
+    git_editor_script(commit_message1)
+
+    result1 = runner.invoke(app, ["create"])
+    assert result1.exit_code == 0
+    assert "Created and switched to branch: add-first-feature" in result1.stdout
+
+    # Get the first commit hash
+    first_commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+    first_commit_hash = first_commit.stdout.strip()
+
+    # Create second branch with second commit (stacked on first)
+    test_file2 = isolated_git_repo / "feature2.txt"
+    test_file2.write_text("second feature")
+    stage_all(isolated_git_repo)
+
+    commit_message2 = "Add second feature"
+    git_editor_script(commit_message2)
+
+    result2 = runner.invoke(app, ["create"])
+    assert result2.exit_code == 0
+    assert "Created and switched to branch: add-second-feature" in result2.stdout
+
+    # Verify we're on the second branch
+    current_branch = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+    assert current_branch.stdout.strip() == "add-second-feature"
+
+    # Verify the second branch contains both commits
+    log_output = subprocess.run(
+        ["git", "log", "--oneline", "--all", "--decorate"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+
+    # Verify both commits exist in the log
+    assert "Add first feature" in log_output.stdout
+    assert "Add second feature" in log_output.stdout
+
+    # Verify the first commit is in the history of the second branch
+    commits_in_second_branch = subprocess.run(
+        ["git", "log", "--format=%H", "add-second-feature"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+    assert first_commit_hash in commits_in_second_branch.stdout
+
+    # Verify the first branch only has one commit (not the second)
+    commits_in_first_branch = subprocess.run(
+        ["git", "log", "--format=%s", "add-first-feature"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+    assert "Add first feature" in commits_in_first_branch.stdout
+    assert "Add second feature" not in commits_in_first_branch.stdout
+
+    # Verify both files exist in the second branch
+    assert (isolated_git_repo / "feature1.txt").exists()
+    assert (isolated_git_repo / "feature2.txt").exists()

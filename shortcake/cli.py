@@ -2,6 +2,7 @@
 
 import re
 import subprocess
+import time
 
 import typer
 
@@ -74,7 +75,10 @@ def _generate_branch_name(commit_message: str, keep_emoji: bool = False) -> str:
 def create():
     """Create a stack with a new branch and commit.
 
+    Stage your changes first with 'git add', then run this command.
     Opens your configured editor to compose the commit message.
+    The branch name is automatically generated from the commit message.
+
     Emoji handling in branch names is controlled by the keep_emoji configuration setting
     (use 'shortcake config set keep_emoji true/false').
 
@@ -83,11 +87,29 @@ def create():
     # Get keep_emoji setting from config
     keep_emoji = config.get_keep_emoji()
 
-    try:
-        # Stage all changes first
-        subprocess.run(["git", "add", "."], capture_output=True, text=True, check=True)
+    # Get the original branch to restore on error
+    original_branch_result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        capture_output=True,
+        text=True,
+    )
+    original_branch = original_branch_result.stdout.strip() if original_branch_result.returncode == 0 else None
 
-        # Create commit using editor (this will open $EDITOR)
+    temp_branch_name = None
+
+    try:
+        # Create a temporary branch name using timestamp
+        temp_branch_name = f"temp-shortcake-{int(time.time() * 1000)}"
+
+        # Create and switch to temporary branch
+        subprocess.run(
+            ["git", "checkout", "-b", temp_branch_name],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        # Create commit using git's normal flow (opens editor)
         subprocess.run(["git", "commit"], check=True)
 
         # Get the commit message that was just created
@@ -109,16 +131,31 @@ def create():
             )
             raise typer.Exit(1)
 
-        # Create new branch at current commit
-        subprocess.run(["git", "branch", branch_name], capture_output=True, text=True, check=True)
-
-        # Switch to the new branch
-        subprocess.run(["git", "checkout", branch_name], capture_output=True, text=True, check=True)
+        # Rename the temporary branch to the final name
+        subprocess.run(
+            ["git", "branch", "-m", temp_branch_name, branch_name],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
 
         typer.echo(f"Created and switched to branch: {branch_name}")
         typer.echo(f"Created commit: {commit_message}")
 
     except subprocess.CalledProcessError as e:
+        # Clean up: switch back to original branch and delete temp branch if it was created
+        if temp_branch_name and original_branch:
+            subprocess.run(
+                ["git", "checkout", original_branch],
+                capture_output=True,
+                text=True,
+            )
+            subprocess.run(
+                ["git", "branch", "-D", temp_branch_name],
+                capture_output=True,
+                text=True,
+            )
+
         typer.echo(f"Error: {e.stderr.strip() if e.stderr else 'Command failed'}", err=True)
         raise typer.Exit(1) from None
 

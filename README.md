@@ -48,11 +48,13 @@ Show the current version of shortcake.
 Create a stack with a new branch and commit.
 
 This command helps you create stacked PRs by:
-1. Staging all changes
+1. Creating a temporary branch
 2. Opening your configured editor ($EDITOR) to compose the commit message (emojis are fully supported! 🎉)
 3. Creating the commit
 4. Generating a branch name from the commit message (lowercase, hyphenated, alphanumeric only)
-5. Creating and switching to the new branch
+5. Renaming the temporary branch to the final branch name
+
+**Important:** Stage your changes with `git add` before running this command. Only staged changes will be committed.
 
 **Emoji Support:**
 - Commit messages fully support emojis
@@ -64,6 +66,9 @@ This command helps you create stacked PRs by:
 
 Example:
 ```bash
+# Stage your changes first
+git add .
+
 # Basic usage (emojis removed from branch name by default)
 uv run shortcake create
 # Opens your editor to compose commit message
@@ -74,6 +79,9 @@ uv run shortcake create
 
 # Configure to keep emojis in branch names
 uv run shortcake config set keep_emoji true
+
+# Stage changes and create
+git add .
 uv run shortcake create
 # Opens your editor to compose commit message
 # Type: 🔥 Add fire feature
