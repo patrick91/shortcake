@@ -93,15 +93,21 @@ uv run shortcake create
 ### `edit` / `modify`
 Edit the current stack by amending the commit.
 
-This command helps you modify the current stack by:
-1. Staging all changes
-2. Amending the previous commit without opening an editor
+This command helps you modify the current stack by amending the previous commit without opening an editor.
+
+**Important:** Stage your changes with `git add` before running this command. Only staged changes will be amended.
 
 Example:
 ```bash
 # Make some changes to your files
+echo "more content" >> file.txt
+
+# Stage your changes first
+git add .
+
+# Amend the previous commit
 uv run shortcake edit
-# Changes are staged and committed (reuses previous commit message)
+# Successfully amended the commit (reuses previous commit message)
 
 # Or use the modify alias
 uv run shortcake modify

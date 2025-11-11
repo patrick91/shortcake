@@ -162,10 +162,23 @@ def create():
 
 @app.command()
 def edit():
-    """Edit the current stack by amending the commit."""
+    """Edit the current stack by amending the commit.
+
+    Stage your changes first with 'git add', then run this command.
+    Amends the previous commit without opening an editor.
+    """
     try:
-        # Stage all changes first
-        subprocess.run(["git", "add", "."], capture_output=True, text=True, check=True)
+        # Check if there are staged changes
+        diff_result = subprocess.run(
+            ["git", "diff", "--cached", "--quiet"],
+            capture_output=True,
+            text=True,
+        )
+
+        # git diff --quiet returns 0 if no changes, 1 if there are changes
+        if diff_result.returncode == 0:
+            typer.echo("Error: No staged changes to amend. Use 'git add' first.", err=True)
+            raise typer.Exit(1)
 
         # Amend the commit without opening editor (reuse previous message)
         subprocess.run(
@@ -173,15 +186,22 @@ def edit():
         )
         typer.echo("Successfully amended the commit")
 
-    except subprocess.CalledProcessError:
-        typer.echo("Error: Failed to amend commit", err=True)
-        raise typer.Exit(1) from None
+    except subprocess.CalledProcessError as e:
+        # Only catch errors from the actual commit command, not from diff check above
+        if "git commit" in str(e.cmd):
+            typer.echo("Error: Failed to amend commit", err=True)
+            raise typer.Exit(1) from None
+        raise
 
 
 # Create alias for edit command
 @app.command(name="modify")
 def modify():
-    """Alias for edit - Edit the current stack by amending the commit."""
+    """Alias for edit - Edit the current stack by amending the commit.
+
+    Stage your changes first with 'git add', then run this command.
+    Amends the previous commit without opening an editor.
+    """
     edit()
 
 
