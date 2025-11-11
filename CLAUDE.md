@@ -1,0 +1,1 @@
+- Don't add docstrings for basic things, like tests

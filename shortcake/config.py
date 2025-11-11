@@ -1,7 +1,9 @@
 """Configuration management for shortcake."""
 
+import os
 from pathlib import Path
 
+import rtoml
 from pydantic import BaseModel, Field
 
 
@@ -12,10 +14,16 @@ class ShortcakeConfig(BaseModel):
 
 
 def get_config_path() -> Path:
-    """Get the path to the configuration file in the user's home directory."""
-    config_dir = Path.home() / ".shortcake"
-    config_dir.mkdir(exist_ok=True)
-    return config_dir / "config.json"
+    """Get the path to the configuration file following XDG Base Directory spec."""
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+
+    if xdg_config_home:
+        config_dir = Path(xdg_config_home) / "shortcake"
+    else:
+        config_dir = Path.home() / ".config" / "shortcake"
+
+    config_dir.mkdir(parents=True, exist_ok=True)
+    return config_dir / "config.toml"
 
 
 def load_config() -> ShortcakeConfig:
@@ -30,9 +38,8 @@ def load_config() -> ShortcakeConfig:
         return ShortcakeConfig()
 
     try:
-        with open(config_path) as f:
-            config_data = f.read()
-            return ShortcakeConfig.model_validate_json(config_data)
+        config_data = rtoml.load(config_path)
+        return ShortcakeConfig.model_validate(config_data)
     except Exception:
         return ShortcakeConfig()
 
@@ -44,8 +51,7 @@ def save_config(config: ShortcakeConfig) -> None:
         config: ShortcakeConfig instance containing configuration values to save.
     """
     config_path = get_config_path()
-    with open(config_path, "w") as f:
-        f.write(config.model_dump_json(indent=2))
+    rtoml.dump(config.model_dump(), config_path, pretty=True)
 
 
 def get_keep_emoji() -> bool:
