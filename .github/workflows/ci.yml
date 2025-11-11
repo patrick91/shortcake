@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
+    branches: [main]
 
 permissions:
   contents: read
@@ -17,7 +17,7 @@ jobs:
         python-version: ["3.14"]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
@@ -32,14 +32,6 @@ jobs:
         run: |
           uv sync --all-extras --dev
 
-      - name: Run ruff check
-        run: |
-          uv run ruff check .
-
-      - name: Run ruff format check
-        run: |
-          uv run ruff format --check .
-
       - name: Run tests
         run: |
           uv run pytest tests/ -v
@@ -48,13 +40,5 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-          allow-prereleases: true
-
-      - name: Run pre-commit
-        uses: pre-commit/action@v3.0.0
+      - uses: actions/checkout@v5
+      - uses: j178/prek-action@v1/action@v3.0.0
