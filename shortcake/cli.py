@@ -125,11 +125,9 @@ def edit():
             check=True
         )
         
-        # Amend the commit without opening editor (reuse previous message)
+        # Amend the commit in external editor
         subprocess.run(
-            ["git", "commit", "--amend", "--no-edit"],
-            capture_output=True,
-            text=True,
+            ["git", "commit", "--amend"],
             check=True
         )
         typer.echo("Successfully amended the commit")
