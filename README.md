@@ -48,11 +48,11 @@ Show the current version of shortcake.
 Create a stack with a new branch and commit.
 
 This command helps you create stacked PRs by:
-1. Prompting for a commit message (emojis are fully supported! 🎉)
-2. Generating a branch name from the commit message (lowercase, hyphenated, alphanumeric only)
-3. Creating and checking out a new branch
-4. Staging all changes
-5. Creating a commit with your message
+1. Staging all changes
+2. Opening your configured editor ($EDITOR) to compose the commit message (emojis are fully supported! 🎉)
+3. Creating the commit
+4. Generating a branch name from the commit message (lowercase, hyphenated, alphanumeric only)
+5. Creating and switching to the new branch
 
 **Emoji Support:**
 - Commit messages fully support emojis
@@ -66,16 +66,20 @@ Example:
 ```bash
 # Basic usage (emojis removed from branch name by default)
 uv run shortcake create
-# You'll be prompted: Enter commit message: 🚀 Add rocket feature
-# Creates branch: add-rocket-feature
+# Opens your editor to compose commit message
+# Type: 🚀 Add rocket feature
+# Save and close
 # Creates commit: 🚀 Add rocket feature
+# Creates branch: add-rocket-feature
 
 # Configure to keep emojis in branch names
 uv run shortcake config set keep_emoji true
 uv run shortcake create
-# You'll be prompted: Enter commit message: 🔥 Add fire feature
-# Creates branch: 🔥-add-fire-feature
+# Opens your editor to compose commit message
+# Type: 🔥 Add fire feature
+# Save and close
 # Creates commit: 🔥 Add fire feature
+# Creates branch: 🔥-add-fire-feature
 ```
 
 ### `edit` / `modify`
@@ -83,14 +87,13 @@ Edit the current stack by amending the commit.
 
 This command helps you modify the current stack by:
 1. Staging all changes
-2. Opening the commit in your configured git editor for amendment
+2. Amending the previous commit without opening an editor
 
 Example:
 ```bash
 # Make some changes to your files
 uv run shortcake edit
-# Editor opens with the current commit message
-# Edit the message if needed, save and close
+# Changes are staged and committed (reuses previous commit message)
 
 # Or use the modify alias
 uv run shortcake modify

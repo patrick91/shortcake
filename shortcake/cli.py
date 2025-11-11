@@ -59,39 +59,17 @@ def _generate_branch_name(commit_message: str, keep_emoji: bool = False) -> str:
 def create():
     """Create a stack with a new branch and commit.
     
-    Supports emojis in commit messages. Emoji handling in branch names is controlled
-    by the keep_emoji configuration setting (use 'shortcake config set keep_emoji true/false').
+    Opens your configured editor to compose the commit message.
+    Emoji handling in branch names is controlled by the keep_emoji configuration setting
+    (use 'shortcake config set keep_emoji true/false').
     
     Note: Future enhancement will include gitmoji integration.
     """
-    # Prompt for commit message
-    commit_message = typer.prompt("Enter commit message")
-    
-    if not commit_message.strip():
-        typer.echo("Error: Commit message cannot be empty", err=True)
-        raise typer.Exit(1)
-    
     # Get keep_emoji setting from config
     keep_emoji = config.get_keep_emoji()
     
-    # Generate branch name from commit message
-    branch_name = _generate_branch_name(commit_message, keep_emoji=keep_emoji)
-    
-    if not branch_name:
-        typer.echo("Error: Could not generate a valid branch name from the commit message", err=True)
-        raise typer.Exit(1)
-    
     try:
-        # Create and checkout new branch
-        result = subprocess.run(
-            ["git", "checkout", "-b", branch_name],
-            capture_output=True,
-            text=True,
-            check=True
-        )
-        typer.echo(f"Created and switched to branch: {branch_name}")
-        
-        # Stage all changes
+        # Stage all changes first
         subprocess.run(
             ["git", "add", "."],
             capture_output=True,
@@ -99,17 +77,53 @@ def create():
             check=True
         )
         
-        # Create commit with emoji support (Git natively supports UTF-8)
+        # Create commit using editor (this will open $EDITOR)
         subprocess.run(
-            ["git", "commit", "-m", commit_message],
+            ["git", "commit"],
+            check=True
+        )
+        
+        # Get the commit message that was just created
+        result = subprocess.run(
+            ["git", "log", "-1", "--pretty=%s"],
             capture_output=True,
             text=True,
             check=True
         )
+        commit_message = result.stdout.strip()
+        
+        if not commit_message:
+            typer.echo("Error: Commit message cannot be empty", err=True)
+            raise typer.Exit(1)
+        
+        # Generate branch name from commit message
+        branch_name = _generate_branch_name(commit_message, keep_emoji=keep_emoji)
+        
+        if not branch_name:
+            typer.echo("Error: Could not generate a valid branch name from the commit message", err=True)
+            raise typer.Exit(1)
+        
+        # Create new branch at current commit
+        subprocess.run(
+            ["git", "branch", branch_name],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        # Switch to the new branch
+        subprocess.run(
+            ["git", "checkout", branch_name],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        typer.echo(f"Created and switched to branch: {branch_name}")
         typer.echo(f"Created commit: {commit_message}")
         
     except subprocess.CalledProcessError as e:
-        typer.echo(f"Error: {e.stderr.strip()}", err=True)
+        typer.echo(f"Error: {e.stderr.strip() if e.stderr else 'Command failed'}", err=True)
         raise typer.Exit(1)
 
 
@@ -125,9 +139,11 @@ def edit():
             check=True
         )
         
-        # Amend the commit in external editor
+        # Amend the commit without opening editor (reuse previous message)
         subprocess.run(
-            ["git", "commit", "--amend"],
+            ["git", "commit", "--amend", "--no-edit"],
+            capture_output=True,
+            text=True,
             check=True
         )
         typer.echo("Successfully amended the commit")
