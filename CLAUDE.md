@@ -1,0 +1,2 @@
+- Don't add docstrings for basic things, like tests
+- Always use test function and not classes, make multiple files if needed
