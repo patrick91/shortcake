@@ -42,16 +42,25 @@ def _generate_branch_name(commit_message: str, keep_emoji: bool = False) -> str:
     branch_name = re.sub(r"\s+", "-", branch_name)
 
     if keep_emoji:
-        # Keep emojis, alphanumeric, and hyphens
-        # Unicode ranges for emojis and alphanumeric characters
+        # Keep emojis, alphanumeric (including unicode), and hyphens
+        # Comprehensive Unicode ranges for emojis:
+        # - \U0001F300-\U0001F9FF: Miscellaneous Symbols and Pictographs, Emoticons, etc.
+        # - \U0001F600-\U0001F64F: Emoticons
+        # - \U0001F680-\U0001F6FF: Transport and Map Symbols
+        # - \U00002600-\U000027BF: Miscellaneous Symbols
+        # - \U00002B00-\U00002BFF: Miscellaneous Symbols and Arrows (includes ⭐)
+        # - \U0001F1E0-\U0001F1FF: Regional Indicator Symbols (flags)
         branch_name = re.sub(
-            r"[^\w\-\U0001F300-\U0001F9FF\U0001F600-\U0001F64F\U0001F680-\U0001F6FF\U00002600-\U000027BF\U0001F1E0-\U0001F1FF]",
+            r"[^\w\-\U0001F300-\U0001F9FF\U0001F600-\U0001F64F\U0001F680-\U0001F6FF\U00002600-\U000027BF\U00002B00-\U00002BFF\U0001F1E0-\U0001F1FF]",
             "",
             branch_name,
         )
     else:
-        # Remove special characters including emojis, keep only hyphens and alphanumeric
-        branch_name = re.sub(r"[^a-z0-9-]", "", branch_name)
+        # Remove special characters including emojis, keep hyphens and word chars (including unicode)
+        branch_name = re.sub(r"[^\w-]", "", branch_name)
+
+    # Collapse consecutive hyphens into a single hyphen
+    branch_name = re.sub(r"-+", "-", branch_name)
 
     # Remove leading/trailing hyphens
     branch_name = branch_name.strip("-")
