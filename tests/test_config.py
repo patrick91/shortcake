@@ -23,7 +23,7 @@ def test_config_list():
     config_path = config.get_config_path()
     if config_path.exists():
         os.remove(config_path)
-    
+
     result = runner.invoke(app, ["config", "list"])
     assert result.exit_code == 0
     assert "keep_emoji = False" in result.stdout
@@ -35,12 +35,12 @@ def test_config_set_and_get():
     result = runner.invoke(app, ["config", "set", "keep_emoji", "true"])
     assert result.exit_code == 0
     assert "Set keep_emoji = true" in result.stdout
-    
+
     # Get the value
     result = runner.invoke(app, ["config", "get", "keep_emoji"])
     assert result.exit_code == 0
     assert "keep_emoji = True" in result.stdout
-    
+
     # List all config
     result = runner.invoke(app, ["config", "list"])
     assert result.exit_code == 0
@@ -52,7 +52,7 @@ def test_config_set_false():
     result = runner.invoke(app, ["config", "set", "keep_emoji", "false"])
     assert result.exit_code == 0
     assert "Set keep_emoji = false" in result.stdout
-    
+
     result = runner.invoke(app, ["config", "get", "keep_emoji"])
     assert result.exit_code == 0
     assert "keep_emoji = False" in result.stdout

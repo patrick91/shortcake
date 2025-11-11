@@ -1,19 +1,14 @@
 """Configuration management for shortcake."""
 
 from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings
 
 
 class ShortcakeConfig(BaseModel):
     """Configuration model for shortcake."""
-    
-    keep_emoji: bool = Field(
-        default=False,
-        description="Whether to keep emojis in branch names"
-    )
+
+    keep_emoji: bool = Field(default=False, description="Whether to keep emojis in branch names")
 
 
 def get_config_path() -> Path:
@@ -25,7 +20,7 @@ def get_config_path() -> Path:
 
 def load_config() -> ShortcakeConfig:
     """Load configuration from the user's config file.
-    
+
     Returns:
         ShortcakeConfig instance with configuration values.
         Returns default config if file doesn't exist.
@@ -33,9 +28,9 @@ def load_config() -> ShortcakeConfig:
     config_path = get_config_path()
     if not config_path.exists():
         return ShortcakeConfig()
-    
+
     try:
-        with open(config_path, "r") as f:
+        with open(config_path) as f:
             config_data = f.read()
             return ShortcakeConfig.model_validate_json(config_data)
     except Exception:
@@ -44,7 +39,7 @@ def load_config() -> ShortcakeConfig:
 
 def save_config(config: ShortcakeConfig) -> None:
     """Save configuration to the user's config file.
-    
+
     Args:
         config: ShortcakeConfig instance containing configuration values to save.
     """
@@ -55,7 +50,7 @@ def save_config(config: ShortcakeConfig) -> None:
 
 def get_keep_emoji() -> bool:
     """Get the keep_emoji configuration value.
-    
+
     Returns:
         True if emojis should be kept in branch names, False otherwise.
     """
@@ -65,11 +60,10 @@ def get_keep_emoji() -> bool:
 
 def set_keep_emoji(value: bool) -> None:
     """Set the keep_emoji configuration value.
-    
+
     Args:
         value: True to keep emojis in branch names, False to remove them.
     """
     config = load_config()
     config.keep_emoji = value
     save_config(config)
-
