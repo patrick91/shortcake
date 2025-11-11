@@ -93,7 +93,9 @@ def create():
         capture_output=True,
         text=True,
     )
-    original_branch = original_branch_result.stdout.strip() if original_branch_result.returncode == 0 else None
+    original_branch = (
+        original_branch_result.stdout.strip() if original_branch_result.returncode == 0 else None
+    )
 
     temp_branch_name = None
 
