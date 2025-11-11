@@ -176,14 +176,10 @@ def config_cmd(
     if action == "list":
         # List all configuration settings
         cfg = config.load_config()
-        if not cfg:
-            typer.echo("No configuration settings found.")
-            typer.echo(f"Configuration file: {config.get_config_path()}")
-        else:
-            typer.echo("Current configuration:")
-            for k, v in cfg.items():
-                typer.echo(f"  {k} = {v}")
-            typer.echo(f"\nConfiguration file: {config.get_config_path()}")
+        typer.echo("Current configuration:")
+        for field_name, field_value in cfg.model_dump().items():
+            typer.echo(f"  {field_name} = {field_value}")
+        typer.echo(f"\nConfiguration file: {config.get_config_path()}")
     
     elif action == "get":
         if not key:
@@ -191,11 +187,12 @@ def config_cmd(
             raise typer.Exit(1)
         
         cfg = config.load_config()
-        if key in cfg:
-            typer.echo(f"{key} = {cfg[key]}")
+        cfg_dict = cfg.model_dump()
+        if key in cfg_dict:
+            typer.echo(f"{key} = {cfg_dict[key]}")
         else:
             typer.echo(f"Configuration key '{key}' not found")
-            typer.echo(f"Available keys: {', '.join(cfg.keys()) if cfg else 'none'}")
+            typer.echo(f"Available keys: {', '.join(cfg_dict.keys())}")
     
     elif action == "set":
         if not key or value is None:
@@ -214,11 +211,10 @@ def config_cmd(
                 typer.echo(f"Error: Invalid value for {key}. Use 'true' or 'false'", err=True)
                 raise typer.Exit(1)
         else:
-            # Generic key-value setting
+            typer.echo(f"Error: Unknown configuration key '{key}'", err=True)
             cfg = config.load_config()
-            cfg[key] = value
-            config.save_config(cfg)
-            typer.echo(f"Set {key} = {value}")
+            typer.echo(f"Available keys: {', '.join(cfg.model_dump().keys())}")
+            raise typer.Exit(1)
     
     else:
         typer.echo(f"Error: Unknown action '{action}'. Use 'list', 'get', or 'set'", err=True)

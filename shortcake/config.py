@@ -1,8 +1,19 @@
 """Configuration management for shortcake."""
 
-import json
 from pathlib import Path
-from typing import Any
+from typing import Optional
+
+from pydantic import BaseModel, Field
+from pydantic_settings import BaseSettings
+
+
+class ShortcakeConfig(BaseModel):
+    """Configuration model for shortcake."""
+    
+    keep_emoji: bool = Field(
+        default=False,
+        description="Whether to keep emojis in branch names"
+    )
 
 
 def get_config_path() -> Path:
@@ -12,32 +23,34 @@ def get_config_path() -> Path:
     return config_dir / "config.json"
 
 
-def load_config() -> dict[str, Any]:
+def load_config() -> ShortcakeConfig:
     """Load configuration from the user's config file.
     
     Returns:
-        Dictionary containing configuration values. Returns empty dict if config doesn't exist.
+        ShortcakeConfig instance with configuration values.
+        Returns default config if file doesn't exist.
     """
     config_path = get_config_path()
     if not config_path.exists():
-        return {}
+        return ShortcakeConfig()
     
     try:
         with open(config_path, "r") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError):
-        return {}
+            config_data = f.read()
+            return ShortcakeConfig.model_validate_json(config_data)
+    except Exception:
+        return ShortcakeConfig()
 
 
-def save_config(config: dict[str, Any]) -> None:
+def save_config(config: ShortcakeConfig) -> None:
     """Save configuration to the user's config file.
     
     Args:
-        config: Dictionary containing configuration values to save.
+        config: ShortcakeConfig instance containing configuration values to save.
     """
     config_path = get_config_path()
     with open(config_path, "w") as f:
-        json.dump(config, f, indent=2)
+        f.write(config.model_dump_json(indent=2))
 
 
 def get_keep_emoji() -> bool:
@@ -47,7 +60,7 @@ def get_keep_emoji() -> bool:
         True if emojis should be kept in branch names, False otherwise.
     """
     config = load_config()
-    return config.get("keep_emoji", False)
+    return config.keep_emoji
 
 
 def set_keep_emoji(value: bool) -> None:
@@ -57,5 +70,6 @@ def set_keep_emoji(value: bool) -> None:
         value: True to keep emojis in branch names, False to remove them.
     """
     config = load_config()
-    config["keep_emoji"] = value
+    config.keep_emoji = value
     save_config(config)
+
