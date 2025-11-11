@@ -83,13 +83,16 @@ Edit the current stack by amending the commit.
 
 This command helps you modify the current stack by:
 1. Staging all changes
-2. Amending the previous commit without opening an editor
+2. Opening the commit in your configured git editor for amendment
 
 Example:
 ```bash
 # Make some changes to your files
 uv run shortcake edit
-# or
+# Editor opens with the current commit message
+# Edit the message if needed, save and close
+
+# Or use the modify alias
 uv run shortcake modify
 ```
 
