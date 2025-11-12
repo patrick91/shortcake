@@ -15,6 +15,7 @@ from tests.helpers.git_helpers import (
     setup_remote,
 )
 from tests.helpers.github_helpers import GitHubMocker
+from tests.helpers.models import GitHubBranch, GitHubPR, GitHubPRRef, PRMetadata
 
 type GitEditorScript = Callable[[str], None]
 
@@ -117,8 +118,105 @@ def github_api_mock(respx_mock: respx.MockRouter) -> GitHubMocker:
 
     This fixture provides a convenient interface to mock GitHub API responses
     using the respx library.
+
+    NOTE: Prefer using github_mock with explicit endpoint mocking for better test clarity.
     """
     return GitHubMocker(respx_mock, owner="testuser", repo="testrepo")
+
+
+@pytest.fixture
+def github_repo_info() -> tuple[str, str]:
+    """Provide default GitHub repository information for mocking.
+
+    Returns:
+        Tuple of (owner, repo)
+    """
+    return ("testuser", "testrepo")
+
+
+@pytest.fixture
+def github_mock(github_repo_info: tuple[str, str]) -> respx.MockRouter:
+    """Provide a respx mock router configured with GitHub API base URL.
+
+    This allows tests to explicitly mock endpoints while keeping the code clean:
+
+    Example:
+        def test_get_pr(github_mock, build_pr_response):
+            github_mock.get("/pulls/123").mock(
+                return_value=Response(200, json=build_pr_response(number=123))
+            )
+    """
+    owner, repo = github_repo_info
+    base_url = f"https://api.github.com/repos/{owner}/{repo}"
+    return respx.mock(base_url=base_url)
+
+
+@pytest.fixture
+def build_pr_response(github_repo_info: tuple[str, str]) -> Callable[..., dict[str, Any]]:
+    """Factory for building GitHub PR response data.
+
+    Returns a function that creates type-safe PR response dictionaries.
+
+    Example:
+        def test_something(build_pr_response):
+            response_data = build_pr_response(
+                number=123,
+                title="My PR",
+                head_ref="feature",
+                base_ref="main"
+            )
+    """
+    owner, repo = github_repo_info
+
+    def _build(
+        number: int,
+        title: str = "Test PR",
+        body: str = "",
+        head_ref: str = "feature",
+        base_ref: str = "main",
+        state: str = "open",
+        mergeable: bool | None = None,
+        head_sha: str = "a" * 40,
+        base_sha: str = "b" * 40,
+    ) -> dict[str, Any]:
+        """Build a PR response dict."""
+        return GitHubPR(
+            number=number,
+            title=title,
+            body=body,
+            state=state,
+            head=GitHubPRRef(ref=head_ref, sha=head_sha),
+            base=GitHubPRRef(ref=base_ref, sha=base_sha),
+            html_url=f"https://github.com/{owner}/{repo}/pull/{number}",
+            mergeable=mergeable,
+        ).model_dump()
+
+    return _build
+
+
+@pytest.fixture
+def build_branch_response(github_repo_info: tuple[str, str]) -> Callable[..., dict[str, Any]]:
+    """Factory for building GitHub branch response data.
+
+    Returns a function that creates type-safe branch response dictionaries.
+
+    Example:
+        def test_something(build_branch_response):
+            response_data = build_branch_response(name="main", sha="abc123...")
+    """
+    owner, repo = github_repo_info
+
+    def _build(name: str, sha: str) -> dict[str, Any]:
+        """Build a branch response dict."""
+        return GitHubBranch(
+            name=name,
+            commit={
+                "sha": sha,
+                "url": f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}",
+            },
+        ).model_dump()
+
+    return _build
 
 
 @pytest.fixture
@@ -160,14 +258,14 @@ def multi_branch_stack(isolated_git_repo: Path) -> Callable[[int, str], list[str
 
 
 @pytest.fixture
-def pr_metadata_store() -> dict[str, Any]:
+def pr_metadata_store() -> dict[str, PRMetadata]:
     """Provide a store for tracking PR metadata in tests.
 
     This can be used to track PR numbers, URLs, and relationships
     between PRs in a stack during testing.
 
     Example:
-        pr_metadata_store["branch-1"] = {"pr_number": 123, "parent": "main"}
+        pr_metadata_store["branch-1"] = PRMetadata(pr_number=123, parent="main")
     """
     return {}
 
@@ -181,36 +279,22 @@ def mock_github_token(monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 @pytest.fixture
-def sample_pr_response() -> dict[str, Any]:
+def sample_pr_response(build_pr_response: Callable[..., dict[str, Any]]) -> dict[str, Any]:
     """Provide a sample GitHub PR API response for testing."""
-    return {
-        "number": 123,
-        "title": "Test PR",
-        "body": "Test PR body",
-        "state": "open",
-        "head": {
-            "ref": "feature-branch",
-            "sha": "a" * 40,
-        },
-        "base": {
-            "ref": "main",
-            "sha": "b" * 40,
-        },
-        "html_url": "https://github.com/testuser/testrepo/pull/123",
-        "mergeable": True,
-    }
+    return build_pr_response(
+        number=123,
+        title="Test PR",
+        body="Test PR body",
+        head_ref="feature-branch",
+        base_ref="main",
+        mergeable=True,
+    )
 
 
 @pytest.fixture
-def sample_branch_response() -> dict[str, Any]:
+def sample_branch_response(build_branch_response: Callable[..., dict[str, Any]]) -> dict[str, Any]:
     """Provide a sample GitHub branch API response for testing."""
-    return {
-        "name": "main",
-        "commit": {
-            "sha": "c" * 40,
-            "url": "https://api.github.com/repos/testuser/testrepo/commits/" + "c" * 40,
-        },
-    }
+    return build_branch_response(name="main", sha="c" * 40)
 
 
 def pytest_configure(config: pytest.Config) -> None:
