@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from shortcake.git import GitRepo
+
 
 def create_commit(repo_path: Path, message: str, file_changes: dict[str, str] | None = None) -> str:
     """Create a commit with optional file changes.
@@ -14,8 +16,6 @@ def create_commit(repo_path: Path, message: str, file_changes: dict[str, str] | 
     Returns:
         The commit SHA
     """
-    from shortcake.git import GitRepo
-
     git = GitRepo(repo_path)
 
     if file_changes:
@@ -37,56 +37,42 @@ def create_branch(repo_path: Path, branch_name: str, checkout: bool = True) -> N
         branch_name: Name of the branch to create
         checkout: Whether to checkout the new branch
     """
-    from shortcake.git import GitRepo
-
     git = GitRepo(repo_path)
     git.create_branch(branch_name, checkout=checkout)
 
 
 def checkout_branch(repo_path: Path, branch_name: str) -> None:
     """Checkout an existing branch."""
-    from shortcake.git import GitRepo
-
     git = GitRepo(repo_path)
     git.checkout_branch(branch_name)
 
 
 def get_current_branch(repo_path: Path) -> str:
     """Get the name of the current branch."""
-    from shortcake.git import GitRepo
-
     git = GitRepo(repo_path)
     return git.get_current_branch()
 
 
 def get_current_commit(repo_path: Path) -> str:
     """Get the SHA of the current commit."""
-    from shortcake.git import GitRepo
-
     git = GitRepo(repo_path)
     return git.get_current_commit()
 
 
 def get_commit_message(repo_path: Path, ref: str = "HEAD") -> str:
     """Get the commit message for a given ref."""
-    from shortcake.git import GitRepo
-
     git = GitRepo(repo_path)
     return git.get_commit_message(ref)
 
 
 def get_branches(repo_path: Path) -> list[str]:
     """Get list of all branches."""
-    from shortcake.git import GitRepo
-
     git = GitRepo(repo_path)
     return git.get_branches()
 
 
 def branch_exists(repo_path: Path, branch_name: str) -> bool:
     """Check if a branch exists."""
-    from shortcake.git import GitRepo
-
     git = GitRepo(repo_path)
     return git.branch_exists(branch_name)
 
@@ -102,8 +88,6 @@ def get_notes(repo_path: Path, ref: str = "HEAD", notes_ref: str = "shortcake") 
     Returns:
         The notes content or None if no notes exist
     """
-    from shortcake.git import GitRepo
-
     git = GitRepo(repo_path)
     return git.get_notes(ref, notes_ref)
 
@@ -119,8 +103,6 @@ def add_notes(
         ref: The commit ref to add notes to
         notes_ref: The notes ref to write to
     """
-    from shortcake.git import GitRepo
-
     git = GitRepo(repo_path)
     git.add_notes(content, ref, notes_ref)
 
@@ -133,8 +115,6 @@ def setup_remote(local_repo: Path, remote_repo: Path, remote_name: str = "origin
         remote_repo: Path to the remote repository
         remote_name: Name for the remote (default: "origin")
     """
-    from shortcake.git import GitRepo
-
     git = GitRepo(local_repo)
     git.add_remote(remote_name, str(remote_repo))
 
@@ -153,16 +133,12 @@ def push_branch(
         remote_name: Name of the remote to push to
         force: Whether to force push
     """
-    from shortcake.git import GitRepo
-
     git = GitRepo(repo_path)
     git.push(remote_name, branch_name, force=force)
 
 
 def fetch(repo_path: Path, remote_name: str = "origin") -> None:
     """Fetch from a remote."""
-    from shortcake.git import GitRepo
-
     git = GitRepo(repo_path)
     git.fetch(remote_name)
 
@@ -173,6 +149,4 @@ def create_bare_repo(repo_path: Path) -> None:
     Args:
         repo_path: Path where the bare repository should be created
     """
-    from shortcake.git import GitRepo
-
     GitRepo.create_bare_repo(repo_path)
