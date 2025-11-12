@@ -41,16 +41,6 @@ jobs:
         run: |
           uv run coverage report --format=markdown >> $GITHUB_STEP_SUMMARY
 
-      - name: Upload coverage reports
-        uses: codecov/codecov-action@v4
-        if: always()
-        with:
-          file: ./coverage.xml
-          flags: unittests
-          fail_ci_if_error: false
-        env:
-          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
       - name: Upload coverage HTML
         uses: actions/upload-artifact@v4
         if: always()
