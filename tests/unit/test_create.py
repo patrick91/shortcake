@@ -199,7 +199,7 @@ def test_create_error_empty_commit_message(
 
     assert result.exit_code == 1
     # Git commit will fail because the editor returns non-zero
-    assert result.stderr.strip() == "Error: Command failed"
+    assert "Error: Failed to commit" in result.stderr
 
 
 def test_create_error_only_emoji_message(
@@ -230,8 +230,8 @@ def test_create_error_no_changes(
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 1
-    # Git commit fails with no changes, stderr is empty so we get generic error
-    assert result.stderr.strip() == "Error: Command failed"
+    # Git commit fails with no changes
+    assert "Error: Failed to commit" in result.stderr
 
 
 def test_create_error_branch_already_exists(
@@ -254,7 +254,7 @@ def test_create_error_branch_already_exists(
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 1
-    assert result.stderr.strip() == "Error: fatal: a branch named 'add-feature' already exists"
+    assert "a branch named 'add-feature' already exists" in result.stderr
 
 
 def test_create_error_not_in_git_repo(

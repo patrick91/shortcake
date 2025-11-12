@@ -1,12 +1,12 @@
 """CLI module for shortcake."""
 
 import re
-import subprocess
 import time
 
 import typer
 
 from shortcake import config
+from shortcake.git import GitError, GitRepo
 
 app = typer.Typer(help="Shortcake CLI - A CLI built with typer and uv")
 
@@ -81,15 +81,17 @@ def create():
     # Get keep_emoji setting from config
     keep_emoji = config.get_keep_emoji()
 
+    try:
+        git = GitRepo()
+    except GitError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1) from None
+
     # Get the original branch to restore on error
-    original_branch_result = subprocess.run(
-        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-        capture_output=True,
-        text=True,
-    )
-    original_branch = (
-        original_branch_result.stdout.strip() if original_branch_result.returncode == 0 else None
-    )
+    try:
+        original_branch = git.get_current_branch()
+    except GitError:
+        original_branch = None
 
     temp_branch_name = None
 
@@ -98,21 +100,13 @@ def create():
         temp_branch_name = f"temp-shortcake-{int(time.time() * 1000)}"
 
         # Create and switch to temporary branch
-        subprocess.run(
-            ["git", "checkout", "-b", temp_branch_name],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        git.create_branch(temp_branch_name, checkout=True)
 
         # Create commit using git's normal flow (opens editor)
-        subprocess.run(["git", "commit"], check=True)
+        git.commit()
 
         # Get the commit message that was just created
-        result = subprocess.run(
-            ["git", "log", "-1", "--pretty=%s"], capture_output=True, text=True, check=True
-        )
-        commit_message = result.stdout.strip()
+        commit_message = git.get_last_commit_message()
 
         if not commit_message:
             typer.echo("Error: Commit message cannot be empty", err=True)
@@ -128,31 +122,21 @@ def create():
             raise typer.Exit(1)
 
         # Rename the temporary branch to the final name
-        subprocess.run(
-            ["git", "branch", "-m", temp_branch_name, branch_name],
-            capture_output=True,
-            text=True,
-            check=True,
-        )
+        git.rename_branch(temp_branch_name, branch_name)
 
         typer.echo(f"Created and switched to branch: {branch_name}")
         typer.echo(f"Created commit: {commit_message}")
 
-    except subprocess.CalledProcessError as e:
+    except GitError as e:
         # Clean up: switch back to original branch and delete temp branch if it was created
         if temp_branch_name and original_branch:
-            subprocess.run(
-                ["git", "checkout", original_branch],
-                capture_output=True,
-                text=True,
-            )
-            subprocess.run(
-                ["git", "branch", "-D", temp_branch_name],
-                capture_output=True,
-                text=True,
-            )
+            try:
+                git.checkout_branch(original_branch)
+                git.delete_branch(temp_branch_name, force=True)
+            except GitError:
+                pass  # Ignore cleanup errors
 
-        typer.echo(f"Error: {e.stderr.strip() if e.stderr else 'Command failed'}", err=True)
+        typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from None
 
 
@@ -164,30 +148,24 @@ def edit():
     Amends the previous commit without opening an editor.
     """
     try:
-        # Check if there are staged changes
-        diff_result = subprocess.run(
-            ["git", "diff", "--cached", "--quiet"],
-            capture_output=True,
-            text=True,
-        )
+        git = GitRepo()
+    except GitError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1) from None
 
-        # git diff --quiet returns 0 if no changes, 1 if there are changes
-        if diff_result.returncode == 0:
+    try:
+        # Check if there are staged changes
+        if not git.has_staged_changes():
             typer.echo("Error: No staged changes to amend. Use 'git add' first.", err=True)
             raise typer.Exit(1)
 
         # Amend the commit without opening editor (reuse previous message)
-        subprocess.run(
-            ["git", "commit", "--amend", "--no-edit"], capture_output=True, text=True, check=True
-        )
+        git.commit(amend=True)
         typer.echo("Successfully amended the commit")
 
-    except subprocess.CalledProcessError as e:
-        # Only catch errors from the actual commit command, not from diff check above
-        if "git commit" in str(e.cmd):
-            typer.echo("Error: Failed to amend commit", err=True)
-            raise typer.Exit(1) from None
-        raise
+    except GitError as e:
+        typer.echo(f"Error: Failed to amend commit - {e}", err=True)
+        raise typer.Exit(1) from None
 
 
 # Create alias for edit command
