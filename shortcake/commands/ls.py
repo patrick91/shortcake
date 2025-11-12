@@ -23,7 +23,7 @@ def _get_shortcake_branches(git: GitRepo) -> list[BranchInfo]:
     Returns:
         List of BranchInfo objects for shortcake-managed branches.
     """
-    branches = []
+    branches: list[BranchInfo] = []
     current_branch = git.get_current_branch()
 
     for branch_name in git.get_branches():
@@ -69,7 +69,7 @@ def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
             children_map[branch.parent] = []
         children_map[branch.parent].append(branch)
 
-    lines = []
+    lines: list[str] = []
 
     def add_branch_to_tree(branch: BranchInfo, prefix: str = "", is_last: bool = True):
         """Recursively add branch and its children to the tree."""
@@ -89,7 +89,7 @@ def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
             add_branch_to_tree(child, prefix + extension, is_last_child)
 
     # Root branches are those with no parent OR whose parent is not tracked
-    root_branches = []
+    root_branches: list[BranchInfo] = []
     for parent_name, branches_list in children_map.items():
         if parent_name is None or parent_name not in tracked_names:
             root_branches.extend(branches_list)
