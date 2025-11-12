@@ -1,5 +1,6 @@
 """GitHub API mocking helpers for testing."""
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -188,8 +189,6 @@ def load_github_fixture(fixture_name: str) -> dict[str, Any]:
     Returns:
         The parsed JSON data
     """
-    import json
-
     fixture_path = (
         Path(__file__).parent.parent / "fixtures" / "github_responses" / f"{fixture_name}.json"
     )

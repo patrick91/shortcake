@@ -5,7 +5,7 @@ import time
 
 import typer
 
-from shortcake import config
+from shortcake import __version__, config
 from shortcake.git import GitError, GitRepo
 
 app = typer.Typer(help="Shortcake CLI - A CLI built with typer and uv")
@@ -14,8 +14,6 @@ app = typer.Typer(help="Shortcake CLI - A CLI built with typer and uv")
 @app.command()
 def version():
     """Show the version."""
-    from shortcake import __version__
-
     typer.echo(f"Shortcake version {__version__}")
 
 
