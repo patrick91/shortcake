@@ -255,16 +255,13 @@ class GitRepo:
         Returns:
             The notes content or None if no notes exist.
         """
-        # GitPython has limited support for notes, using git directly
-        result = subprocess.run(
-            ["git", "notes", "--ref", notes_ref, "show", ref],
-            cwd=self.working_dir,
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode == 0:
-            return result.stdout.strip()
-        return None
+        try:
+            # Use GitPython's git command interface for notes operations
+            note_content = self.repo.git.notes("--ref", notes_ref, "show", ref)
+            return note_content.strip()
+        except Exception:
+            # If notes don't exist or other error, return None
+            return None
 
     def add_notes(self, content: str, ref: str = "HEAD", notes_ref: str = "shortcake") -> None:
         """Add git notes to a commit.
@@ -277,17 +274,11 @@ class GitRepo:
         Raises:
             GitError: If adding notes fails.
         """
-        # GitPython has limited support for notes, using git directly
         try:
-            subprocess.run(
-                ["git", "notes", "--ref", notes_ref, "add", "-m", content, ref],
-                cwd=self.working_dir,
-                capture_output=True,
-                text=True,
-                check=True,
-            )
-        except subprocess.CalledProcessError as e:
-            raise GitError(f"Failed to add notes: {e.stderr if e.stderr else str(e)}") from e
+            # Use GitPython's git command interface for notes operations
+            self.repo.git.notes("--ref", notes_ref, "add", "-m", content, ref)
+        except Exception as e:
+            raise GitError(f"Failed to add notes: {e}") from e
 
     def add_remote(self, name: str, url: str) -> None:
         """Add a remote to the repository.
@@ -347,11 +338,9 @@ class GitRepo:
         Returns:
             True if there are staged changes, False otherwise.
         """
-        # Use git directly for this check to ensure we get the current state
-        # git diff --cached --quiet returns 0 if no changes, 1 if there are changes
-        result = subprocess.run(
-            ["git", "diff", "--cached", "--quiet"],
-            capture_output=True,
-            cwd=self.working_dir,
-        )
-        return result.returncode != 0
+        try:
+            # Check if there are any staged changes by comparing index to HEAD
+            return len(self.repo.index.diff("HEAD")) > 0
+        except Exception:
+            # If HEAD doesn't exist (no commits yet), check if index has entries
+            return len(self.repo.index.entries) > 0
