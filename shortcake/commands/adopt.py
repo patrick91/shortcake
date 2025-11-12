@@ -38,32 +38,35 @@ def adopt(
         raise typer.Exit(1) from None
 
     try:
-        # Get branch name to adopt
-        branch_to_adopt = branch if branch else git.get_current_branch()
+        branch_to_adopt = branch or git.get_current_branch()
 
-        # Validate branch exists
         if not git.branch_exists(branch_to_adopt):
             typer.echo(f"Error: Branch '{branch_to_adopt}' does not exist", err=True)
+
             raise typer.Exit(1)
 
-        # Check if branch is main/master
-        if branch_to_adopt in ("main", "master"):
+        # TODO: maybe we can get the main branch name from the config?
+        if branch_to_adopt in {"main", "master"}:
             typer.echo(f"Error: Cannot adopt '{branch_to_adopt}' branch", err=True)
+
             raise typer.Exit(1)
 
         # Check if already tracked
         existing_notes = git.get_notes(branch_to_adopt, "shortcake")
+
         if existing_notes and not recursive:
             typer.echo(
                 f"Error: Branch '{branch_to_adopt}' is already tracked by shortcake", err=True
             )
             typer.echo("Use 'shortcake ls' to see all tracked branches")
+
             raise typer.Exit(1)
 
         # Validate parent if specified
         if parent:
             if not git.branch_exists(parent):
                 typer.echo(f"Error: Parent branch '{parent}' does not exist", err=True)
+
                 raise typer.Exit(1)
 
         def adopt_single_branch(branch_name: str, parent_name: str | None):
@@ -81,8 +84,7 @@ def adopt(
             return True
 
         if recursive:
-            # Recursive adoption
-            branches_adopted = []
+            branches_adopted: list[str] = []
 
             if parent:
                 # Adopt ancestors up to parent
@@ -126,6 +128,7 @@ def adopt(
             # Simple adoption
             if adopt_single_branch(branch_to_adopt, parent):
                 parent_info = f" with parent '{parent}'" if parent else ""
+
                 typer.echo(f"Adopted branch '{branch_to_adopt}'{parent_info}")
             else:
                 typer.echo(f"Branch '{branch_to_adopt}' is already tracked")

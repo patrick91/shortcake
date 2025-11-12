@@ -18,12 +18,17 @@ def config_cmd(
         shortcake config get keep_emoji - Get a specific setting
         shortcake config set keep_emoji true - Set a configuration value
     """
+
+    # TODO: Use sub commands
+    # TODO: make the output prettier
     if action == "list":
-        # List all configuration settings
         cfg = config.load_config()
+
         typer.echo("Current configuration:")
+
         for field_name, field_value in cfg.model_dump().items():
             typer.echo(f"  {field_name} = {field_value}")
+
         typer.echo(f"\nConfiguration file: {config.get_config_path()}")
 
     elif action == "get":
@@ -40,7 +45,7 @@ def config_cmd(
             typer.echo(f"Available keys: {', '.join(cfg_dict.keys())}")
 
     elif action == "set":
-        if not key or value is None:
+        if not key or not value:
             typer.echo("Error: Both key and value are required for 'set' action", err=True)
             raise typer.Exit(1)
 
@@ -54,13 +59,14 @@ def config_cmd(
                 typer.echo(f"Set {key} = false")
             else:
                 typer.echo(f"Error: Invalid value for {key}. Use 'true' or 'false'", err=True)
+
                 raise typer.Exit(1)
         else:
             typer.echo(f"Error: Unknown configuration key '{key}'", err=True)
             cfg = config.load_config()
             typer.echo(f"Available keys: {', '.join(cfg.model_dump().keys())}")
-            raise typer.Exit(1)
 
+            raise typer.Exit(1)
     else:
         typer.echo(f"Error: Unknown action '{action}'. Use 'list', 'get', or 'set'", err=True)
         raise typer.Exit(1)
