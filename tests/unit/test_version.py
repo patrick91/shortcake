@@ -8,7 +8,6 @@ runner = CliRunner()
 
 
 def test_version():
-    """Test version command."""
     result = runner.invoke(app, ["version"])
     assert result.exit_code == 0
     assert "Shortcake version" in result.stdout

@@ -29,7 +29,6 @@ def test_create_help():
 def test_create_basic_success(
     isolated_git_repo: Path, isolated_config: Path, git_editor_script: GitEditorScript
 ):
-    """Test basic create command with emoji removed (default config)."""
     test_file = isolated_git_repo / "test.txt"
     test_file.write_text("test content")
 
@@ -105,7 +104,6 @@ def test_create_with_keep_emoji_true(
 def test_create_with_long_message(
     isolated_git_repo: Path, isolated_config: Path, git_editor_script: GitEditorScript
 ):
-    """Test create command with long commit message (should truncate to 50 chars)."""
     test_file = isolated_git_repo / "long.txt"
     test_file.write_text("long feature")
 
@@ -141,7 +139,6 @@ def test_create_with_long_message(
 def test_create_with_special_characters(
     isolated_git_repo: Path, isolated_config: Path, git_editor_script: GitEditorScript
 ):
-    """Test create command with special characters in commit message."""
     test_file = isolated_git_repo / "special.txt"
     test_file.write_text("special")
 
@@ -168,7 +165,6 @@ def test_create_with_special_characters(
 def test_create_with_multiple_spaces(
     isolated_git_repo: Path, isolated_config: Path, git_editor_script: GitEditorScript
 ):
-    """Test create command with multiple spaces in commit message."""
     test_file = isolated_git_repo / "spaces.txt"
     test_file.write_text("spaces")
 
@@ -187,7 +183,6 @@ def test_create_with_multiple_spaces(
 def test_create_error_empty_commit_message(
     isolated_git_repo: Path, isolated_config: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """Test create command with empty commit message."""
     test_file = isolated_git_repo / "empty.txt"
     test_file.write_text("empty")
 
