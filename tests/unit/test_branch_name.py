@@ -1,6 +1,6 @@
 import pytest
 
-from shortcake.cli import _generate_branch_name
+from shortcake.commands.create import _generate_branch_name
 
 
 @pytest.mark.parametrize(
