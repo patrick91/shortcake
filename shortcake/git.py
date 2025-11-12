@@ -32,6 +32,22 @@ class GitRepo:
         except Exception as e:
             raise GitError(f"Failed to initialize git repository: {e}") from e
 
+    @staticmethod
+    def create_bare_repo(path: Path) -> None:
+        """Create a bare git repository.
+
+        Args:
+            path: Path where the bare repository should be created.
+
+        Raises:
+            GitError: If repository creation fails.
+        """
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+            Repo.init(path, bare=True)
+        except Exception as e:
+            raise GitError(f"Failed to create bare repository at '{path}': {e}") from e
+
     def get_current_branch(self) -> str:
         """Get the name of the current branch.
 
@@ -108,6 +124,22 @@ class GitRepo:
         except Exception as e:
             raise GitError(f"Failed to delete branch '{name}': {e}") from e
 
+    def add_files(self, paths: list[str] | str) -> None:
+        """Stage files to the index.
+
+        Args:
+            paths: File path(s) to add to the index. Can be a string or list of strings.
+
+        Raises:
+            GitError: If adding files fails.
+        """
+        try:
+            if isinstance(paths, str):
+                paths = [paths]
+            self.repo.index.add(paths)
+        except Exception as e:
+            raise GitError(f"Failed to add files: {e}") from e
+
     def commit(self, message: str | None = None, amend: bool = False) -> None:
         """Create a commit.
 
@@ -152,6 +184,162 @@ class GitRepo:
             return self.repo.head.commit.summary
         except Exception as e:
             raise GitError(f"Failed to get commit message: {e}") from e
+
+    def get_current_commit(self) -> str:
+        """Get the SHA of the current commit (HEAD).
+
+        Returns:
+            The commit SHA as a hex string.
+
+        Raises:
+            GitError: If unable to get commit SHA.
+        """
+        try:
+            return self.repo.head.commit.hexsha
+        except Exception as e:
+            raise GitError(f"Failed to get current commit: {e}") from e
+
+    def get_commit_message(self, ref: str = "HEAD") -> str:
+        """Get the full commit message for a given ref.
+
+        Args:
+            ref: The commit reference (branch name, tag, SHA, etc.). Defaults to HEAD.
+
+        Returns:
+            The full commit message (including body).
+
+        Raises:
+            GitError: If unable to get commit message.
+        """
+        try:
+            commit = self.repo.commit(ref)
+            return commit.message.strip()
+        except Exception as e:
+            raise GitError(f"Failed to get commit message for '{ref}': {e}") from e
+
+    def get_branches(self) -> list[str]:
+        """Get list of all branch names in the repository.
+
+        Returns:
+            List of branch names.
+
+        Raises:
+            GitError: If unable to get branches.
+        """
+        try:
+            return [head.name for head in self.repo.heads]
+        except Exception as e:
+            raise GitError(f"Failed to get branches: {e}") from e
+
+    def branch_exists(self, branch_name: str) -> bool:
+        """Check if a branch exists.
+
+        Args:
+            branch_name: The name of the branch to check.
+
+        Returns:
+            True if the branch exists, False otherwise.
+        """
+        try:
+            return branch_name in [head.name for head in self.repo.heads]
+        except Exception:
+            return False
+
+    def get_notes(self, ref: str = "HEAD", notes_ref: str = "shortcake") -> str | None:
+        """Get git notes for a commit.
+
+        Args:
+            ref: The commit ref to get notes for.
+            notes_ref: The notes ref to read from.
+
+        Returns:
+            The notes content or None if no notes exist.
+        """
+        # GitPython has limited support for notes, using git directly
+        result = subprocess.run(
+            ["git", "notes", "--ref", notes_ref, "show", ref],
+            cwd=self.working_dir,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+        return None
+
+    def add_notes(self, content: str, ref: str = "HEAD", notes_ref: str = "shortcake") -> None:
+        """Add git notes to a commit.
+
+        Args:
+            content: The notes content to add.
+            ref: The commit ref to add notes to.
+            notes_ref: The notes ref to write to.
+
+        Raises:
+            GitError: If adding notes fails.
+        """
+        # GitPython has limited support for notes, using git directly
+        try:
+            subprocess.run(
+                ["git", "notes", "--ref", notes_ref, "add", "-m", content, ref],
+                cwd=self.working_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+        except subprocess.CalledProcessError as e:
+            raise GitError(f"Failed to add notes: {e.stderr if e.stderr else str(e)}") from e
+
+    def add_remote(self, name: str, url: str) -> None:
+        """Add a remote to the repository.
+
+        Args:
+            name: The name of the remote.
+            url: The URL of the remote repository.
+
+        Raises:
+            GitError: If adding remote fails.
+        """
+        try:
+            self.repo.create_remote(name, url)
+        except Exception as e:
+            raise GitError(f"Failed to add remote '{name}': {e}") from e
+
+    def push(self, remote_name: str, branch_name: str, force: bool = False) -> None:
+        """Push a branch to a remote.
+
+        Args:
+            remote_name: The name of the remote to push to.
+            branch_name: The name of the branch to push.
+            force: Whether to force push.
+
+        Raises:
+            GitError: If push fails.
+        """
+        try:
+            remote = self.repo.remote(remote_name)
+            push_info = remote.push(branch_name, force=force)
+            # Check if push was successful
+            if push_info and push_info[0].flags & push_info[0].ERROR:
+                raise GitError(f"Push failed: {push_info[0].summary}")
+        except Exception as e:
+            if isinstance(e, GitError):
+                raise
+            raise GitError(f"Failed to push to '{remote_name}': {e}") from e
+
+    def fetch(self, remote_name: str = "origin") -> None:
+        """Fetch from a remote.
+
+        Args:
+            remote_name: The name of the remote to fetch from.
+
+        Raises:
+            GitError: If fetch fails.
+        """
+        try:
+            remote = self.repo.remote(remote_name)
+            remote.fetch()
+        except Exception as e:
+            raise GitError(f"Failed to fetch from '{remote_name}': {e}") from e
 
     def has_staged_changes(self) -> bool:
         """Check if there are staged changes.
