@@ -473,6 +473,15 @@ def test_create_config_persist_across_invocations(
 ):
     runner.invoke(app, ["config", "set", "keep_emoji", "true"])
 
+    # Get the default branch name
+    default_branch = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=isolated_git_repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
     test_file = isolated_git_repo / "config_test1.txt"
     test_file.write_text("test1")
     stage_all(isolated_git_repo)
@@ -485,7 +494,7 @@ def test_create_config_persist_across_invocations(
     assert "🚀-first-feature" in result1.stdout
 
     subprocess.run(
-        ["git", "checkout", "main"],
+        ["git", "checkout", default_branch],
         cwd=isolated_git_repo,
         check=True,
         capture_output=True,
