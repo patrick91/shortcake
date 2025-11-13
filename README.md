@@ -23,23 +23,17 @@ Run the CLI using uv:
 # Show help
 uv run shortcake --help
 
-# Say hello with default greeting
-uv run shortcake hello
-
-# Say hello with custom name
-uv run shortcake hello --name "Patrick"
-
 # Show version
 uv run shortcake version
+
+# List tracked branches
+uv run shortcake ls
+
+# Adopt an existing branch
+uv run shortcake adopt
 ```
 
 ## Commands
-
-### `hello`
-Say hello to someone.
-
-Options:
-- `--name TEXT`: Name to greet (default: "World")
 
 ### `version`
 Show the current version of shortcake.
@@ -140,6 +134,75 @@ uv run shortcake config set keep_emoji true
 # Set keep_emoji to false
 uv run shortcake config set keep_emoji false
 ```
+
+### `ls`
+List all branches tracked by shortcake.
+
+This command displays all branches that have been created with `shortcake create` or adopted with `shortcake adopt`, showing their parent relationships.
+
+Example:
+```bash
+# List all tracked branches
+uv run shortcake ls
+
+# Example output:
+# Tracked branches:
+#   feature-1 (parent: main)
+#   feature-2 (parent: feature-1)
+#   feature-3 (parent: feature-2)
+```
+
+### `adopt`
+Adopt an existing Git branch to be tracked by shortcake.
+
+This command adds shortcake tracking to branches that were created manually (without `shortcake create`). The parent branch is **automatically detected** from your Git history - shortcake finds the closest ancestor branch and sets it as the parent.
+
+**Key Features:**
+- 🎯 **Smart Parent Detection**: Automatically finds the best parent by analyzing Git history
+- 🔍 **Dry-Run Mode**: Preview what will happen with `--dry-run`
+- 🎛️ **Manual Override**: Explicitly set parent with `--parent` if needed
+- 🔄 **Recursive Adoption**: Adopt multiple related branches with `--recursive`
+
+Options:
+- `BRANCH`: Branch name to adopt (defaults to current branch)
+- `-p, --parent TEXT`: Explicitly specify parent branch (overrides auto-detection)
+- `-r, --recursive`: Recursively adopt branch ancestors/descendants
+- `-n, --dry-run`: Show what would be adopted without actually doing it
+
+Example:
+```bash
+# Basic usage - automatically detects parent from Git history
+uv run shortcake adopt feature-2
+# Auto-detected parent: feature-1
+# Adopted branch 'feature-2' with parent 'feature-1'
+
+# Preview what will happen (dry-run)
+uv run shortcake adopt feature-3 --dry-run
+# Auto-detected parent: feature-2
+# Would adopt branch 'feature-3' with parent 'feature-2'
+
+# Explicitly specify parent (overrides auto-detection)
+uv run shortcake adopt feature-2 --parent main
+
+# Adopt current branch
+uv run shortcake adopt
+
+# Recursive adoption with parent
+uv run shortcake adopt --recursive --parent main
+```
+
+**How Auto-Detection Works:**
+
+When you have a manual stack like:
+```
+main → feature-1 → feature-2 → feature-3
+```
+
+Shortcake analyzes your Git history to find which branch is the direct parent:
+- `shortcake adopt feature-2` → detects `feature-1` as parent (1 commit away)
+- `shortcake adopt feature-3` → detects `feature-2` as parent (1 commit away)
+
+This works even if you adopt branches in any order!
 
 ## Development
 
