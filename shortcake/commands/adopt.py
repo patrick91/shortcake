@@ -7,6 +7,40 @@ from shortcake.git import GitError, GitRepo
 app = typer.Typer()
 
 
+def find_best_parent(git: GitRepo, branch: str) -> str | None:
+    """Find the best parent branch by looking at git history.
+
+    Args:
+        git: GitRepo instance
+        branch: The branch to find a parent for
+
+    Returns:
+        The name of the best parent branch, or None if no suitable parent found
+    """
+    all_branches = git.get_branches()
+    candidates = []
+
+    for potential_parent in all_branches:
+        # Skip the branch itself and main/master
+        if potential_parent in (branch, "main", "master"):
+            continue
+
+        # Check if this branch is an ancestor of our branch
+        if git.is_ancestor(potential_parent, branch):
+            # Calculate distance (number of commits between them)
+            distance = git.count_commits_between(potential_parent, branch)
+            # Skip branches that point to the same commit (distance = 0)
+            if distance > 0:
+                candidates.append((potential_parent, distance))
+
+    if not candidates:
+        return None
+
+    # Sort by distance and return the closest one (non-zero distance)
+    candidates.sort(key=lambda x: x[1])
+    return candidates[0][0]
+
+
 @app.command()
 def adopt(
     branch: str | None = typer.Argument(
@@ -16,19 +50,23 @@ def adopt(
     recursive: bool = typer.Option(
         False, "--recursive", "-r", help="Recursively adopt branch ancestors/descendants"
     ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", "-n", help="Show what would be adopted without actually adopting"
+    ),
 ):
     """Adopt an existing branch to be tracked by shortcake.
 
     Adds shortcake tracking (git notes) to an existing git branch.
-    Optionally specify a parent branch to create a stacked relationship.
+    Parent branch is automatically detected from git history, or can be specified manually.
 
     The --recursive flag will also adopt ancestor branches (if parent is specified)
     or descendant branches (branches based on this one).
 
     Examples:
-        shortcake adopt              # Adopt current branch
-        shortcake adopt feature-1    # Adopt specific branch
-        shortcake adopt feature-2 -p feature-1  # Adopt with parent
+        shortcake adopt              # Adopt current branch (auto-detect parent)
+        shortcake adopt feature-1    # Adopt specific branch (auto-detect parent)
+        shortcake adopt feature-2 -p feature-1  # Adopt with explicit parent
+        shortcake adopt --dry-run    # Show what would happen without adopting
         shortcake adopt -r -p main   # Adopt current branch and ancestors up to main
     """
     try:
@@ -62,6 +100,15 @@ def adopt(
 
             raise typer.Exit(1)
 
+        # Auto-detect parent if not specified
+        detected_parent = None
+        if parent is None and not recursive:
+            detected_parent = find_best_parent(git, branch_to_adopt)
+            if detected_parent:
+                if dry_run:
+                    typer.echo(f"Auto-detected parent: {detected_parent}")
+                parent = detected_parent
+
         # Validate parent if specified
         if parent:
             if not git.branch_exists(parent):
@@ -69,18 +116,21 @@ def adopt(
 
                 raise typer.Exit(1)
 
-        def adopt_single_branch(branch_name: str, parent_name: str | None):
+        def adopt_single_branch(
+            branch_name: str, parent_name: str | None, is_dry_run: bool = False
+        ):
             """Adopt a single branch."""
-            notes_data = {"parent": parent_name} if parent_name else {}
-            notes_json = json.dumps(notes_data)
-
             # Check if notes already exist
             existing = git.get_notes(branch_name, "shortcake")
             if existing:
                 # Already adopted, skip
                 return False
 
-            git.add_notes(notes_json, branch_name, "shortcake")
+            if not is_dry_run:
+                notes_data = {"parent": parent_name} if parent_name else {}
+                notes_json = json.dumps(notes_data)
+                git.add_notes(notes_json, branch_name, "shortcake")
+
             return True
 
         if recursive:
@@ -92,7 +142,7 @@ def adopt(
                 all_branches = git.get_branches()
 
                 # For now, just adopt the specified branch with the parent
-                if adopt_single_branch(branch_to_adopt, parent):
+                if adopt_single_branch(branch_to_adopt, parent, dry_run):
                     branches_adopted.append(branch_to_adopt)
 
                 # Try to find intermediate branches (simplified - assumes naming convention)
@@ -105,7 +155,7 @@ def adopt(
 
             else:
                 # Adopt descendants (branches based on this one)
-                if adopt_single_branch(branch_to_adopt, None):
+                if adopt_single_branch(branch_to_adopt, None, dry_run):
                     branches_adopted.append(branch_to_adopt)
 
                 # Find branches that might be children
@@ -118,7 +168,8 @@ def adopt(
                         pass
 
             if branches_adopted:
-                typer.echo(f"Adopted {len(branches_adopted)} branch(es):")
+                action = "Would adopt" if dry_run else "Adopted"
+                typer.echo(f"{action} {len(branches_adopted)} branch(es):")
                 for b in branches_adopted:
                     typer.echo(f"  - {b}")
             else:
@@ -126,10 +177,11 @@ def adopt(
 
         else:
             # Simple adoption
-            if adopt_single_branch(branch_to_adopt, parent):
+            if adopt_single_branch(branch_to_adopt, parent, dry_run):
                 parent_info = f" with parent '{parent}'" if parent else ""
+                action = "Would adopt" if dry_run else "Adopted"
 
-                typer.echo(f"Adopted branch '{branch_to_adopt}'{parent_info}")
+                typer.echo(f"{action} branch '{branch_to_adopt}'{parent_info}")
             else:
                 typer.echo(f"Branch '{branch_to_adopt}' is already tracked")
 

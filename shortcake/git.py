@@ -344,3 +344,53 @@ class GitRepo:
         except Exception:
             # If HEAD doesn't exist (no commits yet), check if index has entries
             return len(self.repo.index.entries) > 0
+
+    def get_merge_base(self, branch1: str, branch2: str) -> str | None:
+        """Get the merge-base (common ancestor) commit of two branches.
+
+        Args:
+            branch1: First branch name.
+            branch2: Second branch name.
+
+        Returns:
+            The SHA of the merge-base commit, or None if no common ancestor.
+        """
+        try:
+            result = self.repo.git.merge_base(branch1, branch2)
+            return result.strip() if result else None
+        except Exception:
+            return None
+
+    def is_ancestor(self, ancestor: str, descendant: str) -> bool:
+        """Check if ancestor is in the history of descendant.
+
+        Args:
+            ancestor: The potential ancestor branch/commit.
+            descendant: The descendant branch/commit.
+
+        Returns:
+            True if ancestor is an ancestor of descendant, False otherwise.
+        """
+        try:
+            # Use git merge-base --is-ancestor
+            self.repo.git.merge_base("--is-ancestor", ancestor, descendant)
+            return True
+        except Exception:
+            return False
+
+    def count_commits_between(self, base: str, head: str) -> int:
+        """Count the number of commits between two refs.
+
+        Args:
+            base: The base ref (older commit).
+            head: The head ref (newer commit).
+
+        Returns:
+            Number of commits between base and head.
+        """
+        try:
+            # Use git rev-list to count commits
+            result = self.repo.git.rev_list("--count", f"{base}..{head}")
+            return int(result.strip())
+        except Exception:
+            return 0
