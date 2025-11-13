@@ -242,3 +242,166 @@ def test_adopt_recursive_partial_already_tracked(isolated_git_repo: Path, isolat
     # Adopt with recursive - should handle already tracked branch
     result = runner.invoke(app, ["adopt", "--recursive", "--parent", "feature-1"])
     assert result.exit_code == 0
+
+
+def test_adopt_auto_detect_parent(isolated_git_repo: Path, isolated_config: Path):
+    git = GitRepo()
+
+    # Create a stack: main -> feature-1 -> feature-2
+    # Each branch must point to a different commit for git notes to work properly
+    test_file1 = isolated_git_repo / "test1.txt"
+    test_file1.write_text("test1")
+    git.add_files("test1.txt")
+    git.commit("First feature")
+    git.create_branch("feature-1", checkout=False)  # Don't checkout, stay on main
+
+    test_file2 = isolated_git_repo / "test2.txt"
+    test_file2.write_text("test2")
+    git.add_files("test2.txt")
+    git.commit("Second feature")
+    git.create_branch("feature-2", checkout=False)  # Don't checkout
+
+    # Now feature-1 points to first commit, feature-2 points to second commit
+
+    # Adopt feature-1 first
+    git.checkout_branch("feature-1")
+    result = runner.invoke(app, ["adopt"])
+    assert result.exit_code == 0
+
+    # Adopt feature-2 without specifying parent - should auto-detect feature-1
+    git.checkout_branch("feature-2")
+    result = runner.invoke(app, ["adopt"])
+    assert result.exit_code == 0
+
+    # Verify parent was set correctly
+    notes = git.get_notes("feature-2", "shortcake")
+    assert notes is not None
+    notes_data = json.loads(notes)
+    assert notes_data.get("parent") == "feature-1"
+
+
+def test_adopt_auto_detect_closest_parent(isolated_git_repo: Path, isolated_config: Path):
+    git = GitRepo()
+
+    # Create a more complex history:
+    # main (A) -> feature-1 (B) -> feature-2 (C) -> feature-3 (D)
+    test_file1 = isolated_git_repo / "test1.txt"
+    test_file1.write_text("test1")
+    git.add_files("test1.txt")
+    git.commit("First feature")
+    git.create_branch("feature-1", checkout=False)
+
+    test_file2 = isolated_git_repo / "test2.txt"
+    test_file2.write_text("test2")
+    git.add_files("test2.txt")
+    git.commit("Second feature")
+    git.create_branch("feature-2", checkout=False)
+
+    test_file3 = isolated_git_repo / "test3.txt"
+    test_file3.write_text("test3")
+    git.add_files("test3.txt")
+    git.commit("Third feature")
+    git.create_branch("feature-3", checkout=False)
+
+    # Adopt feature-1 and feature-2
+    git.checkout_branch("feature-1")
+    runner.invoke(app, ["adopt"])
+
+    git.checkout_branch("feature-2")
+    runner.invoke(app, ["adopt"])
+
+    # Adopt feature-3 - should pick feature-2 (closest) not feature-1
+    git.checkout_branch("feature-3")
+    result = runner.invoke(app, ["adopt"])
+    assert result.exit_code == 0
+
+    notes = git.get_notes("feature-3", "shortcake")
+    assert notes is not None
+    notes_data = json.loads(notes)
+    assert notes_data.get("parent") == "feature-2"
+
+
+def test_adopt_dry_run_shows_what_would_happen(isolated_git_repo: Path, isolated_config: Path):
+    git = GitRepo()
+
+    # Create a branch
+    test_file1 = isolated_git_repo / "test1.txt"
+    test_file1.write_text("test1")
+    git.add_files("test1.txt")
+    git.commit("First feature")
+    git.create_branch("feature-1", checkout=True)
+
+    # Use dry run
+    result = runner.invoke(app, ["adopt", "--dry-run"])
+    assert result.exit_code == 0
+    assert "Would adopt" in result.stdout
+
+    # Verify nothing was actually adopted
+    notes = git.get_notes("feature-1", "shortcake")
+    assert notes is None
+
+
+def test_adopt_dry_run_with_auto_detect_parent(isolated_git_repo: Path, isolated_config: Path):
+    git = GitRepo()
+
+    # Create a stack with different commits
+    test_file1 = isolated_git_repo / "test1.txt"
+    test_file1.write_text("test1")
+    git.add_files("test1.txt")
+    git.commit("First feature")
+    git.create_branch("feature-1", checkout=False)
+
+    test_file2 = isolated_git_repo / "test2.txt"
+    test_file2.write_text("test2")
+    git.add_files("test2.txt")
+    git.commit("Second feature")
+    git.create_branch("feature-2", checkout=False)
+
+    # Adopt feature-1 first
+    git.checkout_branch("feature-1")
+    runner.invoke(app, ["adopt"])
+
+    # Dry run feature-2 - should show auto-detected parent
+    git.checkout_branch("feature-2")
+    result = runner.invoke(app, ["adopt", "--dry-run"])
+    assert result.exit_code == 0
+    assert "Would adopt" in result.stdout
+    assert "Auto-detected parent: feature-1" in result.stdout
+
+    # Verify nothing was adopted
+    notes = git.get_notes("feature-2", "shortcake")
+    assert notes is None
+
+
+def test_adopt_explicit_parent_overrides_auto_detect(
+    isolated_git_repo: Path, isolated_config: Path
+):
+    git = GitRepo()
+
+    # Create branches: main -> feature-1 -> feature-2
+    test_file1 = isolated_git_repo / "test1.txt"
+    test_file1.write_text("test1")
+    git.add_files("test1.txt")
+    git.commit("First feature")
+    git.create_branch("feature-1", checkout=False)
+
+    test_file2 = isolated_git_repo / "test2.txt"
+    test_file2.write_text("test2")
+    git.add_files("test2.txt")
+    git.commit("Second feature")
+    git.create_branch("feature-2", checkout=False)
+
+    # Adopt both with explicit parent for feature-2 set to main
+    # (even though feature-1 would be auto-detected)
+    git.checkout_branch("feature-1")
+    runner.invoke(app, ["adopt"])
+
+    git.checkout_branch("feature-2")
+    result = runner.invoke(app, ["adopt", "--parent", "main"])
+    assert result.exit_code == 0
+
+    # Verify explicit parent was used
+    notes = git.get_notes("feature-2", "shortcake")
+    assert notes is not None
+    notes_data = json.loads(notes)
+    assert notes_data.get("parent") == "main"
