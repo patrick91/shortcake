@@ -1,4 +1,5 @@
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -6,7 +7,7 @@ from typer.testing import CliRunner
 
 from shortcake.cli import app
 
-from .conftest import GitEditorScript
+type GitEditorScript = Callable[[str], None]
 
 runner = CliRunner()
 

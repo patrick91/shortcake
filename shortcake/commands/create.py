@@ -10,7 +10,6 @@ from shortcake.git import GitError, GitRepo
 app = typer.Typer()
 
 
-# TODO: move this somewhere else
 def _generate_branch_name(commit_message: str, keep_emoji: bool = False) -> str:
     """Generate a branch name from a commit message.
 

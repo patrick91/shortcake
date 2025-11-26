@@ -1,7 +1,5 @@
 """GitHub API mocking helpers for testing."""
 
-import json
-from pathlib import Path
 from typing import Any
 
 import respx
@@ -178,21 +176,6 @@ class GitHubMocker:
             )
         else:
             self.mock.route().mock(return_value=Response(status_code, json=error_data))
-
-
-def load_github_fixture(fixture_name: str) -> dict[str, Any]:
-    """Load a GitHub API response fixture from JSON.
-
-    Args:
-        fixture_name: Name of the fixture file (without .json extension)
-
-    Returns:
-        The parsed JSON data
-    """
-    fixture_path = (
-        Path(__file__).parent.parent / "fixtures" / "github_responses" / f"{fixture_name}.json"
-    )
-    return json.loads(fixture_path.read_text())
 
 
 def create_pr_body(description: str, stack_info: dict[str, Any] | None = None) -> str:

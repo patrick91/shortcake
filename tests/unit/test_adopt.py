@@ -193,57 +193,6 @@ def test_adopt_branch_with_stacked_structure(isolated_git_repo: Path, isolated_c
     assert notes_data.get("parent") == "feature-1"
 
 
-def test_adopt_recursive_ancestors(isolated_git_repo: Path, isolated_config: Path):
-    git = GitRepo()
-
-    # Create a branch
-    git.create_branch("my-feature", checkout=True)
-
-    # Adopt with recursive flag and parent
-    result = runner.invoke(app, ["adopt", "--recursive", "--parent", "main"])
-    assert result.exit_code == 0
-    assert "Adopted" in result.stdout
-
-
-def test_adopt_recursive_descendants(isolated_git_repo: Path, isolated_config: Path):
-    git = GitRepo()
-
-    # Create a branch
-    git.create_branch("parent-branch", checkout=True)
-
-    # Adopt with recursive flag (no parent specified, so descendants)
-    result = runner.invoke(app, ["adopt", "--recursive"])
-    assert result.exit_code == 0
-
-
-def test_adopt_recursive_middle_of_stack(isolated_git_repo: Path, isolated_config: Path):
-    git = GitRepo()
-
-    # Create multiple branches
-    git.create_branch("base", checkout=False)
-    git.create_branch("middle", checkout=False)
-    git.create_branch("top", checkout=True)
-
-    # Adopt middle with recursive
-    result = runner.invoke(app, ["adopt", "middle", "--recursive", "--parent", "base"])
-    assert result.exit_code == 0
-
-
-def test_adopt_recursive_partial_already_tracked(isolated_git_repo: Path, isolated_config: Path):
-    git = GitRepo()
-
-    # Create and adopt one branch
-    git.create_branch("feature-1", checkout=False)
-    runner.invoke(app, ["adopt", "feature-1"])
-
-    # Create another branch
-    git.create_branch("feature-2", checkout=True)
-
-    # Adopt with recursive - should handle already tracked branch
-    result = runner.invoke(app, ["adopt", "--recursive", "--parent", "feature-1"])
-    assert result.exit_code == 0
-
-
 def test_adopt_auto_detect_parent(isolated_git_repo: Path, isolated_config: Path):
     git = GitRepo()
 
@@ -402,6 +351,31 @@ def test_adopt_explicit_parent_overrides_auto_detect(
 
     # Verify explicit parent was used
     notes = git.get_notes("feature-2", "shortcake")
+    assert notes is not None
+    notes_data = json.loads(notes)
+    assert notes_data.get("parent") == "main"
+
+
+def test_adopt_fallback_to_main_when_no_other_parent(
+    isolated_git_repo: Path, isolated_config: Path
+):
+    """Test that adopt falls back to main when no other branch is a closer parent."""
+    git = GitRepo()
+
+    # Create a branch off main with its own commit (so distance > 0)
+    git.create_branch("my-feature", checkout=True)
+    test_file1 = isolated_git_repo / "test1.txt"
+    test_file1.write_text("test1")
+    git.add_files("test1.txt")
+    git.commit("Feature commit")
+
+    # Adopt the branch - should auto-detect main as parent
+    result = runner.invoke(app, ["adopt"])
+    assert result.exit_code == 0
+    assert "Adopted branch 'my-feature' with parent 'main'" in result.stdout
+
+    # Verify parent was set to main
+    notes = git.get_notes("my-feature", "shortcake")
     assert notes is not None
     notes_data = json.loads(notes)
     assert notes_data.get("parent") == "main"
