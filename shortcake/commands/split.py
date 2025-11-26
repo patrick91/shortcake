@@ -163,8 +163,8 @@ def split(
             else:
                 parent = state["original_parent"]
 
-            # Add shortcake notes
-            notes = {"parent": parent}
+            # Add shortcake notes with parent_revision
+            notes = {"parent": parent, "parent_revision": git.get_commit_sha(parent)}
             git.add_notes(json.dumps(notes), branch_name, "shortcake")
 
             # Track this branch
@@ -245,8 +245,8 @@ def split(
             # Parent is the original branch's parent
             parent = state["original_parent"]
 
-        # Add shortcake notes
-        notes = {"parent": parent}
+        # Add shortcake notes with parent_revision
+        notes = {"parent": parent, "parent_revision": git.get_commit_sha(parent)}
         git.add_notes(json.dumps(notes), branch_name, "shortcake")
 
         # Track this branch

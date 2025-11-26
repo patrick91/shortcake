@@ -120,7 +120,10 @@ def adopt(
                 raise typer.Exit(1)
 
         if not dry_run:
-            notes_data = {"parent": parent} if parent else {}
+            notes_data = {}
+            if parent:
+                notes_data["parent"] = parent
+                notes_data["parent_revision"] = git.get_commit_sha(parent)
             notes_json = json.dumps(notes_data)
             git.add_notes(notes_json, branch_to_adopt, "shortcake")
 

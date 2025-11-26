@@ -51,31 +51,37 @@ def _get_remote_ref(git: GitRepo, branch: str) -> str:
     return branch
 
 
-def _needs_restack(git: GitRepo, branch: str, parent: str) -> bool:
+def _needs_restack(git: GitRepo, branch: str, parent: str, metadata: dict) -> bool:
     """Check if a branch needs to be restacked onto its parent.
 
-    A branch needs restacking if it's not already based on the parent's
-    current HEAD. This is determined by checking if the merge base of
-    the branch and parent equals the parent's current commit.
+    A branch needs restacking if the stored parent_revision doesn't match
+    the parent's current HEAD. This is the same approach as Graphite/Charcoal.
 
     Args:
         git: GitRepo instance
         branch: The branch to check
         parent: The parent branch
+        metadata: The branch's shortcake metadata
 
     Returns:
         True if the branch needs rebasing, False otherwise
     """
     try:
-        # Get the merge base between branch and parent
-        merge_base = git.get_merge_base(branch, parent)
-        if not merge_base:
-            return True  # Can't determine, assume needs restack
+        # Get the stored parent revision from metadata
+        stored_parent_rev = metadata.get("parent_revision")
 
         # Get the current commit of the parent
         parent_commit = git.get_commit_sha(parent)
 
-        # If merge base equals parent commit, branch is already based on parent
+        # If we have a stored parent revision, compare it
+        if stored_parent_rev:
+            return stored_parent_rev != parent_commit
+
+        # Fallback: use merge-base if no stored revision (legacy branches)
+        merge_base = git.get_merge_base(branch, parent)
+        if not merge_base:
+            return True  # Can't determine, assume needs restack
+
         return merge_base != parent_commit
     except GitError:
         return True  # On error, assume needs restack
@@ -303,7 +309,7 @@ def restack(
     if dry_run:
         typer.echo("\nWould check the following branches:")
         for branch in all_branches:
-            needs = _needs_restack(git, branch.name, branch.parent)
+            needs = _needs_restack(git, branch.name, branch.parent, branch.notes_data)
             status = "needs restack" if needs else "up to date"
             typer.echo(f"  {branch.name} → {branch.parent} ({status})")
         return
@@ -319,7 +325,7 @@ def restack(
     restacked_count = 0
     for branch in all_branches:
         # Check if this branch actually needs rebasing
-        if not _needs_restack(git, branch.name, branch.parent):
+        if not _needs_restack(git, branch.name, branch.parent, branch.notes_data):
             typer.echo(f"  {branch.name} does not need to be restacked")
             continue
 
@@ -338,8 +344,10 @@ def restack(
                 git.checkout_branch(branch.name)
                 git.rebase(branch.parent)
 
-            # Re-attach notes to the new commit SHA
-            git.update_notes(json.dumps(saved_notes[branch.name]), branch.name, "shortcake")
+            # Update notes with new parent_revision and re-attach to new commit SHA
+            updated_notes = saved_notes[branch.name].copy()
+            updated_notes["parent_revision"] = git.get_commit_sha(branch.parent)
+            git.update_notes(json.dumps(updated_notes), branch.name, "shortcake")
 
             typer.echo(" done")
 
