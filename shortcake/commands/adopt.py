@@ -62,6 +62,9 @@ def adopt(
     dry_run: bool = typer.Option(
         False, "--dry-run", "-n", help="Show what would be adopted without actually adopting"
     ),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Re-adopt branch even if already tracked (updates parent)"
+    ),
 ):
     """Adopt an existing branch to be tracked by shortcake.
 
@@ -96,11 +99,12 @@ def adopt(
         # Check if already tracked
         existing_notes = git.get_notes(branch_to_adopt, "shortcake")
 
-        if existing_notes:
+        if existing_notes and not force:
             typer.echo(
                 f"Error: Branch '{branch_to_adopt}' is already tracked by shortcake", err=True
             )
             typer.echo("Use 'shortcake ls' to see all tracked branches")
+            typer.echo("Use --force to update the parent")
 
             raise typer.Exit(1)
 
@@ -120,15 +124,24 @@ def adopt(
                 raise typer.Exit(1)
 
         if not dry_run:
+            # Preserve existing notes (like pr_number) when force-updating
             notes_data = {}
+            if existing_notes:
+                try:
+                    notes_data = json.loads(existing_notes)
+                except json.JSONDecodeError:
+                    pass
+
             if parent:
                 notes_data["parent"] = parent
                 notes_data["parent_revision"] = git.get_commit_sha(parent)
             notes_json = json.dumps(notes_data)
-            git.add_notes(notes_json, branch_to_adopt, "shortcake")
+            git.update_notes(notes_json, branch_to_adopt, "shortcake")
 
         parent_info = f" with parent '{parent}'" if parent else ""
-        action = "Would adopt" if dry_run else "Adopted"
+        action = (
+            "Would adopt" if dry_run else ("Updated" if force and existing_notes else "Adopted")
+        )
         typer.echo(f"{action} branch '{branch_to_adopt}'{parent_info}")
 
     except GitError as e:
