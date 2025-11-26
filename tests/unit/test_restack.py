@@ -224,16 +224,18 @@ def test_restack_after_main_updated(
     git.commit("Add feature")
     git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
 
-    # Simulate main being updated (add a commit to main)
+    # Simulate main being updated on remote (add a commit to main and push)
     git.checkout_branch("main")
     (isolated_git_repo / "main-update.txt").write_text("main update")
     git.add_files("main-update.txt")
     git.commit("Update main")
+    # Push the update to origin so origin/main is updated
+    subprocess.run(["git", "push", "origin", "main"], cwd=isolated_git_repo, check=True)
 
     # Go back to feature
     git.checkout_branch("feature")
 
-    # Restack should rebase feature onto updated main
+    # Restack should rebase feature onto updated origin/main
     result = runner.invoke(app, ["restack"])
     assert result.exit_code == 0
     assert "Restack complete" in result.output

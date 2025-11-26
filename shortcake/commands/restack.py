@@ -30,6 +30,24 @@ def _get_branch_metadata(git: GitRepo, branch: str) -> dict:
     return {}
 
 
+def _get_remote_ref(git: GitRepo, branch: str) -> str:
+    """Get the remote ref for a branch if it's a trunk branch.
+
+    For main/master, returns origin/main or origin/master to ensure
+    we rebase onto the latest remote version.
+
+    Args:
+        git: GitRepo instance
+        branch: The branch name
+
+    Returns:
+        The remote ref (e.g., origin/main) or the original branch name
+    """
+    if branch in ("main", "master") and git.has_remote("origin"):
+        return f"origin/{branch}"
+    return branch
+
+
 def _get_stack_from_current(git: GitRepo, current_branch: str) -> list[BranchInfo]:
     """Get the stack of branches from trunk up to current branch.
 
@@ -53,10 +71,13 @@ def _get_stack_from_current(git: GitRepo, current_branch: str) -> list[BranchInf
         if not parent:
             break  # Not a shortcake-managed branch or reached trunk
 
+        # Use remote ref for trunk branches (main/master)
+        rebase_target = _get_remote_ref(git, parent)
+
         branches.append(
             BranchInfo(
                 name=branch,
-                parent=parent,
+                parent=rebase_target,
                 notes_data=metadata,
             )
         )
