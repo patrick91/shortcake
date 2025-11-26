@@ -386,14 +386,54 @@ def test_submit_automatically_restacks_after_amend(
         respx.get("https://api.github.com/repos/testuser/testrepo/pulls").mock(
             return_value=Response(200, json=[])
         )
+
+        # Counter for PR numbers
+        pr_counter = [0]
+
+        def create_pr_response(request):
+            pr_counter[0] += 1
+            return Response(
+                201,
+                json={
+                    "number": pr_counter[0],
+                    "title": "Test",
+                    "body": "",
+                    "html_url": f"https://github.com/testuser/testrepo/pull/{pr_counter[0]}",
+                    "head": {"ref": "add-feature-1", "sha": "abc123"},
+                    "base": {"ref": "main", "sha": "def456"},
+                    "state": "open",
+                },
+            )
+
         # Mock PR creation
         respx.post("https://api.github.com/repos/testuser/testrepo/pulls").mock(
+            side_effect=create_pr_response
+        )
+
+        # Mock GET for individual PRs (for updating body with stack info)
+        respx.get(url__regex=r".*/repos/testuser/testrepo/pulls/\d+$").mock(
             return_value=Response(
-                201,
+                200,
                 json={
                     "number": 1,
                     "title": "Test",
                     "body": "",
+                    "html_url": "https://github.com/testuser/testrepo/pull/1",
+                    "head": {"ref": "add-feature-1", "sha": "abc123"},
+                    "base": {"ref": "main", "sha": "def456"},
+                    "state": "open",
+                },
+            )
+        )
+
+        # Mock PATCH for updating PR body
+        respx.patch(url__regex=r".*/repos/testuser/testrepo/pulls/\d+$").mock(
+            return_value=Response(
+                200,
+                json={
+                    "number": 1,
+                    "title": "Test",
+                    "body": "## Stack\n...",
                     "html_url": "https://github.com/testuser/testrepo/pull/1",
                     "head": {"ref": "add-feature-1", "sha": "abc123"},
                     "base": {"ref": "main", "sha": "def456"},
@@ -410,3 +450,142 @@ def test_submit_automatically_restacks_after_amend(
     # After submit, feature-2 should have only 1 commit on top of feature-1
     commits_after = get_commits_between(isolated_git_repo, "add-feature-1", "add-feature-2")
     assert len(commits_after) == 1  # Only feature-2 commit
+
+
+@pytest.mark.integration
+def test_submit_updates_pr_body_with_stack_info(
+    runner: CliRunner,
+    isolated_git_repo: Path,
+    isolated_config: Path,
+    remote_repo: Path,
+    git_editor_script: GitEditorScript,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that submit updates PR bodies with stack information."""
+    import respx
+    from httpx import Response
+
+    git = GitRepo(isolated_git_repo)
+
+    # Set up remote
+    git.add_remote("origin", str(remote_repo))
+    subprocess.run(
+        ["git", "push", "-u", "origin", "main"],
+        cwd=isolated_git_repo,
+        check=True,
+        capture_output=True,
+    )
+
+    # Create first branch
+    (isolated_git_repo / "feature1.txt").write_text("feature 1")
+    stage_all(isolated_git_repo)
+    git_editor_script("Add feature 1")
+    result = runner.invoke(app, ["create"])
+    assert result.exit_code == 0
+
+    # Create second branch stacked on first
+    (isolated_git_repo / "feature2.txt").write_text("feature 2")
+    stage_all(isolated_git_repo)
+    git_editor_script("Add feature 2")
+    result = runner.invoke(app, ["create"])
+    assert result.exit_code == 0
+
+    # Set up GitHub mock
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    subprocess.run(
+        ["git", "remote", "set-url", "origin", "git@github.com:testuser/testrepo.git"],
+        cwd=isolated_git_repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "remote", "set-url", "--push", "origin", str(remote_repo)],
+        cwd=isolated_git_repo,
+        check=True,
+    )
+
+    # Track what bodies are sent to the API
+    updated_bodies: list[str] = []
+
+    # Mock GitHub API
+    with respx.mock:
+        # Mock PR lookup (no existing PRs)
+        respx.get("https://api.github.com/repos/testuser/testrepo/pulls").mock(
+            return_value=Response(200, json=[])
+        )
+
+        # Counter for PR numbers
+        pr_counter = [0]
+
+        def create_pr_response(request):
+            pr_counter[0] += 1
+            return Response(
+                201,
+                json={
+                    "number": pr_counter[0],
+                    "title": "Test",
+                    "body": "",
+                    "html_url": f"https://github.com/testuser/testrepo/pull/{pr_counter[0]}",
+                    "head": {"ref": f"add-feature-{pr_counter[0]}", "sha": "abc123"},
+                    "base": {"ref": "main", "sha": "def456"},
+                    "state": "open",
+                },
+            )
+
+        # Mock PR creation
+        respx.post("https://api.github.com/repos/testuser/testrepo/pulls").mock(
+            side_effect=create_pr_response
+        )
+
+        # Mock GET for individual PRs
+        respx.get(url__regex=r".*/repos/testuser/testrepo/pulls/\d+$").mock(
+            return_value=Response(
+                200,
+                json={
+                    "number": 1,
+                    "title": "Test",
+                    "body": "",
+                    "html_url": "https://github.com/testuser/testrepo/pull/1",
+                    "head": {"ref": "add-feature-1", "sha": "abc123"},
+                    "base": {"ref": "main", "sha": "def456"},
+                    "state": "open",
+                },
+            )
+        )
+
+        # Mock PATCH for updating PR body - capture the body
+        def update_pr_response(request):
+            import json
+
+            body_data = json.loads(request.content)
+            if "body" in body_data:
+                updated_bodies.append(body_data["body"])
+            return Response(
+                200,
+                json={
+                    "number": 1,
+                    "title": "Test",
+                    "body": body_data.get("body", ""),
+                    "html_url": "https://github.com/testuser/testrepo/pull/1",
+                    "head": {"ref": "add-feature-1", "sha": "abc123"},
+                    "base": {"ref": "main", "sha": "def456"},
+                    "state": "open",
+                },
+            )
+
+        respx.patch(url__regex=r".*/repos/testuser/testrepo/pulls/\d+$").mock(
+            side_effect=update_pr_response
+        )
+
+        # Submit the stack
+        result = runner.invoke(app, ["submit", "--stack"])
+        assert result.exit_code == 0
+        assert "Updating PR descriptions with stack info" in result.output
+
+    # Verify stack info was added to PR bodies
+    assert len(updated_bodies) == 2  # Both PRs should be updated
+
+    # Check that the stack info contains expected content
+    for body in updated_bodies:
+        assert "## Stack" in body
+        assert "#1" in body or "#2" in body  # PR numbers
+        assert "main" in body  # Base branch

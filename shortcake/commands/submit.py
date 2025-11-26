@@ -148,6 +148,75 @@ def _get_main_branch(git: GitRepo) -> str:
     raise GitError("Neither 'main' nor 'master' branch exists")
 
 
+# Markers for the stack section in PR body
+STACK_START_MARKER = "<!-- shortcake stack start -->"
+STACK_END_MARKER = "<!-- shortcake stack end -->"
+
+
+def _generate_stack_description(
+    branches: list[BranchSubmitInfo],
+    current_branch: str,
+    main_branch: str,
+) -> str:
+    """Generate a markdown description of the stack for PR body.
+
+    Args:
+        branches: List of branches in the stack (bottom to top)
+        current_branch: The branch this description is for
+        main_branch: The name of the main/trunk branch
+
+    Returns:
+        Markdown string describing the stack
+    """
+    lines = ["## Stack"]
+
+    # Show branches from top to bottom (reverse order)
+    for branch in reversed(branches):
+        pr_link = f"#{branch.pr_number}" if branch.pr_number else branch.name
+        if branch.name == current_branch:
+            lines.append(f"- **{pr_link}** ⬅")
+        else:
+            lines.append(f"- {pr_link}")
+
+    # Add main branch at the bottom
+    lines.append(f"- {main_branch}")
+
+    return "\n".join(lines)
+
+
+def _update_pr_body_with_stack(
+    existing_body: str,
+    stack_description: str,
+) -> str:
+    """Update PR body with stack description.
+
+    If the body already has a stack section, replace it.
+    Otherwise, prepend the stack section.
+
+    Args:
+        existing_body: Current PR body
+        stack_description: New stack description
+
+    Returns:
+        Updated PR body
+    """
+    stack_section = f"{STACK_START_MARKER}\n{stack_description}\n{STACK_END_MARKER}"
+
+    # Check if body already has a stack section
+    if STACK_START_MARKER in existing_body and STACK_END_MARKER in existing_body:
+        # Replace existing stack section
+        import re
+
+        pattern = f"{re.escape(STACK_START_MARKER)}.*?{re.escape(STACK_END_MARKER)}"
+        return re.sub(pattern, stack_section, existing_body, flags=re.DOTALL)
+    else:
+        # Prepend stack section
+        if existing_body.strip():
+            return f"{stack_section}\n\n{existing_body}"
+        else:
+            return stack_section
+
+
 @app.command()
 def submit(
     draft: bool = typer.Option(False, "--draft", "-d", help="Create PR as draft"),
@@ -423,10 +492,34 @@ def submit(
                 branch_metadata["pr_url"] = pr.html_url
                 _update_branch_metadata(git, branch.name, branch_metadata)
 
+                # Update branch object with PR number for stack description
+                branch.pr_number = pr.number
+                branch.pr_url = pr.html_url
+
             except GitHubError as e:
                 typer.echo(" FAILED")
                 typer.echo(f"Error with GitHub API: {e}", err=True)
                 raise typer.Exit(1) from None
+
+        # Update PR bodies with stack info (only if we have multiple branches)
+        if len(branches) > 1:
+            typer.echo()
+            typer.echo("Updating PR descriptions with stack info...")
+            for branch in branches:
+                if branch.pr_number:
+                    try:
+                        # Get current PR to preserve existing body
+                        current_pr = github.get_pull_request(owner, repo, branch.pr_number)
+
+                        # Generate stack description for this branch
+                        stack_desc = _generate_stack_description(branches, branch.name, main_branch)
+
+                        # Update PR body
+                        new_body = _update_pr_body_with_stack(current_pr.body, stack_desc)
+                        if new_body != current_pr.body:
+                            github.update_pull_request(owner, repo, branch.pr_number, body=new_body)
+                    except GitHubError:
+                        pass  # Ignore errors updating PR body
 
         # Summary
         typer.echo()

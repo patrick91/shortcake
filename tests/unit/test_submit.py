@@ -365,3 +365,89 @@ def test_submit_finds_existing_pr(
     assert result.exit_code == 0
     assert "PR #42" in result.output
     assert "https://github.com/testuser/testrepo/pull/42" in result.output
+
+
+def test_generate_stack_description():
+    from shortcake.commands.submit import BranchSubmitInfo, _generate_stack_description
+
+    branches = [
+        BranchSubmitInfo(
+            name="feature-1", parent="main", commit_message="Add feature 1", pr_number=1
+        ),
+        BranchSubmitInfo(
+            name="feature-2",
+            parent="feature-1",
+            commit_message="Add feature 2",
+            pr_number=2,
+        ),
+        BranchSubmitInfo(
+            name="feature-3",
+            parent="feature-2",
+            commit_message="Add feature 3",
+            pr_number=3,
+        ),
+    ]
+
+    # Test for middle branch
+    desc = _generate_stack_description(branches, "feature-2", "main")
+    assert "## Stack" in desc
+    assert "#3" in desc
+    assert "**#2** ⬅" in desc  # Current branch is highlighted
+    assert "#1" in desc
+    assert "main" in desc
+
+    # Verify order (top to bottom)
+    lines = desc.split("\n")
+    assert lines[0] == "## Stack"
+    assert "#3" in lines[1]  # Top of stack
+    assert "#2" in lines[2]  # Current (middle)
+    assert "#1" in lines[3]  # Bottom of stack
+    assert "main" in lines[4]  # Base
+
+
+def test_update_pr_body_with_stack_new_body():
+    from shortcake.commands.submit import _update_pr_body_with_stack
+
+    stack_desc = "## Stack\n- #2\n- #1\n- main"
+
+    # Empty body
+    result = _update_pr_body_with_stack("", stack_desc)
+    assert "## Stack" in result
+    assert "<!-- shortcake stack start -->" in result
+    assert "<!-- shortcake stack end -->" in result
+
+    # Body with existing content
+    result = _update_pr_body_with_stack("My PR description", stack_desc)
+    assert "## Stack" in result
+    assert "My PR description" in result
+    # Stack should come before the existing content
+    assert result.index("## Stack") < result.index("My PR description")
+
+
+def test_update_pr_body_with_stack_replace_existing():
+    from shortcake.commands.submit import (
+        STACK_END_MARKER,
+        STACK_START_MARKER,
+        _update_pr_body_with_stack,
+    )
+
+    existing_body = f"""Some intro text
+
+{STACK_START_MARKER}
+## Stack
+- #1 ⬅
+- main
+{STACK_END_MARKER}
+
+More content below"""
+
+    new_stack_desc = "## Stack\n- #2 ⬅\n- #1\n- main"
+
+    result = _update_pr_body_with_stack(existing_body, new_stack_desc)
+
+    # Should replace the old stack
+    assert "#2" in result
+    assert "Some intro text" in result
+    assert "More content below" in result
+    # Should only have one stack section
+    assert result.count("## Stack") == 1
