@@ -231,13 +231,15 @@ def test_split_full_workflow(isolated_git_repo: Path, isolated_config: Path):
     result = runner.invoke(app, ["split", "--continue"], input="Add utils\n")
     assert result.exit_code == 0
 
-    # Should have created two branches
+    # Should have created two branches:
+    # - add-api (first split branch)
+    # - feature (original branch name, preserved for PR)
     branches = git.get_branches()
     api_branch = [b for b in branches if "api" in b.lower()]
-    utils_branch = [b for b in branches if "utils" in b.lower()]
+    # The last branch is renamed to the original "feature" to preserve PRs
+    assert "feature" in branches
 
     assert len(api_branch) >= 1
-    assert len(utils_branch) >= 1
 
     # State file should be cleaned up
     state_file = isolated_git_repo / ".git" / "shortcake-split-state.json"
