@@ -19,7 +19,7 @@ runner = CliRunner()
 def test_submit_help():
     result = runner.invoke(app, ["submit", "--help"])
     assert result.exit_code == 0
-    assert "Push branch and create or update a pull request" in result.stdout
+    assert "Push branches and create or update pull requests" in result.stdout
 
 
 def test_parse_github_remote_ssh():
@@ -188,7 +188,7 @@ def test_submit_dry_run_existing_pr(
     assert "#123" in result.output
 
 
-def test_submit_dry_run_stack(
+def test_submit_dry_run_default_submits_stack(
     isolated_git_repo: Path,
     isolated_config: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -215,7 +215,8 @@ def test_submit_dry_run_stack(
     # Set a mock token
     monkeypatch.setenv("GITHUB_TOKEN", "test-token")
 
-    result = runner.invoke(app, ["submit", "--dry-run", "--stack"])
+    # Default behavior should submit all branches in the stack
+    result = runner.invoke(app, ["submit", "--dry-run"])
     assert result.exit_code == 0
     assert "feature-1" in result.output
     assert "feature-2" in result.output

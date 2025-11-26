@@ -35,7 +35,7 @@ def get_remote_sha(repo_path: Path, remote: str, ref: str) -> str | None:
 
 
 @pytest.mark.integration
-def test_submit_stack_pushes_all_branches(
+def test_submit_default_pushes_all_branches(
     runner: CliRunner,
     isolated_git_repo: Path,
     isolated_config: Path,
@@ -43,10 +43,10 @@ def test_submit_stack_pushes_all_branches(
     git_editor_script: GitEditorScript,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that submit --stack pushes all branches in the stack.
+    """Test that submit (default) pushes all branches in the stack.
 
-    This verifies that when submitting a stacked PR, all parent branches
-    are also pushed to origin.
+    By default, submit pushes all parent branches to ensure GitHub shows
+    correct diffs for stacked PRs.
     """
     git = GitRepo(isolated_git_repo)
 
@@ -92,15 +92,15 @@ def test_submit_stack_pushes_all_branches(
         check=True,
     )
 
-    # Dry run should show both branches
-    result = runner.invoke(app, ["submit", "--stack", "--dry-run"])
+    # Dry run should show both branches (default behavior)
+    result = runner.invoke(app, ["submit", "--dry-run"])
     assert result.exit_code == 0
     assert "add-feature-1" in result.output
     assert "add-feature-2" in result.output
 
 
 @pytest.mark.integration
-def test_submit_single_branch_shows_correct_diff_warning(
+def test_submit_current_only_submits_single_branch(
     runner: CliRunner,
     isolated_git_repo: Path,
     isolated_config: Path,
@@ -108,11 +108,10 @@ def test_submit_single_branch_shows_correct_diff_warning(
     git_editor_script: GitEditorScript,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test submit without --stack only submits current branch.
+    """Test submit --current only submits the current branch.
 
-    This documents the current behavior where submitting a single branch
-    doesn't push parent branches, which can cause GitHub to show incorrect
-    diffs if parents aren't pushed separately.
+    Use --current when you've already pushed parent branches and only
+    want to update the current branch.
     """
     git = GitRepo(isolated_git_repo)
 
@@ -149,16 +148,16 @@ def test_submit_single_branch_shows_correct_diff_warning(
         check=True,
     )
 
-    # Dry run without --stack should only show current branch
-    result = runner.invoke(app, ["submit", "--dry-run"])
+    # Dry run with --current should only show current branch
+    result = runner.invoke(app, ["submit", "--current", "--dry-run"])
     assert result.exit_code == 0
     assert "add-feature-2" in result.output
-    # Parent branch should NOT be in the output for single branch submit
+    # Parent branch should NOT be in the output for --current submit
     assert "add-feature-1 →" not in result.output
 
 
 @pytest.mark.integration
-def test_submit_stack_dry_run_shows_stack_order(
+def test_submit_dry_run_shows_stack_order(
     runner: CliRunner,
     isolated_git_repo: Path,
     isolated_config: Path,
@@ -166,7 +165,7 @@ def test_submit_stack_dry_run_shows_stack_order(
     git_editor_script: GitEditorScript,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Test that submit --stack --dry-run shows branches in correct order.
+    """Test that submit --dry-run shows branches in correct order.
 
     Branches should be listed from bottom of stack (closest to main) to top.
     """
@@ -207,10 +206,10 @@ def test_submit_stack_dry_run_shows_stack_order(
         check=True,
     )
 
-    result = runner.invoke(app, ["submit", "--stack", "--dry-run"])
+    result = runner.invoke(app, ["submit", "--dry-run"])
     assert result.exit_code == 0
 
-    # All three branches should be listed
+    # All three branches should be listed (default behavior)
     assert "add-feature-1" in result.output
     assert "add-feature-2" in result.output
     assert "add-feature-3" in result.output

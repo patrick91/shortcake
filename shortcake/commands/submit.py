@@ -99,25 +99,27 @@ def _get_main_branch(git: GitRepo) -> str:
 @app.command()
 def submit(
     draft: bool = typer.Option(False, "--draft", "-d", help="Create PR as draft"),
-    stack: bool = typer.Option(False, "--stack", "-s", help="Submit all branches in the stack"),
+    current: bool = typer.Option(
+        False, "--current", "-c", help="Only submit the current branch (not the full stack)"
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", "-n", help="Show what would be done without making changes"
     ),
     force: bool = typer.Option(False, "--force", "-f", help="Force push branches"),
 ):
-    """Push branch and create or update a pull request.
+    """Push branches and create or update pull requests.
 
-    This command pushes the current branch to the remote and either creates
-    a new pull request or updates an existing one.
+    By default, submits all branches in the stack from trunk up to the current
+    branch. This ensures parent branches are pushed, so GitHub shows correct
+    diffs for stacked PRs.
 
-    For stacked branches, use --stack to submit all branches in the stack,
-    which will create PRs with proper base branches (child PRs target their
-    parent branch, not main).
+    Use --current to only submit the current branch (useful when you've already
+    pushed parent branches).
 
     Examples:
-        shortcake submit              # Submit current branch
-        shortcake submit --stack      # Submit all branches in stack
-        shortcake submit --draft      # Create as draft PR
+        shortcake submit              # Submit all branches in stack (default)
+        shortcake submit --current    # Submit only current branch
+        shortcake submit --draft      # Create PRs as drafts
         shortcake submit --dry-run    # Preview what would happen
     """
     try:
@@ -161,9 +163,8 @@ def submit(
         typer.echo()
 
     # Get branches to submit
-    if stack:
-        branches = _get_stack_branches(git, current_branch)
-    else:
+    if current:
+        # Only submit the current branch
         commit_msg = git.get_commit_message(current_branch)
         first_line = commit_msg.split("\n")[0] if commit_msg else current_branch
         branches = [
@@ -175,6 +176,9 @@ def submit(
                 pr_url=metadata.get("pr_url"),
             )
         ]
+    else:
+        # Default: submit all branches in the stack
+        branches = _get_stack_branches(git, current_branch)
 
     if not branches:
         typer.echo("No branches to submit")
