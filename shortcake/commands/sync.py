@@ -251,16 +251,25 @@ def sync(
             typer.echo(f"  ✓ {name}")
         typer.echo()
 
-    # Find branches that need rebasing (their parent was merged)
+    # Find branches that need rebasing (their parent was merged or deleted)
     branches_to_rebase: list[tuple[str, str, str]] = []  # (branch, old_parent, new_parent)
 
     for name, info in branches.items():
         if name in merged_branches:
             continue  # Skip merged branches
 
-        if info.parent and info.parent in merged_branches:
-            new_parent = _find_new_parent(name, info.parent, branches, main_branch)
-            branches_to_rebase.append((name, info.parent, new_parent))
+        if info.parent:
+            # Check if parent was merged OR if parent no longer exists
+            parent_merged = info.parent in merged_branches
+            parent_missing = (
+                info.parent not in branches
+                and info.parent != main_branch
+                and not git.branch_exists(info.parent)
+            )
+
+            if parent_merged or parent_missing:
+                new_parent = _find_new_parent(name, info.parent, branches, main_branch)
+                branches_to_rebase.append((name, info.parent, new_parent))
 
     if not branches_to_rebase:
         if dry_run:
@@ -314,7 +323,28 @@ def sync(
         typer.echo(f"  • {branch} onto {new_parent}...", nl=False)
         try:
             # Get the old parent's commit SHA before rebasing
-            old_parent_sha = branches[old_parent].commit_sha
+            # First try from branches dict, then from git notes (parent_revision)
+            if old_parent in branches:
+                old_parent_sha = branches[old_parent].commit_sha
+            else:
+                # Parent was deleted - try to get parent_revision from notes
+                notes = git.get_notes(branch, "shortcake")
+                if notes:
+                    try:
+                        notes_data = json.loads(notes)
+                        old_parent_sha = notes_data.get("parent_revision")
+                    except json.JSONDecodeError:
+                        old_parent_sha = None
+                else:
+                    old_parent_sha = None
+
+                if not old_parent_sha:
+                    # Fallback: use merge-base with new parent
+                    old_parent_sha = git.get_merge_base(branch, new_parent)
+
+            if not old_parent_sha:
+                typer.echo(" SKIPPED (cannot determine rebase point)")
+                continue
 
             # Rebase: git rebase --onto new_parent old_parent branch
             git.rebase_onto(new_parent, old_parent_sha, branch)
@@ -333,7 +363,18 @@ def sync(
     # Update git notes for rebased branches
     typer.echo("\nUpdating branch parents:")
     for branch, new_parent in rebased_branches:
-        notes_data = {"parent": new_parent}
+        # Get current notes and update parent info
+        notes = git.get_notes(branch, "shortcake")
+        if notes:
+            try:
+                notes_data = json.loads(notes)
+            except json.JSONDecodeError:
+                notes_data = {}
+        else:
+            notes_data = {}
+
+        notes_data["parent"] = new_parent
+        notes_data["parent_revision"] = git.get_commit_sha(new_parent)
         git.update_notes(json.dumps(notes_data), branch, "shortcake")
         typer.echo(f"  • {branch}: parent → {new_parent}")
 
