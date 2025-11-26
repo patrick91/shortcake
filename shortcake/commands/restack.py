@@ -51,6 +51,36 @@ def _get_remote_ref(git: GitRepo, branch: str) -> str:
     return branch
 
 
+def _needs_restack(git: GitRepo, branch: str, parent: str) -> bool:
+    """Check if a branch needs to be restacked onto its parent.
+
+    A branch needs restacking if it's not already based on the parent's
+    current HEAD. This is determined by checking if the merge base of
+    the branch and parent equals the parent's current commit.
+
+    Args:
+        git: GitRepo instance
+        branch: The branch to check
+        parent: The parent branch
+
+    Returns:
+        True if the branch needs rebasing, False otherwise
+    """
+    try:
+        # Get the merge base between branch and parent
+        merge_base = git.get_merge_base(branch, parent)
+        if not merge_base:
+            return True  # Can't determine, assume needs restack
+
+        # Get the current commit of the parent
+        parent_commit = git.get_commit_sha(parent)
+
+        # If merge base equals parent commit, branch is already based on parent
+        return merge_base != parent_commit
+    except GitError:
+        return True  # On error, assume needs restack
+
+
 def _get_stack_from_current(git: GitRepo, current_branch: str) -> list[BranchInfo]:
     """Get the stack of branches from trunk up to current branch.
 
@@ -271,21 +301,30 @@ def restack(
         return
 
     if dry_run:
-        typer.echo("\nWould restack the following branches:")
+        typer.echo("\nWould check the following branches:")
         for branch in all_branches:
-            typer.echo(f"  {branch.name} (parent: {branch.parent})")
+            needs = _needs_restack(git, branch.name, branch.parent)
+            status = "needs restack" if needs else "up to date"
+            typer.echo(f"  {branch.name} → {branch.parent} ({status})")
         return
 
-    typer.echo(f"\nRestacking {len(all_branches)} branch(es)...")
+    typer.echo(f"\nChecking {len(all_branches)} branch(es)...")
 
     # Save notes for all branches before rebasing (SHAs will change)
     saved_notes: dict[str, dict] = {}
     for branch in all_branches:
         saved_notes[branch.name] = branch.notes_data
 
-    # Rebase each branch in order
+    # Rebase each branch in order, but only if needed
+    restacked_count = 0
     for branch in all_branches:
+        # Check if this branch actually needs rebasing
+        if not _needs_restack(git, branch.name, branch.parent):
+            typer.echo(f"  {branch.name} does not need to be restacked")
+            continue
+
         typer.echo(f"  Rebasing {branch.name} onto {branch.parent}...", nl=False)
+        restacked_count += 1
 
         try:
             # Get merge base between branch and its parent
@@ -327,4 +366,7 @@ def restack(
     except GitError:
         pass  # Ignore checkout errors
 
-    typer.echo("\nRestack complete!")
+    if restacked_count > 0:
+        typer.echo(f"\nRestack complete! Rebased {restacked_count} branch(es).")
+    else:
+        typer.echo("\nAll branches are up to date, nothing to restack.")
