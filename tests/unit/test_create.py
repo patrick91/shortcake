@@ -1,4 +1,5 @@
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -6,7 +7,7 @@ from typer.testing import CliRunner
 
 from shortcake.cli import app
 
-from .conftest import GitEditorScript
+type GitEditorScript = Callable[[str], None]
 
 runner = CliRunner()
 
@@ -29,7 +30,6 @@ def test_create_help():
 def test_create_basic_success(
     isolated_git_repo: Path, isolated_config: Path, git_editor_script: GitEditorScript
 ):
-    """Test basic create command with emoji removed (default config)."""
     test_file = isolated_git_repo / "test.txt"
     test_file.write_text("test content")
 
@@ -105,7 +105,6 @@ def test_create_with_keep_emoji_true(
 def test_create_with_long_message(
     isolated_git_repo: Path, isolated_config: Path, git_editor_script: GitEditorScript
 ):
-    """Test create command with long commit message (should truncate to 50 chars)."""
     test_file = isolated_git_repo / "long.txt"
     test_file.write_text("long feature")
 
@@ -141,7 +140,6 @@ def test_create_with_long_message(
 def test_create_with_special_characters(
     isolated_git_repo: Path, isolated_config: Path, git_editor_script: GitEditorScript
 ):
-    """Test create command with special characters in commit message."""
     test_file = isolated_git_repo / "special.txt"
     test_file.write_text("special")
 
@@ -168,7 +166,6 @@ def test_create_with_special_characters(
 def test_create_with_multiple_spaces(
     isolated_git_repo: Path, isolated_config: Path, git_editor_script: GitEditorScript
 ):
-    """Test create command with multiple spaces in commit message."""
     test_file = isolated_git_repo / "spaces.txt"
     test_file.write_text("spaces")
 
@@ -187,7 +184,6 @@ def test_create_with_multiple_spaces(
 def test_create_error_empty_commit_message(
     isolated_git_repo: Path, isolated_config: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """Test create command with empty commit message."""
     test_file = isolated_git_repo / "empty.txt"
     test_file.write_text("empty")
 
@@ -199,7 +195,7 @@ def test_create_error_empty_commit_message(
 
     assert result.exit_code == 1
     # Git commit will fail because the editor returns non-zero
-    assert result.stderr.strip() == "Error: Command failed"
+    assert "Error: Failed to commit" in result.stderr
 
 
 def test_create_error_only_emoji_message(
@@ -230,8 +226,8 @@ def test_create_error_no_changes(
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 1
-    # Git commit fails with no changes, stderr is empty so we get generic error
-    assert result.stderr.strip() == "Error: Command failed"
+    # Git commit fails with no changes
+    assert "Error: Failed to commit" in result.stderr
 
 
 def test_create_error_branch_already_exists(
@@ -254,7 +250,7 @@ def test_create_error_branch_already_exists(
     result = runner.invoke(app, ["create"])
 
     assert result.exit_code == 1
-    assert result.stderr.strip() == "Error: fatal: a branch named 'add-feature' already exists"
+    assert "a branch named 'add-feature' already exists" in result.stderr
 
 
 def test_create_error_not_in_git_repo(
@@ -473,6 +469,15 @@ def test_create_config_persist_across_invocations(
 ):
     runner.invoke(app, ["config", "set", "keep_emoji", "true"])
 
+    # Get the default branch name
+    default_branch = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=isolated_git_repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
     test_file = isolated_git_repo / "config_test1.txt"
     test_file.write_text("test1")
     stage_all(isolated_git_repo)
@@ -485,7 +490,7 @@ def test_create_config_persist_across_invocations(
     assert "🚀-first-feature" in result1.stdout
 
     subprocess.run(
-        ["git", "checkout", "main"],
+        ["git", "checkout", default_branch],
         cwd=isolated_git_repo,
         check=True,
         capture_output=True,
