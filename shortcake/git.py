@@ -484,10 +484,7 @@ class GitRepo:
         except subprocess.CalledProcessError as e:
             # Check if it's a conflict
             if "conflict" in e.stderr.lower() or "conflict" in e.stdout.lower():
-                raise GitError(
-                    f"Rebase conflict while rebasing {branch}. "
-                    "Resolve conflicts and run 'shortcake sync --continue'"
-                ) from e
+                raise GitError(f"Rebase conflict while rebasing {branch}.") from e
             raise GitError(f"Failed to rebase {branch}: {e.stderr or e.stdout}") from e
 
     def rebase(self, onto: str) -> None:
@@ -509,9 +506,7 @@ class GitRepo:
             )
         except subprocess.CalledProcessError as e:
             if "conflict" in e.stderr.lower() or "conflict" in e.stdout.lower():
-                raise GitError(
-                    "Rebase conflict. Resolve conflicts and run 'shortcake sync --continue'"
-                ) from e
+                raise GitError("Rebase conflict.") from e
             raise GitError(f"Failed to rebase: {e.stderr or e.stdout}") from e
 
     def rebase_continue(self) -> None:
