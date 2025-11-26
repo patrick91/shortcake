@@ -140,12 +140,15 @@ class GitRepo:
         except Exception as e:
             raise GitError(f"Failed to add files: {e}") from e
 
-    def commit(self, message: str | None = None, amend: bool = False) -> None:
+    def commit(
+        self, message: str | None = None, amend: bool = False, no_verify: bool = False
+    ) -> None:
         """Create a commit.
 
         Args:
             message: The commit message. If None, opens editor.
             amend: If True, amend the previous commit.
+            no_verify: If True, skip pre-commit and commit-msg hooks.
 
         Raises:
             GitError: If commit fails.
@@ -153,8 +156,11 @@ class GitRepo:
         try:
             if amend:
                 # GitPython's amend is a bit tricky, use git directly
+                cmd = ["git", "commit", "--amend", "--no-edit"]
+                if no_verify:
+                    cmd.append("--no-verify")
                 subprocess.run(
-                    ["git", "commit", "--amend", "--no-edit"],
+                    cmd,
                     capture_output=True,
                     text=True,
                     check=True,
@@ -163,9 +169,17 @@ class GitRepo:
             elif message is None:
                 # Use git directly for interactive commit (opens editor)
                 # GitPython doesn't handle interactive commits well
-                subprocess.run(["git", "commit"], check=True, cwd=self.working_dir)
+                cmd = ["git", "commit"]
+                if no_verify:
+                    cmd.append("--no-verify")
+                subprocess.run(cmd, check=True, cwd=self.working_dir)
             else:
-                self.repo.index.commit(message)
+                if no_verify:
+                    # Use subprocess for --no-verify support
+                    cmd = ["git", "commit", "-m", message, "--no-verify"]
+                    subprocess.run(cmd, check=True, cwd=self.working_dir)
+                else:
+                    self.repo.index.commit(message)
         except subprocess.CalledProcessError as e:
             raise GitError(f"Failed to commit: {e.stderr if e.stderr else str(e)}") from e
         except Exception as e:
