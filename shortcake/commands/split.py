@@ -48,6 +48,9 @@ def split(
         False, "--continue", help="Continue after staging changes for next branch"
     ),
     abort: bool = typer.Option(False, "--abort", help="Abort the current split operation"),
+    no_verify: bool = typer.Option(
+        False, "--no-verify", "-n", help="Skip pre-commit and commit-msg hooks"
+    ),
 ):
     """Split a branch into multiple stacked branches.
 
@@ -128,13 +131,13 @@ def split(
         if not message.strip():
             # Open editor for commit message
             try:
-                git.commit()
+                git.commit(no_verify=no_verify)
             except GitError as e:
                 typer.echo(f"Error: {e}", err=True)
                 raise typer.Exit(1) from None
         else:
             try:
-                git.commit(message.strip())
+                git.commit(message.strip(), no_verify=no_verify)
             except GitError as e:
                 typer.echo(f"Error: {e}", err=True)
                 raise typer.Exit(1) from None
