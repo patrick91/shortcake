@@ -235,10 +235,20 @@ def sync(
         typer.echo("No shortcake-managed branches found")
         return
 
+    # Use remote main for merge detection if available (after fetch)
+    merge_target = main_branch
+    if git.has_remote("origin"):
+        remote_main = f"origin/{main_branch}"
+        try:
+            git.get_commit_sha(remote_main)
+            merge_target = remote_main
+        except GitError:
+            pass  # Remote ref doesn't exist, use local
+
     # Find merged branches
     merged_branches: list[str] = []
     for name in branches:
-        if _is_branch_merged(git, name, main_branch):
+        if _is_branch_merged(git, name, merge_target):
             merged_branches.append(name)
 
     if not merged_branches:
@@ -252,6 +262,9 @@ def sync(
         typer.echo()
 
     # Find branches that need rebasing (their parent was merged or deleted)
+    # rebase_target is origin/main if available, otherwise main
+    rebase_target = merge_target  # This is origin/main or main from earlier
+
     branches_to_rebase: list[tuple[str, str, str]] = []  # (branch, old_parent, new_parent)
 
     for name, info in branches.items():
@@ -268,7 +281,11 @@ def sync(
             )
 
             if parent_merged or parent_missing:
+                # Use rebase_target (origin/main) for rebasing onto trunk
                 new_parent = _find_new_parent(name, info.parent, branches, main_branch)
+                # If new_parent is main, use the rebase_target instead
+                if new_parent == main_branch:
+                    new_parent = rebase_target
                 branches_to_rebase.append((name, info.parent, new_parent))
 
     if not branches_to_rebase:
@@ -373,10 +390,12 @@ def sync(
         else:
             notes_data = {}
 
-        notes_data["parent"] = new_parent
+        # Store local branch name (main), not origin/main
+        parent_name = main_branch if new_parent.startswith("origin/") else new_parent
+        notes_data["parent"] = parent_name
         notes_data["parent_revision"] = git.get_commit_sha(new_parent)
         git.update_notes(json.dumps(notes_data), branch, "shortcake")
-        typer.echo(f"  • {branch}: parent → {new_parent}")
+        typer.echo(f"  • {branch}: parent → {parent_name}")
 
     # Delete merged branches
     typer.echo("\nCleaning up merged branches:")
