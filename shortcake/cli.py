@@ -6,6 +6,7 @@ from shortcake.commands import (
     create,
     edit,
     ls,
+    nav,
     restack,
     split,
     submit,
@@ -27,6 +28,12 @@ app.command()(sync.sync)
 app.command()(submit.submit)
 app.command()(restack.restack)
 app.command()(split.split)
+
+# Navigation commands
+app.command()(nav.up)
+app.command()(nav.down)
+app.command()(nav.top)
+app.command()(nav.bottom)
 
 
 if __name__ == "__main__":
