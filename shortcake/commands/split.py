@@ -359,18 +359,18 @@ def _finish_split(git: GitRepo, state: dict, state_file: Path) -> None:
     """Complete the split operation."""
     created_branches = state.get("created_branches", [])
     children = state.get("children", [])
+    original_branch = state["original_branch"]
 
     if not created_branches:
         typer.echo("Error: No branches were created during split", err=True)
         typer.echo("Run 'shortcake split --abort' to restore original state")
         raise typer.Exit(1)
 
-    # Delete the original branch (it's been replaced by the split branches)
+    # Clean up any temporary split branches first
     try:
-        # First, make sure we're not on a temporary branch
+        # Make sure we're on the last created branch
         git.checkout_branch(created_branches[-1])
 
-        # Clean up any temporary split branches
         for branch in git.get_branches():
             if branch.startswith("split-wip-"):
                 try:
@@ -380,16 +380,30 @@ def _finish_split(git: GitRepo, state: dict, state_file: Path) -> None:
     except GitError:
         pass
 
-    # Update children to point to the last created branch
+    # Rename the last created branch to the original branch name
+    # This preserves any existing PRs associated with the original branch
+    last_branch = created_branches[-1]
+    if last_branch != original_branch:
+        try:
+            git.rename_branch(last_branch, original_branch)
+            # Update the created_branches list to reflect the rename
+            created_branches[-1] = original_branch
+
+            # Update notes for the renamed branch (they follow the branch)
+            # The parent relationship stays the same
+            typer.echo(f"Renamed '{last_branch}' → '{original_branch}' (preserves existing PR)")
+        except GitError as e:
+            typer.echo(f"Warning: Could not rename to original branch: {e}", err=True)
+
+    # Update children to point to the original branch (now the last in the stack)
     if children:
-        last_branch = created_branches[-1]
-        typer.echo(f"\nUpdating child branches to point to '{last_branch}':")
+        typer.echo(f"\nUpdating child branches to point to '{original_branch}':")
         for child in children:
             try:
                 child_metadata = _get_branch_metadata(git, child)
-                child_metadata["parent"] = last_branch
+                child_metadata["parent"] = original_branch
                 _update_branch_metadata(git, child, child_metadata)
-                typer.echo(f"  • {child}: parent → {last_branch}")
+                typer.echo(f"  • {child}: parent → {original_branch}")
             except GitError as e:
                 typer.echo(f"  • {child}: Failed to update - {e}", err=True)
 
