@@ -143,9 +143,7 @@ def _get_main_branch(git: GitRepo) -> str:
 @app.command()
 def submit(
     draft: bool = typer.Option(False, "--draft", "-d", help="Create PR as draft"),
-    current: bool = typer.Option(
-        False, "--current", "-c", help="Only submit the current branch"
-    ),
+    current: bool = typer.Option(False, "--current", "-c", help="Only submit the current branch"),
     stack: bool = typer.Option(
         False, "--stack", "-s", help="Submit all branches in the stack (including children)"
     ),
@@ -258,13 +256,23 @@ def submit(
         for branch in branches:
             typer.echo(f"Submitting {branch.name}...", nl=False)
 
-            # Push the branch (always use --force-with-lease since we amend commits)
+            # Check if branch needs pushing (compare local and remote SHAs)
+            needs_push = True
             try:
-                git.push("origin", branch.name, force_with_lease=True)
-            except GitError as e:
-                typer.echo(" FAILED")
-                typer.echo(f"Error pushing branch: {e}", err=True)
-                raise typer.Exit(1) from None
+                local_sha = git.get_commit_sha(branch.name)
+                remote_sha = git.get_commit_sha(f"origin/{branch.name}")
+                needs_push = local_sha != remote_sha
+            except GitError:
+                # Remote branch doesn't exist yet, needs push
+                needs_push = True
+
+            if needs_push:
+                try:
+                    git.push("origin", branch.name, force_with_lease=True)
+                except GitError as e:
+                    typer.echo(" FAILED")
+                    typer.echo(f"Error pushing branch: {e}", err=True)
+                    raise typer.Exit(1) from None
 
             # Determine base branch for PR
             # If parent is a shortcake branch, use it as base
@@ -288,8 +296,13 @@ def submit(
                             owner, repo, branch.pr_number, base=base_branch
                         )
                         typer.echo(f" updated base → {base_branch}")
+                        submitted_prs.append((branch.name, pr.html_url, pr.number))
+                    elif needs_push:
+                        typer.echo(f" pushed (PR #{branch.pr_number})")
+                        pr = existing_pr
+                        submitted_prs.append((branch.name, pr.html_url, pr.number))
                     else:
-                        typer.echo(f" pushed (PR #{branch.pr_number} up to date)")
+                        typer.echo(f" up to date (PR #{branch.pr_number})")
                         pr = existing_pr
                 else:
                     # Check if PR already exists for this branch
@@ -301,7 +314,12 @@ def submit(
                             pr = github.update_pull_request(
                                 owner, repo, pr.number, base=base_branch
                             )
-                        typer.echo(f" found existing PR #{pr.number}")
+                            typer.echo(f" updated base → {base_branch} (PR #{pr.number})")
+                        elif needs_push:
+                            typer.echo(f" pushed (PR #{pr.number})")
+                        else:
+                            typer.echo(f" up to date (PR #{pr.number})")
+                        submitted_prs.append((branch.name, pr.html_url, pr.number))
                     else:
                         # Create new PR
                         pr = github.create_pull_request(
@@ -314,14 +332,13 @@ def submit(
                             draft=draft,
                         )
                         typer.echo(f" created PR #{pr.number}")
+                        submitted_prs.append((branch.name, pr.html_url, pr.number))
 
                 # Update metadata with PR info
                 branch_metadata = _get_branch_metadata(git, branch.name)
                 branch_metadata["pr_number"] = pr.number
                 branch_metadata["pr_url"] = pr.html_url
                 _update_branch_metadata(git, branch.name, branch_metadata)
-
-                submitted_prs.append((branch.name, pr.html_url, pr.number))
 
             except GitHubError as e:
                 typer.echo(" FAILED")

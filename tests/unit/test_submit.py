@@ -363,5 +363,5 @@ def test_submit_finds_existing_pr(
 
     result = runner.invoke(app, ["submit"])
     assert result.exit_code == 0
-    assert "found existing PR #42" in result.output
+    assert "PR #42" in result.output
     assert "https://github.com/testuser/testrepo/pull/42" in result.output
