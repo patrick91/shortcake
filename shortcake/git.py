@@ -394,3 +394,164 @@ class GitRepo:
             return int(result.strip())
         except Exception:
             return 0
+
+    def remove_notes(self, ref: str = "HEAD", notes_ref: str = "shortcake") -> None:
+        """Remove git notes from a commit.
+
+        Args:
+            ref: The commit ref to remove notes from.
+            notes_ref: The notes ref to remove from.
+
+        Raises:
+            GitError: If removing notes fails.
+        """
+        try:
+            self.repo.git.notes("--ref", notes_ref, "remove", ref)
+        except Exception as e:
+            raise GitError(f"Failed to remove notes: {e}") from e
+
+    def update_notes(self, content: str, ref: str = "HEAD", notes_ref: str = "shortcake") -> None:
+        """Update git notes for a commit (removes existing and adds new).
+
+        Args:
+            content: The new notes content.
+            ref: The commit ref to update notes for.
+            notes_ref: The notes ref to update.
+
+        Raises:
+            GitError: If updating notes fails.
+        """
+        try:
+            # Use --force to overwrite existing notes
+            self.repo.git.notes("--ref", notes_ref, "add", "-f", "-m", content, ref)
+        except Exception as e:
+            raise GitError(f"Failed to update notes: {e}") from e
+
+    def rebase_onto(self, new_base: str, old_base: str, branch: str) -> None:
+        """Rebase a branch onto a new base.
+
+        Equivalent to: git rebase --onto <new_base> <old_base> <branch>
+
+        Args:
+            new_base: The new base commit/branch to rebase onto.
+            old_base: The old base commit/branch (commits after this will be rebased).
+            branch: The branch to rebase.
+
+        Raises:
+            GitError: If rebase fails (e.g., conflicts).
+        """
+        try:
+            subprocess.run(
+                ["git", "rebase", "--onto", new_base, old_base, branch],
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=self.working_dir,
+            )
+        except subprocess.CalledProcessError as e:
+            # Check if it's a conflict
+            if "conflict" in e.stderr.lower() or "conflict" in e.stdout.lower():
+                raise GitError(
+                    f"Rebase conflict while rebasing {branch}. "
+                    "Resolve conflicts and run 'shortcake sync --continue'"
+                ) from e
+            raise GitError(f"Failed to rebase {branch}: {e.stderr or e.stdout}") from e
+
+    def rebase(self, onto: str) -> None:
+        """Rebase current branch onto another branch.
+
+        Args:
+            onto: The branch/commit to rebase onto.
+
+        Raises:
+            GitError: If rebase fails.
+        """
+        try:
+            subprocess.run(
+                ["git", "rebase", onto],
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=self.working_dir,
+            )
+        except subprocess.CalledProcessError as e:
+            if "conflict" in e.stderr.lower() or "conflict" in e.stdout.lower():
+                raise GitError(
+                    "Rebase conflict. Resolve conflicts and run 'shortcake sync --continue'"
+                ) from e
+            raise GitError(f"Failed to rebase: {e.stderr or e.stdout}") from e
+
+    def rebase_continue(self) -> None:
+        """Continue a rebase after resolving conflicts.
+
+        Raises:
+            GitError: If continuing rebase fails.
+        """
+        try:
+            subprocess.run(
+                ["git", "rebase", "--continue"],
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=self.working_dir,
+            )
+        except subprocess.CalledProcessError as e:
+            raise GitError(f"Failed to continue rebase: {e.stderr or e.stdout}") from e
+
+    def rebase_abort(self) -> None:
+        """Abort a rebase in progress.
+
+        Raises:
+            GitError: If aborting rebase fails.
+        """
+        try:
+            subprocess.run(
+                ["git", "rebase", "--abort"],
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=self.working_dir,
+            )
+        except subprocess.CalledProcessError as e:
+            raise GitError(f"Failed to abort rebase: {e.stderr or e.stdout}") from e
+
+    def is_rebase_in_progress(self) -> bool:
+        """Check if a rebase is currently in progress.
+
+        Returns:
+            True if a rebase is in progress, False otherwise.
+        """
+        rebase_merge = self.working_dir / ".git" / "rebase-merge"
+        rebase_apply = self.working_dir / ".git" / "rebase-apply"
+        return rebase_merge.exists() or rebase_apply.exists()
+
+    def get_commit_sha(self, ref: str) -> str:
+        """Get the commit SHA for a ref.
+
+        Args:
+            ref: The ref to get the SHA for.
+
+        Returns:
+            The commit SHA.
+
+        Raises:
+            GitError: If unable to get SHA.
+        """
+        try:
+            return self.repo.commit(ref).hexsha
+        except Exception as e:
+            raise GitError(f"Failed to get commit SHA for '{ref}': {e}") from e
+
+    def has_remote(self, remote_name: str = "origin") -> bool:
+        """Check if a remote exists.
+
+        Args:
+            remote_name: The name of the remote to check.
+
+        Returns:
+            True if the remote exists, False otherwise.
+        """
+        try:
+            return remote_name in [r.name for r in self.repo.remotes]
+        except Exception:
+            return False
