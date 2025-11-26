@@ -51,7 +51,9 @@ def _get_remote_ref(git: GitRepo, branch: str) -> str:
     return branch
 
 
-def _needs_restack(git: GitRepo, branch: str, parent: str, metadata: dict) -> bool:
+def _needs_restack(
+    git: GitRepo, branch: str, parent: str, metadata: dict, debug: bool = False
+) -> bool:
     """Check if a branch needs to be restacked onto its parent.
 
     A branch needs restacking if the stored parent_revision doesn't match
@@ -62,6 +64,7 @@ def _needs_restack(git: GitRepo, branch: str, parent: str, metadata: dict) -> bo
         branch: The branch to check
         parent: The parent branch
         metadata: The branch's shortcake metadata
+        debug: If True, print debug information
 
     Returns:
         True if the branch needs rebasing, False otherwise
@@ -72,6 +75,12 @@ def _needs_restack(git: GitRepo, branch: str, parent: str, metadata: dict) -> bo
 
         # Get the current commit of the parent
         parent_commit = git.get_commit_sha(parent)
+
+        if debug:
+            typer.echo(f"    DEBUG: branch={branch}, parent={parent}")
+            typer.echo(f"    DEBUG: stored_parent_rev={stored_parent_rev}")
+            typer.echo(f"    DEBUG: parent_commit={parent_commit}")
+            typer.echo(f"    DEBUG: needs_restack={stored_parent_rev != parent_commit}")
 
         # If we have a stored parent revision, compare it
         if stored_parent_rev:
@@ -182,6 +191,7 @@ def restack(
         False, "--continue", help="Continue after resolving rebase conflicts"
     ),
     abort: bool = typer.Option(False, "--abort", help="Abort the current rebase operation"),
+    debug: bool = typer.Option(False, "--debug", help="Show debug information"),
 ):
     """Restack branches onto their updated parents.
 
@@ -309,7 +319,7 @@ def restack(
     if dry_run:
         typer.echo("\nWould check the following branches:")
         for branch in all_branches:
-            needs = _needs_restack(git, branch.name, branch.parent, branch.notes_data)
+            needs = _needs_restack(git, branch.name, branch.parent, branch.notes_data, debug=debug)
             status = "needs restack" if needs else "up to date"
             typer.echo(f"  {branch.name} → {branch.parent} ({status})")
         return
@@ -325,7 +335,7 @@ def restack(
     restacked_count = 0
     for branch in all_branches:
         # Check if this branch actually needs rebasing
-        if not _needs_restack(git, branch.name, branch.parent, branch.notes_data):
+        if not _needs_restack(git, branch.name, branch.parent, branch.notes_data, debug=debug):
             typer.echo(f"  {branch.name} does not need to be restacked")
             continue
 
@@ -333,16 +343,22 @@ def restack(
         restacked_count += 1
 
         try:
-            # Get merge base between branch and its parent
-            merge_base = git.get_merge_base(branch.name, branch.parent)
+            # Use stored parent_revision as the rebase --from point
+            # This is what Charcoal/Graphite do - it's the SHA where the branch
+            # was originally based, which may differ from merge-base if parent was rebased
+            stored_parent_rev = branch.notes_data.get("parent_revision")
 
-            if merge_base:
-                # Rebase: git rebase --onto parent merge_base branch
-                git.rebase_onto(branch.parent, merge_base, branch.name)
+            if stored_parent_rev:
+                # Rebase: git rebase --onto parent stored_parent_rev branch
+                git.rebase_onto(branch.parent, stored_parent_rev, branch.name)
             else:
-                # Fallback: simple rebase
-                git.checkout_branch(branch.name)
-                git.rebase(branch.parent)
+                # Fallback for legacy branches without parent_revision: use merge-base
+                merge_base = git.get_merge_base(branch.name, branch.parent)
+                if merge_base:
+                    git.rebase_onto(branch.parent, merge_base, branch.name)
+                else:
+                    git.checkout_branch(branch.name)
+                    git.rebase(branch.parent)
 
             # Update notes with new parent_revision and re-attach to new commit SHA
             updated_notes = saved_notes[branch.name].copy()
