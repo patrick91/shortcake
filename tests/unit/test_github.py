@@ -1,10 +1,12 @@
 """Tests for the GitHub API client."""
 
+from unittest.mock import patch
+
 import pytest
 import respx
 from httpx import Response
 
-from shortcake.github import GitHubClient, GitHubError, PullRequest
+from shortcake.github import GitHubClient, GitHubError, PullRequest, _get_token_from_gh_cli
 
 
 @pytest.fixture
@@ -15,9 +17,34 @@ def github_client(monkeypatch: pytest.MonkeyPatch) -> GitHubClient:
 
 def test_github_client_no_token(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-    with pytest.raises(GitHubError) as exc_info:
-        GitHubClient()
-    assert "GitHub token not found" in str(exc_info.value)
+    # Also mock gh CLI to return nothing
+    with patch("shortcake.github._get_token_from_gh_cli", return_value=None):
+        with pytest.raises(GitHubError) as exc_info:
+            GitHubClient()
+        assert "GitHub token not found" in str(exc_info.value)
+        assert "gh auth login" in str(exc_info.value)
+
+
+def test_get_token_from_gh_cli_success():
+    with patch("subprocess.run") as mock_run:
+        mock_run.return_value.stdout = "gh-cli-token\n"
+        mock_run.return_value.returncode = 0
+        token = _get_token_from_gh_cli()
+        assert token == "gh-cli-token"
+
+
+def test_get_token_from_gh_cli_not_installed():
+    with patch("subprocess.run", side_effect=FileNotFoundError):
+        token = _get_token_from_gh_cli()
+        assert token is None
+
+
+def test_github_client_uses_gh_cli_token(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    with patch("shortcake.github._get_token_from_gh_cli", return_value="gh-token"):
+        client = GitHubClient()
+        assert client.token == "gh-token"
+        client.close()
 
 
 def test_github_client_with_token(monkeypatch: pytest.MonkeyPatch):

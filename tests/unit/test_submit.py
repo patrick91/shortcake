@@ -99,6 +99,8 @@ def test_submit_no_remote(isolated_git_repo: Path, isolated_config: Path):
 def test_submit_no_github_token(
     isolated_git_repo: Path, isolated_config: Path, monkeypatch: pytest.MonkeyPatch
 ):
+    from unittest.mock import patch
+
     git = GitRepo()
 
     # Create and track a branch
@@ -112,10 +114,11 @@ def test_submit_no_github_token(
     # Add a remote
     git.add_remote("origin", "git@github.com:testuser/testrepo.git")
 
-    # Ensure no GitHub token
+    # Ensure no GitHub token from env or gh CLI
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
 
-    result = runner.invoke(app, ["submit"])
+    with patch("shortcake.github._get_token_from_gh_cli", return_value=None):
+        result = runner.invoke(app, ["submit"])
     assert result.exit_code == 1
     assert "GitHub token not found" in result.output
 

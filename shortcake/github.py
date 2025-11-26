@@ -2,6 +2,7 @@
 
 import os
 import re
+import subprocess
 from dataclasses import dataclass
 
 import httpx
@@ -13,6 +14,21 @@ class GitHubError(Exception):
     """Exception raised for GitHub API errors."""
 
     pass
+
+
+def _get_token_from_gh_cli() -> str | None:
+    """Try to get GitHub token from the gh CLI."""
+    try:
+        result = subprocess.run(
+            ["gh", "auth", "token"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        token = result.stdout.strip()
+        return token if token else None
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
 
 
 @dataclass
@@ -35,14 +51,16 @@ class GitHubClient:
         """Initialize the GitHub client.
 
         Args:
-            token: GitHub personal access token. If not provided, will try GITHUB_TOKEN env var.
+            token: GitHub personal access token. If not provided, will try
+                   GITHUB_TOKEN env var, then gh CLI.
             base_url: Base URL for GitHub API (for GitHub Enterprise support).
         """
-        self.token = token or os.environ.get("GITHUB_TOKEN")
+        self.token = token or os.environ.get("GITHUB_TOKEN") or _get_token_from_gh_cli()
         if not self.token:
             raise GitHubError(
-                "GitHub token not found. Set GITHUB_TOKEN environment variable "
-                "or pass token to GitHubClient."
+                "GitHub token not found. Either:\n"
+                "  1. Install and authenticate with gh CLI: gh auth login\n"
+                "  2. Set GITHUB_TOKEN environment variable"
             )
         self.base_url = base_url.rstrip("/")
         self._client = httpx.Client(
