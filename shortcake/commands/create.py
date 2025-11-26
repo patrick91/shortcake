@@ -156,7 +156,11 @@ def create(
 
         # Add shortcake notes to track this branch
         # The parent is the branch we were on before creating this one
-        notes_data = {"parent": original_branch} if original_branch else {}
+        # Also store parent_revision so we can detect when restack is needed
+        notes_data = {}
+        if original_branch:
+            notes_data["parent"] = original_branch
+            notes_data["parent_revision"] = git.get_commit_sha(original_branch)
         notes_json = json.dumps(notes_data)
         git.add_notes(notes_json, "HEAD", "shortcake")
 
