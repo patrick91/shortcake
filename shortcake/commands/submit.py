@@ -506,18 +506,26 @@ def submit(
                 typer.echo(f"Error with GitHub API: {e}", err=True)
                 raise typer.Exit(1) from None
 
-        # Update PR bodies with stack info (if we have multiple branches or force is set)
-        if len(branches) > 1 or force:
+        # Update PR bodies with stack info
+        # Get the FULL stack (parents + current + all descendants) for PR descriptions
+        full_stack = _get_stack_branches(git, current_branch)
+        full_stack.extend(_get_descendant_branches(git, current_branch))
+
+        # Only update if we have multiple branches in the full stack or force is set
+        if len(full_stack) > 1 or force:
             typer.echo()
             typer.echo("Updating PR descriptions with stack info...")
-            for branch in branches:
+            # Update ALL PRs in the full stack, not just the ones submitted
+            for branch in full_stack:
                 if branch.pr_number:
                     try:
                         # Get current PR to preserve existing body
                         current_pr = github.get_pull_request(owner, repo, branch.pr_number)
 
-                        # Generate stack description for this branch
-                        stack_desc = _generate_stack_description(branches, branch.name, main_branch)
+                        # Generate stack description using FULL stack
+                        stack_desc = _generate_stack_description(
+                            full_stack, branch.name, main_branch
+                        )
 
                         # Update PR body
                         new_body = _update_pr_body_with_stack(current_pr.body, stack_desc)
