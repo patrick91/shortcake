@@ -7,6 +7,9 @@ import typer
 
 from shortcake.git import GitError, GitRepo
 
+# File to store notes during restack (in .git directory)
+RESTACK_STATE_FILE = ".git/shortcake-restack-state.json"
+
 app = typer.Typer()
 
 
@@ -171,6 +174,12 @@ def restack(
             raise typer.Exit(1)
         try:
             git.rebase_abort()
+
+            # Clean up state file
+            state_file = git.working_dir / RESTACK_STATE_FILE
+            if state_file.exists():
+                state_file.unlink()
+
             typer.echo("Rebase aborted")
             return
         except GitError as e:
@@ -184,6 +193,29 @@ def restack(
             raise typer.Exit(1)
         try:
             git.rebase_continue()
+
+            # Restore notes from saved state
+            state_file = git.working_dir / RESTACK_STATE_FILE
+            if state_file.exists():
+                try:
+                    state = json.loads(state_file.read_text())
+                    saved_notes = state.get("notes", {})
+                    current_branch = git.get_current_branch()
+
+                    # Restore notes for the current branch
+                    if current_branch in saved_notes:
+                        git.update_notes(
+                            json.dumps(saved_notes[current_branch]),
+                            current_branch,
+                            "shortcake",
+                        )
+                        typer.echo(f"Restored tracking for {current_branch}")
+
+                    # Clean up state file
+                    state_file.unlink()
+                except (json.JSONDecodeError, KeyError):
+                    pass  # Ignore errors reading state
+
             typer.echo("Rebase continued successfully")
             return
         except GitError as e:
@@ -274,6 +306,12 @@ def restack(
 
         except GitError as e:
             typer.echo(" CONFLICT")
+
+            # Save state so we can restore notes on --continue
+            state_file = git.working_dir / RESTACK_STATE_FILE
+            state = {"notes": saved_notes}
+            state_file.write_text(json.dumps(state))
+
             typer.echo(f"\nError: {e}", err=True)
             typer.echo("\nTo resolve:")
             typer.echo("  1. Fix the conflicts in the affected files")
