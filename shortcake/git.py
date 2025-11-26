@@ -556,6 +556,28 @@ class GitRepo:
         except Exception:
             return False
 
+    def get_remote_url(self, remote_name: str = "origin") -> str:
+        """Get the URL of a remote.
+
+        Args:
+            remote_name: The name of the remote.
+
+        Returns:
+            The remote URL.
+
+        Raises:
+            GitError: If the remote doesn't exist.
+        """
+        try:
+            for remote in self.repo.remotes:
+                if remote.name == remote_name:
+                    return remote.url
+            raise GitError(f"Remote '{remote_name}' not found")
+        except Exception as e:
+            if isinstance(e, GitError):
+                raise
+            raise GitError(f"Failed to get remote URL: {e}") from e
+
     def is_tree_subset(self, branch: str, target: str) -> bool:
         """Check if branch's changes are contained in target (for squash merge detection).
 
