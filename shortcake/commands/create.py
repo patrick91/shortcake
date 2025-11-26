@@ -61,6 +61,9 @@ def create(
     no_verify: bool = typer.Option(
         False, "--no-verify", "-n", help="Skip pre-commit and commit-msg hooks"
     ),
+    gitmoji: bool = typer.Option(
+        False, "--gitmoji", "--gm", help="Select a gitmoji to prefix the commit message"
+    ),
 ):
     """Create a stack with a new branch and commit.
 
@@ -71,10 +74,22 @@ def create(
     Emoji handling in branch names is controlled by the keep_emoji configuration setting
     (use 'shortcake config set keep_emoji true/false').
 
-    Note: Future enhancement will include gitmoji integration.
+    Use --gitmoji (or --gm) to select an emoji from the gitmoji list before
+    entering your commit message.
     """
     # Get keep_emoji setting from config
     keep_emoji = config.get_keep_emoji()
+
+    # Handle gitmoji selection
+    selected_emoji = None
+    if gitmoji:
+        from shortcake.gitmoji import pick_gitmoji
+
+        selected_gitmoji = pick_gitmoji()
+        if selected_gitmoji is None:
+            typer.echo("Gitmoji selection cancelled", err=True)
+            raise typer.Exit(1)
+        selected_emoji = selected_gitmoji.emoji
 
     try:
         git = GitRepo()
@@ -98,8 +113,9 @@ def create(
         git.create_branch(temp_branch_name, checkout=True)
 
         # Create commit using git's normal flow (opens editor)
+        # If gitmoji was selected, pass it as a prefix for the commit message
         try:
-            git.commit(no_verify=no_verify)
+            git.commit(no_verify=no_verify, message_prefix=selected_emoji)
         except GitError as e:
             # Clean up temp branch before showing error
             if original_branch:
