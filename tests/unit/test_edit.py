@@ -1,6 +1,7 @@
 """Tests for the edit and modify commands."""
 
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -8,7 +9,7 @@ from typer.testing import CliRunner
 
 from shortcake.cli import app
 
-from .conftest import GitEditorScript
+type GitEditorScript = Callable[[str], None]
 
 runner = CliRunner()
 
@@ -166,8 +167,8 @@ def test_command_no_commits_to_amend(
     result = runner.invoke(app, [command])
 
     assert result.exit_code == 1
-    assert result.exception is not None
-    assert isinstance(result.exception, subprocess.CalledProcessError)
+    # The error is properly caught and results in SystemExit
+    assert isinstance(result.exception, SystemExit)
 
 
 @pytest.mark.parametrize("command", ["edit", "modify"])
