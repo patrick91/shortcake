@@ -451,13 +451,14 @@ def submit(
                         )
                         typer.echo(f" updated base → {base_branch}")
                         submitted_prs.append((branch.name, pr.html_url, pr.number))
-                    elif needs_push:
+                    elif needs_push or force:
                         typer.echo(f" pushed (PR #{branch.pr_number})")
                         pr = existing_pr
                         submitted_prs.append((branch.name, pr.html_url, pr.number))
                     else:
                         typer.echo(f" up to date (PR #{branch.pr_number})")
                         pr = existing_pr
+                        submitted_prs.append((branch.name, pr.html_url, pr.number))
                 else:
                     # Check if PR already exists for this branch
                     existing_prs = github.get_pull_requests_for_branch(owner, repo, branch.name)
@@ -469,11 +470,13 @@ def submit(
                                 owner, repo, pr.number, base=base_branch
                             )
                             typer.echo(f" updated base → {base_branch} (PR #{pr.number})")
-                        elif needs_push:
+                            submitted_prs.append((branch.name, pr.html_url, pr.number))
+                        elif needs_push or force:
                             typer.echo(f" pushed (PR #{pr.number})")
+                            submitted_prs.append((branch.name, pr.html_url, pr.number))
                         else:
                             typer.echo(f" up to date (PR #{pr.number})")
-                        submitted_prs.append((branch.name, pr.html_url, pr.number))
+                            submitted_prs.append((branch.name, pr.html_url, pr.number))
                     else:
                         # Create new PR
                         pr = github.create_pull_request(
