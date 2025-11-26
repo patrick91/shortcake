@@ -515,13 +515,19 @@ class GitRepo:
         Raises:
             GitError: If continuing rebase fails.
         """
+        import os
+
         try:
+            # Set GIT_EDITOR to true to prevent editor from opening
+            env = os.environ.copy()
+            env["GIT_EDITOR"] = "true"
             subprocess.run(
                 ["git", "rebase", "--continue"],
                 capture_output=True,
                 text=True,
                 check=True,
                 cwd=self.working_dir,
+                env=env,
             )
         except subprocess.CalledProcessError as e:
             raise GitError(f"Failed to continue rebase: {e.stderr or e.stdout}") from e

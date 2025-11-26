@@ -275,8 +275,10 @@ def restack(
         except GitError as e:
             typer.echo(" CONFLICT")
             typer.echo(f"\nError: {e}", err=True)
-            typer.echo("\nResolve the conflicts, then run:")
-            typer.echo("  shortcake restack --continue")
+            typer.echo("\nTo resolve:")
+            typer.echo("  1. Fix the conflicts in the affected files")
+            typer.echo("  2. Stage the resolved files: git add <files>")
+            typer.echo("  3. Continue the restack: shortcake restack --continue")
             typer.echo("\nOr abort with:")
             typer.echo("  shortcake restack --abort")
             raise typer.Exit(1) from None
