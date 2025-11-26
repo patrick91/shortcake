@@ -160,7 +160,13 @@ def create(
         notes_data = {}
         if original_branch:
             notes_data["parent"] = original_branch
-            notes_data["parent_revision"] = git.get_commit_sha(original_branch)
+            # Use origin/main or origin/master for trunk branches to match restack behavior
+            parent_ref = (
+                f"origin/{original_branch}"
+                if original_branch in ("main", "master") and git.has_remote("origin")
+                else original_branch
+            )
+            notes_data["parent_revision"] = git.get_commit_sha(parent_ref)
         notes_json = json.dumps(notes_data)
         git.add_notes(notes_json, "HEAD", "shortcake")
 

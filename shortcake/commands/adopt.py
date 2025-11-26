@@ -134,7 +134,13 @@ def adopt(
 
             if parent:
                 notes_data["parent"] = parent
-                notes_data["parent_revision"] = git.get_commit_sha(parent)
+                # Use origin/main or origin/master for trunk branches to match restack behavior
+                parent_ref = (
+                    f"origin/{parent}"
+                    if parent in ("main", "master") and git.has_remote("origin")
+                    else parent
+                )
+                notes_data["parent_revision"] = git.get_commit_sha(parent_ref)
             notes_json = json.dumps(notes_data)
             git.update_notes(notes_json, branch_to_adopt, "shortcake")
 
