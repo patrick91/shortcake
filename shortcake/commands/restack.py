@@ -303,6 +303,17 @@ def restack(
             except GitError as e:
                 typer.echo(f"Warning: Failed to fetch: {e}", err=True)
 
+    # Check if parent branch exists - if not, suggest running sync
+    parent = metadata.get("parent")
+    if parent and parent not in ("main", "master"):
+        if not git.branch_exists(parent):
+            typer.echo(
+                f"Error: Parent branch '{parent}' no longer exists.\n"
+                "This usually means it was merged. Run 'shortcake sync' to update parent references.",
+                err=True,
+            )
+            raise typer.Exit(1)
+
     # Get stack from trunk up to current branch
     stack_up = _get_stack_from_current(git, current_branch)
 
