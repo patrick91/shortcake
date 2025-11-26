@@ -227,7 +227,9 @@ def submit(
     dry_run: bool = typer.Option(
         False, "--dry-run", "-n", help="Show what would be done without making changes"
     ),
-    force: bool = typer.Option(False, "--force", "-f", help="Force push branches"),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Force push branches and update PR descriptions"
+    ),
 ):
     """Push branches and create or update pull requests.
 
@@ -418,7 +420,7 @@ def submit(
                 # Remote branch doesn't exist yet, needs push
                 needs_push = True
 
-            if needs_push:
+            if needs_push or force:
                 try:
                     git.push("origin", branch.name, force_with_lease=True)
                 except GitError as e:
@@ -501,8 +503,8 @@ def submit(
                 typer.echo(f"Error with GitHub API: {e}", err=True)
                 raise typer.Exit(1) from None
 
-        # Update PR bodies with stack info (only if we have multiple branches)
-        if len(branches) > 1:
+        # Update PR bodies with stack info (if we have multiple branches or force is set)
+        if len(branches) > 1 or force:
             typer.echo()
             typer.echo("Updating PR descriptions with stack info...")
             for branch in branches:
@@ -516,7 +518,7 @@ def submit(
 
                         # Update PR body
                         new_body = _update_pr_body_with_stack(current_pr.body, stack_desc)
-                        if new_body != current_pr.body:
+                        if new_body != current_pr.body or force:
                             github.update_pull_request(owner, repo, branch.pr_number, body=new_body)
                     except GitHubError:
                         pass  # Ignore errors updating PR body
