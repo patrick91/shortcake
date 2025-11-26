@@ -5,6 +5,14 @@ from dataclasses import dataclass
 
 import typer
 
+# Import restack helpers
+from shortcake.commands.restack import (
+    _get_branch_metadata as _get_restack_metadata,
+)
+from shortcake.commands.restack import (
+    _get_remote_ref,
+    _needs_restack,
+)
 from shortcake.git import GitError, GitRepo
 from shortcake.github import GitHubClient, GitHubError, get_github_repo_info
 
@@ -242,6 +250,81 @@ def submit(
             if branch.pr_number:
                 typer.echo(f"    Existing PR: #{branch.pr_number}")
         return
+
+    # Restack branches that need it before pushing
+    restacked_branches: list[str] = []
+    for branch in branches:
+        branch_metadata = _get_restack_metadata(git, branch.name)
+        parent = branch_metadata.get("parent")
+        if not parent:
+            continue
+
+        # Get the rebase target (use remote ref for trunk branches if it exists)
+        rebase_target = _get_remote_ref(git, parent)
+        # Fall back to local branch if remote ref doesn't exist
+        try:
+            git.get_commit_sha(rebase_target)
+        except GitError:
+            rebase_target = parent
+
+        if _needs_restack(git, branch.name, rebase_target, branch_metadata):
+            typer.echo(f"Restacking {branch.name} onto {rebase_target}...", nl=False)
+            try:
+                stored_parent_rev = branch_metadata.get("parent_revision")
+                if stored_parent_rev:
+                    git.rebase_onto(rebase_target, stored_parent_rev, branch.name)
+                else:
+                    # Fallback for legacy branches
+                    merge_base = git.get_merge_base(branch.name, rebase_target)
+                    if merge_base:
+                        git.rebase_onto(rebase_target, merge_base, branch.name)
+                    else:
+                        git.checkout_branch(branch.name)
+                        git.rebase(rebase_target)
+
+                # Update notes with new parent_revision
+                updated_metadata = branch_metadata.copy()
+                updated_metadata["parent_revision"] = git.get_commit_sha(rebase_target)
+                git.update_notes(json.dumps(updated_metadata), branch.name, "shortcake")
+
+                typer.echo(" done")
+                restacked_branches.append(branch.name)
+            except GitError as e:
+                typer.echo(" CONFLICT")
+                typer.echo(f"\nError: {e}", err=True)
+                typer.echo("\nRebase conflict occurred. Please resolve manually:")
+                typer.echo("  1. Fix the conflicts in the affected files")
+                typer.echo("  2. Stage the resolved files: git add <files>")
+                typer.echo("  3. Continue: git rebase --continue")
+                typer.echo("  4. Then run: shortcake submit")
+                raise typer.Exit(1) from None
+
+    # Return to original branch if we restacked anything
+    if restacked_branches:
+        try:
+            git.checkout_branch(current_branch)
+        except GitError:
+            pass
+
+    # Refresh branch info after restacking (commit messages may have changed)
+    if restacked_branches:
+        if current:
+            commit_msg = git.get_commit_message(current_branch)
+            first_line = commit_msg.split("\n")[0] if commit_msg else current_branch
+            branches = [
+                BranchSubmitInfo(
+                    name=current_branch,
+                    parent=metadata.get("parent", main_branch),
+                    commit_message=first_line,
+                    pr_number=metadata.get("pr_number"),
+                    pr_url=metadata.get("pr_url"),
+                )
+            ]
+        elif stack:
+            branches = _get_stack_branches(git, current_branch)
+            branches.extend(_get_descendant_branches(git, current_branch))
+        else:
+            branches = _get_stack_branches(git, current_branch)
 
     # Initialize GitHub client
     try:
