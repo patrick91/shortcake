@@ -25,6 +25,8 @@ def test_create_help():
     assert "Create a stack with a new branch and commit" in result.stdout
     assert "keep" in result.stdout.lower()
     assert "emoji" in result.stdout.lower()
+    assert "--no-verify" in result.stdout
+    assert "-n" in result.stdout
 
 
 def test_create_basic_success(
@@ -195,7 +197,7 @@ def test_create_error_empty_commit_message(
 
     assert result.exit_code == 1
     # Git commit will fail because the editor returns non-zero
-    assert "Error: Failed to commit" in result.stderr
+    assert "Commit aborted or failed" in result.stderr
 
 
 def test_create_error_only_emoji_message(
@@ -227,7 +229,7 @@ def test_create_error_no_changes(
 
     assert result.exit_code == 1
     # Git commit fails with no changes
-    assert "Error: Failed to commit" in result.stderr
+    assert "Commit aborted or failed" in result.stderr
 
 
 def test_create_error_branch_already_exists(
@@ -647,3 +649,35 @@ def test_create_stacked_branches(
     # Verify both files exist in the second branch
     assert (isolated_git_repo / "feature1.txt").exists()
     assert (isolated_git_repo / "feature2.txt").exists()
+
+
+def test_create_with_no_verify(
+    isolated_git_repo: Path, isolated_config: Path, git_editor_script: GitEditorScript
+):
+    test_file = isolated_git_repo / "test.txt"
+    test_file.write_text("test content")
+
+    commit_message = "Add feature with no verify"
+    git_editor_script(commit_message)
+
+    stage_all(isolated_git_repo)
+    result = runner.invoke(app, ["create", "--no-verify"])
+
+    assert result.exit_code == 0
+    assert "Created and switched to branch: add-feature-with-no-verify" in result.stdout
+
+
+def test_create_with_no_verify_short_flag(
+    isolated_git_repo: Path, isolated_config: Path, git_editor_script: GitEditorScript
+):
+    test_file = isolated_git_repo / "test.txt"
+    test_file.write_text("test content")
+
+    commit_message = "Add feature with short flag"
+    git_editor_script(commit_message)
+
+    stage_all(isolated_git_repo)
+    result = runner.invoke(app, ["create", "-n"])
+
+    assert result.exit_code == 0
+    assert "Created and switched to branch: add-feature-with-short-flag" in result.stdout

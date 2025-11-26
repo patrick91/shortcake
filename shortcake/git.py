@@ -140,12 +140,15 @@ class GitRepo:
         except Exception as e:
             raise GitError(f"Failed to add files: {e}") from e
 
-    def commit(self, message: str | None = None, amend: bool = False) -> None:
+    def commit(
+        self, message: str | None = None, amend: bool = False, no_verify: bool = False
+    ) -> None:
         """Create a commit.
 
         Args:
             message: The commit message. If None, opens editor.
             amend: If True, amend the previous commit.
+            no_verify: If True, skip pre-commit and commit-msg hooks.
 
         Raises:
             GitError: If commit fails.
@@ -153,8 +156,11 @@ class GitRepo:
         try:
             if amend:
                 # GitPython's amend is a bit tricky, use git directly
+                cmd = ["git", "commit", "--amend", "--no-edit"]
+                if no_verify:
+                    cmd.append("--no-verify")
                 subprocess.run(
-                    ["git", "commit", "--amend", "--no-edit"],
+                    cmd,
                     capture_output=True,
                     text=True,
                     check=True,
@@ -163,9 +169,17 @@ class GitRepo:
             elif message is None:
                 # Use git directly for interactive commit (opens editor)
                 # GitPython doesn't handle interactive commits well
-                subprocess.run(["git", "commit"], check=True, cwd=self.working_dir)
+                cmd = ["git", "commit"]
+                if no_verify:
+                    cmd.append("--no-verify")
+                subprocess.run(cmd, check=True, cwd=self.working_dir)
             else:
-                self.repo.index.commit(message)
+                if no_verify:
+                    # Use subprocess for --no-verify support
+                    cmd = ["git", "commit", "-m", message, "--no-verify"]
+                    subprocess.run(cmd, check=True, cwd=self.working_dir)
+                else:
+                    self.repo.index.commit(message)
         except subprocess.CalledProcessError as e:
             raise GitError(f"Failed to commit: {e.stderr if e.stderr else str(e)}") from e
         except Exception as e:
@@ -295,23 +309,42 @@ class GitRepo:
         except Exception as e:
             raise GitError(f"Failed to add remote '{name}': {e}") from e
 
-    def push(self, remote_name: str, branch_name: str, force: bool = False) -> None:
+    def push(
+        self,
+        remote_name: str,
+        branch_name: str,
+        force: bool = False,
+        force_with_lease: bool = False,
+    ) -> None:
         """Push a branch to a remote.
 
         Args:
             remote_name: The name of the remote to push to.
             branch_name: The name of the branch to push.
-            force: Whether to force push.
+            force: Whether to force push (uses --force-with-lease for safety).
+            force_with_lease: Explicitly use --force-with-lease.
 
         Raises:
             GitError: If push fails.
         """
         try:
-            remote = self.repo.remote(remote_name)
-            push_info = remote.push(branch_name, force=force)
-            # Check if push was successful
-            if push_info and push_info[0].flags & push_info[0].ERROR:
-                raise GitError(f"Push failed: {push_info[0].summary}")
+            cmd = ["git", "push", remote_name, branch_name]
+            if force or force_with_lease:
+                # Always use --force-with-lease for safety
+                cmd.append("--force-with-lease")
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=self.working_dir,
+            )
+
+            if result.returncode != 0:
+                error_msg = result.stderr.strip()
+                if "non-fast-forward" in error_msg or "[rejected]" in error_msg:
+                    raise GitError("Push failed: [rejected] (non-fast-forward)")
+                raise GitError(f"Push failed: {error_msg}")
         except Exception as e:
             if isinstance(e, GitError):
                 raise
@@ -451,10 +484,7 @@ class GitRepo:
         except subprocess.CalledProcessError as e:
             # Check if it's a conflict
             if "conflict" in e.stderr.lower() or "conflict" in e.stdout.lower():
-                raise GitError(
-                    f"Rebase conflict while rebasing {branch}. "
-                    "Resolve conflicts and run 'shortcake sync --continue'"
-                ) from e
+                raise GitError(f"Rebase conflict while rebasing {branch}.") from e
             raise GitError(f"Failed to rebase {branch}: {e.stderr or e.stdout}") from e
 
     def rebase(self, onto: str) -> None:
@@ -476,9 +506,7 @@ class GitRepo:
             )
         except subprocess.CalledProcessError as e:
             if "conflict" in e.stderr.lower() or "conflict" in e.stdout.lower():
-                raise GitError(
-                    "Rebase conflict. Resolve conflicts and run 'shortcake sync --continue'"
-                ) from e
+                raise GitError("Rebase conflict.") from e
             raise GitError(f"Failed to rebase: {e.stderr or e.stdout}") from e
 
     def rebase_continue(self) -> None:
@@ -487,13 +515,19 @@ class GitRepo:
         Raises:
             GitError: If continuing rebase fails.
         """
+        import os
+
         try:
+            # Set GIT_EDITOR to true to prevent editor from opening
+            env = os.environ.copy()
+            env["GIT_EDITOR"] = "true"
             subprocess.run(
                 ["git", "rebase", "--continue"],
                 capture_output=True,
                 text=True,
                 check=True,
                 cwd=self.working_dir,
+                env=env,
             )
         except subprocess.CalledProcessError as e:
             raise GitError(f"Failed to continue rebase: {e.stderr or e.stdout}") from e
@@ -555,6 +589,28 @@ class GitRepo:
             return remote_name in [r.name for r in self.repo.remotes]
         except Exception:
             return False
+
+    def get_remote_url(self, remote_name: str = "origin") -> str:
+        """Get the URL of a remote.
+
+        Args:
+            remote_name: The name of the remote.
+
+        Returns:
+            The remote URL.
+
+        Raises:
+            GitError: If the remote doesn't exist.
+        """
+        try:
+            for remote in self.repo.remotes:
+                if remote.name == remote_name:
+                    return remote.url
+            raise GitError(f"Remote '{remote_name}' not found")
+        except Exception as e:
+            if isinstance(e, GitError):
+                raise
+            raise GitError(f"Failed to get remote URL: {e}") from e
 
     def is_tree_subset(self, branch: str, target: str) -> bool:
         """Check if branch's changes are contained in target (for squash merge detection).
