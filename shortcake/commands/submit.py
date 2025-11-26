@@ -202,9 +202,9 @@ def submit(
         for branch in branches:
             typer.echo(f"Submitting {branch.name}...", nl=False)
 
-            # Push the branch
+            # Push the branch (always use --force-with-lease since we amend commits)
             try:
-                git.push("origin", branch.name, force=force)
+                git.push("origin", branch.name, force_with_lease=True)
             except GitError as e:
                 typer.echo(" FAILED")
                 typer.echo(f"Error pushing branch: {e}", err=True)

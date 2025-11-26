@@ -309,23 +309,42 @@ class GitRepo:
         except Exception as e:
             raise GitError(f"Failed to add remote '{name}': {e}") from e
 
-    def push(self, remote_name: str, branch_name: str, force: bool = False) -> None:
+    def push(
+        self,
+        remote_name: str,
+        branch_name: str,
+        force: bool = False,
+        force_with_lease: bool = False,
+    ) -> None:
         """Push a branch to a remote.
 
         Args:
             remote_name: The name of the remote to push to.
             branch_name: The name of the branch to push.
-            force: Whether to force push.
+            force: Whether to force push (uses --force-with-lease for safety).
+            force_with_lease: Explicitly use --force-with-lease.
 
         Raises:
             GitError: If push fails.
         """
         try:
-            remote = self.repo.remote(remote_name)
-            push_info = remote.push(branch_name, force=force)
-            # Check if push was successful
-            if push_info and push_info[0].flags & push_info[0].ERROR:
-                raise GitError(f"Push failed: {push_info[0].summary}")
+            cmd = ["git", "push", remote_name, branch_name]
+            if force or force_with_lease:
+                # Always use --force-with-lease for safety
+                cmd.append("--force-with-lease")
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=self.working_dir,
+            )
+
+            if result.returncode != 0:
+                error_msg = result.stderr.strip()
+                if "non-fast-forward" in error_msg or "[rejected]" in error_msg:
+                    raise GitError("Push failed: [rejected] (non-fast-forward)")
+                raise GitError(f"Push failed: {error_msg}")
         except Exception as e:
             if isinstance(e, GitError):
                 raise

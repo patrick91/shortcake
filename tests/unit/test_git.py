@@ -325,7 +325,7 @@ def test_push_error(isolated_git_repo: Path):
     with pytest.raises(GitError) as exc_info:
         git.push("nonexistent", "main")
 
-    assert "Failed to push" in str(exc_info.value)
+    assert "Push failed" in str(exc_info.value) or "Failed to push" in str(exc_info.value)
 
 
 def test_fetch(isolated_git_repo: Path, bare_repo: Path):
