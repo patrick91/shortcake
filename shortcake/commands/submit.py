@@ -87,6 +87,50 @@ def _get_stack_branches(git: GitRepo, start_branch: str) -> list[BranchSubmitInf
     return branches
 
 
+def _get_children(git: GitRepo, branch: str) -> list[str]:
+    """Get all branches that have the given branch as their parent."""
+    children = []
+    for branch_name in git.get_branches():
+        metadata = _get_branch_metadata(git, branch_name)
+        if metadata.get("parent") == branch:
+            children.append(branch_name)
+    return children
+
+
+def _get_descendant_branches(git: GitRepo, branch: str) -> list[BranchSubmitInfo]:
+    """Get all descendant branches (children, grandchildren, etc.) in order.
+
+    Args:
+        git: GitRepo instance
+        branch: The branch to find descendants of
+
+    Returns:
+        List of BranchSubmitInfo for all descendants, in topological order
+    """
+    result = []
+    queue = _get_children(git, branch)
+
+    while queue:
+        child = queue.pop(0)
+        metadata = _get_branch_metadata(git, child)
+        if metadata.get("parent"):
+            commit_msg = git.get_commit_message(child)
+            first_line = commit_msg.split("\n")[0] if commit_msg else child
+            result.append(
+                BranchSubmitInfo(
+                    name=child,
+                    parent=metadata["parent"],
+                    commit_message=first_line,
+                    pr_number=metadata.get("pr_number"),
+                    pr_url=metadata.get("pr_url"),
+                )
+            )
+            # Add this child's children to the queue
+            queue.extend(_get_children(git, child))
+
+    return result
+
+
 def _get_main_branch(git: GitRepo) -> str:
     """Get the name of the main branch."""
     if git.branch_exists("main"):
@@ -100,7 +144,10 @@ def _get_main_branch(git: GitRepo) -> str:
 def submit(
     draft: bool = typer.Option(False, "--draft", "-d", help="Create PR as draft"),
     current: bool = typer.Option(
-        False, "--current", "-c", help="Only submit the current branch (not the full stack)"
+        False, "--current", "-c", help="Only submit the current branch"
+    ),
+    stack: bool = typer.Option(
+        False, "--stack", "-s", help="Submit all branches in the stack (including children)"
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", "-n", help="Show what would be done without making changes"
@@ -109,15 +156,16 @@ def submit(
 ):
     """Push branches and create or update pull requests.
 
-    By default, submits all branches in the stack from trunk up to the current
-    branch. This ensures parent branches are pushed, so GitHub shows correct
-    diffs for stacked PRs.
+    By default, submits all branches from trunk up to the current branch
+    (parents + current). This ensures parent branches are pushed, so GitHub
+    shows correct diffs for stacked PRs.
 
-    Use --current to only submit the current branch (useful when you've already
-    pushed parent branches).
+    Use --stack to also submit child branches (the entire stack).
+    Use --current to only submit the current branch.
 
     Examples:
-        shortcake submit              # Submit all branches in stack (default)
+        shortcake submit              # Submit parents + current (default)
+        shortcake submit --stack      # Submit entire stack (including children)
         shortcake submit --current    # Submit only current branch
         shortcake submit --draft      # Create PRs as drafts
         shortcake submit --dry-run    # Preview what would happen
@@ -176,8 +224,12 @@ def submit(
                 pr_url=metadata.get("pr_url"),
             )
         ]
+    elif stack:
+        # Submit entire stack (parents + current + children)
+        branches = _get_stack_branches(git, current_branch)
+        branches.extend(_get_descendant_branches(git, current_branch))
     else:
-        # Default: submit all branches in the stack
+        # Default: submit parents + current (downstack)
         branches = _get_stack_branches(git, current_branch)
 
     if not branches:
