@@ -288,3 +288,125 @@ def test_submit_stack_includes_children(
     assert "add-feature-1" in result.output
     assert "add-feature-2" in result.output
     assert "add-feature-3" in result.output
+
+
+def get_commit_sha(repo_path: Path, ref: str) -> str:
+    result = subprocess.run(
+        ["git", "rev-parse", ref],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout.strip()
+
+
+def get_commits_between(repo_path: Path, base: str, head: str) -> list[str]:
+    result = subprocess.run(
+        ["git", "log", "--oneline", f"{base}..{head}"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return [line for line in result.stdout.strip().split("\n") if line]
+
+
+@pytest.mark.integration
+def test_submit_automatically_restacks_after_amend(
+    runner: CliRunner,
+    isolated_git_repo: Path,
+    isolated_config: Path,
+    remote_repo: Path,
+    git_editor_script: GitEditorScript,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that submit automatically restacks branches when parent was amended."""
+    import respx
+    from httpx import Response
+
+    git = GitRepo(isolated_git_repo)
+
+    # Set up remote
+    git.add_remote("origin", str(remote_repo))
+    subprocess.run(
+        ["git", "push", "-u", "origin", "main"],
+        cwd=isolated_git_repo,
+        check=True,
+        capture_output=True,
+    )
+
+    # Create first branch
+    (isolated_git_repo / "feature1.txt").write_text("feature 1")
+    stage_all(isolated_git_repo)
+    git_editor_script("Add feature 1")
+    result = runner.invoke(app, ["create"])
+    assert result.exit_code == 0
+
+    feature1_original_sha = get_commit_sha(isolated_git_repo, "HEAD")
+
+    # Create second branch stacked on first
+    (isolated_git_repo / "feature2.txt").write_text("feature 2")
+    stage_all(isolated_git_repo)
+    git_editor_script("Add feature 2")
+    result = runner.invoke(app, ["create"])
+    assert result.exit_code == 0
+
+    # Go back to first branch and amend the commit
+    git.checkout_branch("add-feature-1")
+    (isolated_git_repo / "feature1.txt").write_text("feature 1 amended")
+    stage_all(isolated_git_repo)
+    # Use shortcake modify to properly preserve notes
+    result = runner.invoke(app, ["modify"])
+    assert result.exit_code == 0
+
+    feature1_new_sha = get_commit_sha(isolated_git_repo, "HEAD")
+    assert feature1_new_sha != feature1_original_sha
+
+    # Before submit, feature-2 should have 2 commits (old feature-1 + feature-2)
+    commits_before = get_commits_between(isolated_git_repo, "add-feature-1", "add-feature-2")
+    assert len(commits_before) == 2  # Old parent commit + feature-2 commit
+
+    # Set up GitHub mock
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+    subprocess.run(
+        ["git", "remote", "set-url", "origin", "git@github.com:testuser/testrepo.git"],
+        cwd=isolated_git_repo,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "remote", "set-url", "--push", "origin", str(remote_repo)],
+        cwd=isolated_git_repo,
+        check=True,
+    )
+
+    # Mock GitHub API
+    with respx.mock:
+        # Mock PR lookup (no existing PRs)
+        respx.get("https://api.github.com/repos/testuser/testrepo/pulls").mock(
+            return_value=Response(200, json=[])
+        )
+        # Mock PR creation
+        respx.post("https://api.github.com/repos/testuser/testrepo/pulls").mock(
+            return_value=Response(
+                201,
+                json={
+                    "number": 1,
+                    "title": "Test",
+                    "body": "",
+                    "html_url": "https://github.com/testuser/testrepo/pull/1",
+                    "head": {"ref": "add-feature-1", "sha": "abc123"},
+                    "base": {"ref": "main", "sha": "def456"},
+                    "state": "open",
+                },
+            )
+        )
+
+        # Submit with --stack should automatically restack feature-2
+        result = runner.invoke(app, ["submit", "--stack"])
+        assert result.exit_code == 0
+        assert "Restacking add-feature-2" in result.output
+
+    # After submit, feature-2 should have only 1 commit on top of feature-1
+    commits_after = get_commits_between(isolated_git_repo, "add-feature-1", "add-feature-2")
+    assert len(commits_after) == 1  # Only feature-2 commit
