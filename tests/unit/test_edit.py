@@ -441,3 +441,41 @@ def test_command_amending_initial_commit(
         text=True,
     )
     assert message_result.stdout.strip() == commit_message
+
+
+@pytest.mark.parametrize("command", ["edit", "modify"])
+def test_command_preserves_shortcake_notes(
+    command: str,
+    isolated_git_repo: Path,
+    isolated_config: Path,
+    git_editor_script: GitEditorScript,
+):
+    """Test that edit/modify preserves shortcake notes after amending."""
+    from shortcake.git import GitRepo
+
+    # Create initial commit with shortcake (which adds notes)
+    test_file = isolated_git_repo / "test.txt"
+    test_file.write_text("initial content")
+    stage_all(isolated_git_repo)
+
+    git_editor_script("Initial feature")
+    result = runner.invoke(app, ["create"])
+    assert result.exit_code == 0
+
+    # Verify notes exist
+    git = GitRepo(isolated_git_repo)
+    notes_before = git.get_notes("HEAD", "shortcake")
+    assert notes_before is not None
+    assert "parent" in notes_before
+
+    # Amend the commit
+    test_file.write_text("updated content")
+    stage_all(isolated_git_repo)
+
+    result = runner.invoke(app, [command])
+    assert result.exit_code == 0
+
+    # Verify notes are preserved after amend
+    notes_after = git.get_notes("HEAD", "shortcake")
+    assert notes_after is not None
+    assert notes_after == notes_before
