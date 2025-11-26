@@ -34,15 +34,16 @@ jobs:
 
       - name: Run tests with coverage
         run: |
-          uv run pytest tests/ -v --cov=shortcake
+          uv run pytest tests/ -v --cov=shortcake --cov-report=
+          mv .coverage .coverage.${{ matrix.python-version }}
 
       - name: Upload coverage data
         uses: actions/upload-artifact@v4
         with:
           name: coverage-data-${{ matrix.python-version }}
-          path: .coverage.*
+          path: .coverage.${{ matrix.python-version }}
           include-hidden-files: true
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   coverage:
     name: Combine & check coverage

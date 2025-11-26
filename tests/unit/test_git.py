@@ -431,3 +431,164 @@ def test_count_commits_between_invalid_ref(isolated_git_repo: Path):
     count = git.count_commits_between("HEAD", "nonexistent")
 
     assert count == 0
+
+
+def test_update_notes(isolated_git_repo: Path):
+    """Test updating existing git notes."""
+    git = GitRepo(isolated_git_repo)
+
+    # Add initial notes
+    git.add_notes("initial content", "HEAD", "test-notes")
+    assert git.get_notes("HEAD", "test-notes") == "initial content"
+
+    # Update notes
+    git.update_notes("updated content", "HEAD", "test-notes")
+    assert git.get_notes("HEAD", "test-notes") == "updated content"
+
+
+def test_remove_notes(isolated_git_repo: Path):
+    """Test removing git notes."""
+    git = GitRepo(isolated_git_repo)
+
+    # Add notes
+    git.add_notes("content to remove", "HEAD", "test-notes")
+    assert git.get_notes("HEAD", "test-notes") is not None
+
+    # Remove notes
+    git.remove_notes("HEAD", "test-notes")
+    assert git.get_notes("HEAD", "test-notes") is None
+
+
+def test_remove_notes_error(isolated_git_repo: Path):
+    """Test remove_notes error when no notes exist."""
+    git = GitRepo(isolated_git_repo)
+
+    with pytest.raises(GitError) as exc_info:
+        git.remove_notes("HEAD", "nonexistent-notes")
+
+    assert "Failed to remove notes" in str(exc_info.value)
+
+
+def test_is_rebase_in_progress_false(isolated_git_repo: Path):
+    """Test is_rebase_in_progress returns False normally."""
+    git = GitRepo(isolated_git_repo)
+
+    assert not git.is_rebase_in_progress()
+
+
+def test_get_commit_sha(isolated_git_repo: Path):
+    """Test getting commit SHA for a ref."""
+    git = GitRepo(isolated_git_repo)
+
+    sha = git.get_commit_sha("HEAD")
+
+    assert len(sha) == 40
+    assert all(c in "0123456789abcdef" for c in sha)
+
+
+def test_get_commit_sha_for_branch(isolated_git_repo: Path):
+    """Test getting commit SHA for a branch."""
+    git = GitRepo(isolated_git_repo)
+    git.create_branch("test-branch", checkout=False)
+
+    sha = git.get_commit_sha("test-branch")
+    head_sha = git.get_commit_sha("HEAD")
+
+    assert sha == head_sha
+
+
+def test_has_remote_false(isolated_git_repo: Path):
+    """Test has_remote returns False when no remote exists."""
+    git = GitRepo(isolated_git_repo)
+
+    assert not git.has_remote("origin")
+
+
+def test_has_remote_true(isolated_git_repo: Path, bare_repo: Path):
+    """Test has_remote returns True when remote exists."""
+    git = GitRepo(isolated_git_repo)
+    git.add_remote("origin", str(bare_repo))
+
+    assert git.has_remote("origin")
+
+
+def test_rebase_simple(isolated_git_repo: Path):
+    """Test simple rebase onto another branch."""
+    git = GitRepo(isolated_git_repo)
+
+    # Create a commit on main
+    (isolated_git_repo / "main_change.txt").write_text("main change")
+    git.add_files("main_change.txt")
+    git.commit("Main change")
+
+    # Create a feature branch from initial commit
+    git.checkout_branch("main")
+    git.repo.git.checkout("HEAD~1")  # Go back one commit
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature")
+    git.add_files("feature.txt")
+    git.commit("Feature commit")
+
+    # Rebase feature onto main
+    git.rebase("main")
+
+    # Feature should now be on top of main
+    assert git.is_ancestor("main", "feature")
+
+
+def test_is_tree_subset_with_squash_merge(isolated_git_repo: Path):
+    """Test is_tree_subset detects squash merged content."""
+    git = GitRepo(isolated_git_repo)
+
+    # Create a feature branch with a file
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature content")
+    git.add_files("feature.txt")
+    git.commit("Add feature")
+
+    # Simulate squash merge: add same content to main as a different commit
+    git.checkout_branch("main")
+    (isolated_git_repo / "feature.txt").write_text("feature content")
+    git.add_files("feature.txt")
+    git.commit("Squashed feature")
+
+    # feature's changes should be detected as subset of main
+    assert git.is_tree_subset("feature", "main")
+
+
+def test_is_tree_subset_not_merged(isolated_git_repo: Path):
+    """Test is_tree_subset returns False when content differs."""
+    git = GitRepo(isolated_git_repo)
+
+    # Create a feature branch with a file
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature content")
+    git.add_files("feature.txt")
+    git.commit("Add feature")
+
+    # Main doesn't have this file
+    git.checkout_branch("main")
+
+    # feature's changes are NOT in main
+    assert not git.is_tree_subset("feature", "main")
+
+
+def test_is_tree_subset_partial_merge(isolated_git_repo: Path):
+    """Test is_tree_subset returns False when only partially merged."""
+    git = GitRepo(isolated_git_repo)
+
+    # Create a feature branch with two files
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "file1.txt").write_text("content 1")
+    (isolated_git_repo / "file2.txt").write_text("content 2")
+    git.add_files(["file1.txt", "file2.txt"])
+    git.commit("Add two files")
+
+    # Squash merge only one file to main
+    git.checkout_branch("main")
+    (isolated_git_repo / "file1.txt").write_text("content 1")
+    git.add_files("file1.txt")
+    git.commit("Partial squash")
+
+    # feature is NOT fully merged (missing file2.txt)
+    assert not git.is_tree_subset("feature", "main")
