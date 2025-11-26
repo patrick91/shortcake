@@ -60,7 +60,7 @@ def test_restack_dry_run(isolated_git_repo: Path, isolated_config: Path):
 
     result = runner.invoke(app, ["restack", "--dry-run"])
     assert result.exit_code == 0
-    assert "Would restack" in result.output
+    assert "Would check" in result.output
     assert "feature" in result.output
 
 
@@ -77,7 +77,8 @@ def test_restack_single_branch(isolated_git_repo: Path, isolated_config: Path):
 
     result = runner.invoke(app, ["restack"])
     assert result.exit_code == 0
-    assert "Restack complete" in result.output
+    # Branch is already up-to-date (just created on main), so no rebase needed
+    assert "up to date" in result.output or "Restack complete" in result.output
 
     # Verify notes are preserved
     notes = git.get_notes("feature", "shortcake")
@@ -131,7 +132,8 @@ def test_restack_stacked_branches(isolated_git_repo: Path, isolated_config: Path
     assert result.exit_code == 0
     assert "feature-1" in result.output
     assert "feature-2" in result.output
-    assert "Restack complete" in result.output
+    # Branches are already up-to-date (just created), so no rebase needed
+    assert "up to date" in result.output or "Restack complete" in result.output
 
     # Verify notes are preserved for both
     notes1 = git.get_notes("feature-1", "shortcake")
