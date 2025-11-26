@@ -161,12 +161,10 @@ This command adds shortcake tracking to branches that were created manually (wit
 - 🎯 **Smart Parent Detection**: Automatically finds the best parent by analyzing Git history
 - 🔍 **Dry-Run Mode**: Preview what will happen with `--dry-run`
 - 🎛️ **Manual Override**: Explicitly set parent with `--parent` if needed
-- 🔄 **Recursive Adoption**: Adopt multiple related branches with `--recursive`
 
 Options:
 - `BRANCH`: Branch name to adopt (defaults to current branch)
 - `-p, --parent TEXT`: Explicitly specify parent branch (overrides auto-detection)
-- `-r, --recursive`: Recursively adopt branch ancestors/descendants
 - `-n, --dry-run`: Show what would be adopted without actually doing it
 
 Example:
@@ -186,9 +184,6 @@ uv run shortcake adopt feature-2 --parent main
 
 # Adopt current branch
 uv run shortcake adopt
-
-# Recursive adoption with parent
-uv run shortcake adopt --recursive --parent main
 ```
 
 **How Auto-Detection Works:**

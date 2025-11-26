@@ -19,8 +19,6 @@ def config_cmd(
         shortcake config set keep_emoji true - Set a configuration value
     """
 
-    # TODO: Use sub commands
-    # TODO: make the output prettier
     if action == "list":
         cfg = config.load_config()
 

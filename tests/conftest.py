@@ -15,7 +15,13 @@ from tests.helpers.git_helpers import (
     setup_remote,
 )
 from tests.helpers.github_helpers import GitHubMocker
-from tests.helpers.models import GitHubBranch, GitHubPR, GitHubPRRef, PRMetadata
+from tests.helpers.models import (
+    GitHubBranch,
+    GitHubBranchCommit,
+    GitHubPR,
+    GitHubPRRef,
+    PRMetadata,
+)
 
 type GitEditorScript = Callable[[str], None]
 
@@ -210,10 +216,10 @@ def build_branch_response(github_repo_info: tuple[str, str]) -> Callable[..., di
         """Build a branch response dict."""
         return GitHubBranch(
             name=name,
-            commit={
-                "sha": sha,
-                "url": f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}",
-            },
+            commit=GitHubBranchCommit(
+                sha=sha,
+                url=f"https://api.github.com/repos/{owner}/{repo}/commits/{sha}",
+            ),
         ).model_dump()
 
     return _build
