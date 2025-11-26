@@ -48,6 +48,9 @@ def split(
         False, "--continue", help="Continue after staging changes for next branch"
     ),
     abort: bool = typer.Option(False, "--abort", help="Abort the current split operation"),
+    finish: bool = typer.Option(
+        False, "--finish", help="Finish the split after all changes are committed"
+    ),
     no_verify: bool = typer.Option(
         False, "--no-verify", "-n", help="Skip pre-commit and commit-msg hooks"
     ),
@@ -104,6 +107,28 @@ def split(
         except Exception as e:
             typer.echo(f"Error aborting split: {e}", err=True)
             raise typer.Exit(1) from None
+
+    # Handle --finish
+    if finish:
+        if not state_file.exists():
+            typer.echo("Error: No split in progress", err=True)
+            raise typer.Exit(1)
+
+        try:
+            state = json.loads(state_file.read_text())
+        except json.JSONDecodeError:
+            typer.echo("Error: Invalid split state file", err=True)
+            raise typer.Exit(1) from None
+
+        # Check for uncommitted changes
+        if git.repo.is_dirty(untracked_files=True):
+            typer.echo("Error: You have uncommitted changes", err=True)
+            typer.echo("Either commit them with 'shortcake split --continue'")
+            typer.echo("or discard them with 'git checkout -- .'")
+            raise typer.Exit(1)
+
+        _finish_split(git, state, state_file)
+        return
 
     # Handle --continue
     if continue_split:
@@ -276,37 +301,6 @@ def split(
     typer.echo("")
     typer.echo("Usage: shortcake split --by-hunk")
     raise typer.Exit(1)
-
-
-@app.command(name="finish")
-def finish():
-    """Finish a split operation after all changes are committed."""
-    try:
-        git = GitRepo()
-    except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1) from None
-
-    state_file = git.working_dir / SPLIT_STATE_FILE
-
-    if not state_file.exists():
-        typer.echo("Error: No split in progress", err=True)
-        raise typer.Exit(1)
-
-    try:
-        state = json.loads(state_file.read_text())
-    except json.JSONDecodeError:
-        typer.echo("Error: Invalid split state file", err=True)
-        raise typer.Exit(1) from None
-
-    # Check for uncommitted changes
-    if git.repo.is_dirty(untracked_files=True):
-        typer.echo("Error: You have uncommitted changes", err=True)
-        typer.echo("Either commit them with 'shortcake split --continue'")
-        typer.echo("or discard them with 'git checkout -- .'")
-        raise typer.Exit(1)
-
-    _finish_split(git, state, state_file)
 
 
 def _finish_split(git: GitRepo, state: dict, state_file: Path) -> None:
