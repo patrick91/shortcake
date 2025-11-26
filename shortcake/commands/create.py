@@ -57,7 +57,11 @@ def _generate_branch_name(commit_message: str, keep_emoji: bool = False) -> str:
 
 
 @app.command()
-def create():
+def create(
+    no_verify: bool = typer.Option(
+        False, "--no-verify", "-n", help="Skip pre-commit and commit-msg hooks"
+    ),
+):
     """Create a stack with a new branch and commit.
 
     Stage your changes first with 'git add', then run this command.
@@ -90,11 +94,28 @@ def create():
         # Create a temporary branch name using timestamp
         temp_branch_name = f"temp-shortcake-{int(time.time() * 1000)}"
 
-        # Create and switch to temporary branch
+        # Create and switch to temporary branch (quiet mode)
         git.create_branch(temp_branch_name, checkout=True)
 
         # Create commit using git's normal flow (opens editor)
-        git.commit()
+        try:
+            git.commit(no_verify=no_verify)
+        except GitError as e:
+            # Clean up temp branch before showing error
+            if original_branch:
+                try:
+                    git.checkout_branch(original_branch)
+                    git.delete_branch(temp_branch_name, force=True)
+                except GitError:
+                    pass
+
+            error_msg = str(e)
+            if "returned non-zero exit status 1" in error_msg:
+                # Commit was aborted or failed - provide a friendlier message
+                typer.echo("Commit aborted or failed. No changes were made.", err=True)
+            else:
+                typer.echo(f"Error: {error_msg}", err=True)
+            raise typer.Exit(1) from None
 
         # Get the commit message that was just created
         commit_message = git.get_last_commit_message()
@@ -115,6 +136,7 @@ def create():
 
         # Rename the temporary branch to the final name
         git.rename_branch(temp_branch_name, branch_name)
+        temp_branch_name = None  # Mark as renamed so cleanup doesn't try to delete it
 
         # Add shortcake notes to track this branch
         # The parent is the branch we were on before creating this one

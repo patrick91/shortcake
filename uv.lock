@@ -538,6 +538,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "gitpython" },
+    { name = "httpx" },
     { name = "pydantic" },
     { name = "rtoml" },
     { name = "typer" },
@@ -558,6 +559,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "gitpython", specifier = ">=3.1.45" },
+    { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "rtoml", specifier = ">=0.11.0" },
     { name = "typer", specifier = ">=0.9.0" },
