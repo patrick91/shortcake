@@ -141,7 +141,11 @@ class GitRepo:
             raise GitError(f"Failed to add files: {e}") from e
 
     def commit(
-        self, message: str | None = None, amend: bool = False, no_verify: bool = False
+        self,
+        message: str | None = None,
+        amend: bool = False,
+        no_verify: bool = False,
+        message_prefix: str | None = None,
     ) -> None:
         """Create a commit.
 
@@ -149,6 +153,7 @@ class GitRepo:
             message: The commit message. If None, opens editor.
             amend: If True, amend the previous commit.
             no_verify: If True, skip pre-commit and commit-msg hooks.
+            message_prefix: If provided, pre-fill the editor with this prefix.
 
         Raises:
             GitError: If commit fails.
@@ -172,14 +177,21 @@ class GitRepo:
                 cmd = ["git", "commit"]
                 if no_verify:
                     cmd.append("--no-verify")
+
+                # If message_prefix is provided, use -m to pre-fill and -e to edit
+                if message_prefix:
+                    cmd.extend(["-m", f"{message_prefix} ", "-e"])
+
                 subprocess.run(cmd, check=True, cwd=self.working_dir)
             else:
+                # If message_prefix is provided, prepend it to the message
+                full_message = f"{message_prefix} {message}" if message_prefix else message
                 if no_verify:
                     # Use subprocess for --no-verify support
-                    cmd = ["git", "commit", "-m", message, "--no-verify"]
+                    cmd = ["git", "commit", "-m", full_message, "--no-verify"]
                     subprocess.run(cmd, check=True, cwd=self.working_dir)
                 else:
-                    self.repo.index.commit(message)
+                    self.repo.index.commit(full_message)
         except subprocess.CalledProcessError as e:
             raise GitError(f"Failed to commit: {e.stderr if e.stderr else str(e)}") from e
         except Exception as e:
