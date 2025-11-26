@@ -219,3 +219,72 @@ def test_submit_dry_run_shows_stack_order(
     pos2 = result.output.find("add-feature-2")
     pos3 = result.output.find("add-feature-3")
     assert pos1 < pos2 < pos3, "Branches should be in stack order (bottom to top)"
+
+
+@pytest.mark.integration
+def test_submit_stack_includes_children(
+    runner: CliRunner,
+    isolated_git_repo: Path,
+    isolated_config: Path,
+    remote_repo: Path,
+    git_editor_script: GitEditorScript,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that submit --stack includes child branches.
+
+    When using --stack, all branches in the stack should be submitted,
+    including children of the current branch.
+    """
+    git = GitRepo(isolated_git_repo)
+
+    # Set up remote
+    git.add_remote("origin", str(remote_repo))
+    subprocess.run(
+        ["git", "push", "-u", "origin", "main"],
+        cwd=isolated_git_repo,
+        check=True,
+        capture_output=True,
+    )
+
+    # Create three stacked branches
+    (isolated_git_repo / "feature1.txt").write_text("feature 1")
+    stage_all(isolated_git_repo)
+    git_editor_script("Add feature 1")
+    runner.invoke(app, ["create"])
+
+    (isolated_git_repo / "feature2.txt").write_text("feature 2")
+    stage_all(isolated_git_repo)
+    git_editor_script("Add feature 2")
+    runner.invoke(app, ["create"])
+
+    (isolated_git_repo / "feature3.txt").write_text("feature 3")
+    stage_all(isolated_git_repo)
+    git_editor_script("Add feature 3")
+    runner.invoke(app, ["create"])
+
+    # Go back to feature-2 (middle of stack)
+    git.checkout_branch("add-feature-2")
+
+    # Set mock token
+    monkeypatch.setenv("GITHUB_TOKEN", "test-token")
+
+    # Set up GitHub remote URL for parsing
+    subprocess.run(
+        ["git", "remote", "set-url", "origin", "git@github.com:testuser/testrepo.git"],
+        cwd=isolated_git_repo,
+        check=True,
+    )
+
+    # Default submit should NOT include feature-3 (child)
+    result = runner.invoke(app, ["submit", "--dry-run"])
+    assert result.exit_code == 0
+    assert "add-feature-1" in result.output
+    assert "add-feature-2" in result.output
+    assert "add-feature-3" not in result.output
+
+    # Submit --stack should include ALL branches
+    result = runner.invoke(app, ["submit", "--stack", "--dry-run"])
+    assert result.exit_code == 0
+    assert "add-feature-1" in result.output
+    assert "add-feature-2" in result.output
+    assert "add-feature-3" in result.output
