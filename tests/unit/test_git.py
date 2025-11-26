@@ -534,3 +534,61 @@ def test_rebase_simple(isolated_git_repo: Path):
 
     # Feature should now be on top of main
     assert git.is_ancestor("main", "feature")
+
+
+def test_is_tree_subset_with_squash_merge(isolated_git_repo: Path):
+    """Test is_tree_subset detects squash merged content."""
+    git = GitRepo(isolated_git_repo)
+
+    # Create a feature branch with a file
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature content")
+    git.add_files("feature.txt")
+    git.commit("Add feature")
+
+    # Simulate squash merge: add same content to main as a different commit
+    git.checkout_branch("main")
+    (isolated_git_repo / "feature.txt").write_text("feature content")
+    git.add_files("feature.txt")
+    git.commit("Squashed feature")
+
+    # feature's changes should be detected as subset of main
+    assert git.is_tree_subset("feature", "main")
+
+
+def test_is_tree_subset_not_merged(isolated_git_repo: Path):
+    """Test is_tree_subset returns False when content differs."""
+    git = GitRepo(isolated_git_repo)
+
+    # Create a feature branch with a file
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature content")
+    git.add_files("feature.txt")
+    git.commit("Add feature")
+
+    # Main doesn't have this file
+    git.checkout_branch("main")
+
+    # feature's changes are NOT in main
+    assert not git.is_tree_subset("feature", "main")
+
+
+def test_is_tree_subset_partial_merge(isolated_git_repo: Path):
+    """Test is_tree_subset returns False when only partially merged."""
+    git = GitRepo(isolated_git_repo)
+
+    # Create a feature branch with two files
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "file1.txt").write_text("content 1")
+    (isolated_git_repo / "file2.txt").write_text("content 2")
+    git.add_files(["file1.txt", "file2.txt"])
+    git.commit("Add two files")
+
+    # Squash merge only one file to main
+    git.checkout_branch("main")
+    (isolated_git_repo / "file1.txt").write_text("content 1")
+    git.add_files("file1.txt")
+    git.commit("Partial squash")
+
+    # feature is NOT fully merged (missing file2.txt)
+    assert not git.is_tree_subset("feature", "main")

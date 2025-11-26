@@ -555,3 +555,64 @@ class GitRepo:
             return remote_name in [r.name for r in self.repo.remotes]
         except Exception:
             return False
+
+    def is_tree_subset(self, branch: str, target: str) -> bool:
+        """Check if branch's changes are contained in target (for squash merge detection).
+
+        This works by checking if the diff between the merge-base and the branch
+        is empty when compared against the target. If target contains all the
+        changes from branch, the branch is effectively merged (even via squash).
+
+        Args:
+            branch: The branch to check.
+            target: The target branch (e.g., main).
+
+        Returns:
+            True if all changes from branch are in target.
+        """
+        try:
+            # Get the merge base between branch and target
+            merge_base = self.get_merge_base(branch, target)
+            if not merge_base:
+                return False
+
+            # Get the tree (file state) at each point
+            branch_tree = self.repo.commit(branch).tree
+            target_tree = self.repo.commit(target).tree
+            base_tree = self.repo.commit(merge_base).tree
+
+            # Get files changed in branch (compared to merge base)
+            branch_diff = base_tree.diff(branch_tree)
+
+            # For each file changed in branch, check if target has the same content
+            for diff_item in branch_diff:
+                # Get the path of the changed file
+                path = diff_item.b_path or diff_item.a_path
+                if not path:
+                    continue
+
+                # Get the blob (file content) in branch
+                try:
+                    branch_blob = branch_tree[path]
+                except KeyError:
+                    # File was deleted in branch
+                    # Check if it's also deleted/missing in target
+                    try:
+                        target_tree[path]
+                        return False  # File exists in target but deleted in branch
+                    except KeyError:
+                        continue  # Both deleted, OK
+
+                # Get the blob in target
+                try:
+                    target_blob = target_tree[path]
+                except KeyError:
+                    return False  # File doesn't exist in target
+
+                # Compare content
+                if branch_blob.data_stream.read() != target_blob.data_stream.read():
+                    return False
+
+            return True
+        except Exception:
+            return False

@@ -214,3 +214,89 @@ def test_sync_preserves_unrelated_branches(isolated_git_repo: Path, isolated_con
     notes = git.get_notes("branch-b", "shortcake")
     assert notes is not None
     assert json.loads(notes).get("parent") == "main"
+
+
+def test_sync_detects_squash_merge(isolated_git_repo: Path, isolated_config: Path):
+    """Test that sync detects branches merged via squash merge."""
+    git = GitRepo()
+
+    # Create parent branch with changes
+    git.create_branch("feature-parent", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature content")
+    git.add_files("feature.txt")
+    git.commit("Add feature")
+    git.add_notes(json.dumps({"parent": "main"}), "feature-parent", "shortcake")
+
+    # Create child branch
+    git.create_branch("feature-child", checkout=True)
+    (isolated_git_repo / "child.txt").write_text("child content")
+    git.add_files("child.txt")
+    git.commit("Add child")
+    git.add_notes(json.dumps({"parent": "feature-parent"}), "feature-child", "shortcake")
+
+    # Simulate squash merge: create a NEW commit on main with the same file content
+    git.checkout_branch("main")
+    (isolated_git_repo / "feature.txt").write_text("feature content")  # Same content!
+    git.add_files("feature.txt")
+    git.commit("Squashed: Add feature")  # Different commit, same content
+
+    # Run sync - should detect feature-parent as merged via squash
+    result = runner.invoke(app, ["sync"])
+    assert result.exit_code == 0
+
+    # feature-parent should be detected as merged and deleted
+    assert not git.branch_exists("feature-parent")
+
+    # feature-child should have its parent updated to main
+    notes = git.get_notes("feature-child", "shortcake")
+    assert notes is not None
+    assert json.loads(notes).get("parent") == "main"
+
+
+def test_sync_squash_merge_with_stack(isolated_git_repo: Path, isolated_config: Path):
+    """Test sync with squash merge on a 3-level stack."""
+    git = GitRepo()
+
+    # Level 1: feature-1 off main
+    git.create_branch("feature-1", checkout=True)
+    (isolated_git_repo / "f1.txt").write_text("f1 content")
+    git.add_files("f1.txt")
+    git.commit("Add f1")
+    git.add_notes(json.dumps({"parent": "main"}), "feature-1", "shortcake")
+
+    # Level 2: feature-2 off feature-1
+    git.create_branch("feature-2", checkout=True)
+    (isolated_git_repo / "f2.txt").write_text("f2 content")
+    git.add_files("f2.txt")
+    git.commit("Add f2")
+    git.add_notes(json.dumps({"parent": "feature-1"}), "feature-2", "shortcake")
+
+    # Level 3: feature-3 off feature-2
+    git.create_branch("feature-3", checkout=True)
+    (isolated_git_repo / "f3.txt").write_text("f3 content")
+    git.add_files("f3.txt")
+    git.commit("Add f3")
+    git.add_notes(json.dumps({"parent": "feature-2"}), "feature-3", "shortcake")
+
+    # Squash merge feature-1 into main
+    git.checkout_branch("main")
+    (isolated_git_repo / "f1.txt").write_text("f1 content")
+    git.add_files("f1.txt")
+    git.commit("Squashed: Add f1")
+
+    # Run sync
+    result = runner.invoke(app, ["sync"])
+    assert result.exit_code == 0
+
+    # feature-1 should be deleted (squash merged)
+    assert not git.branch_exists("feature-1")
+
+    # feature-2's parent should now be main
+    notes = git.get_notes("feature-2", "shortcake")
+    assert notes is not None
+    assert json.loads(notes).get("parent") == "main"
+
+    # feature-3's parent should still be feature-2
+    notes = git.get_notes("feature-3", "shortcake")
+    assert notes is not None
+    assert json.loads(notes).get("parent") == "feature-2"
