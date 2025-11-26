@@ -1,6 +1,6 @@
 import typer
 
-from shortcake.commands import adopt, config, create, edit, ls, submit, sync, version
+from shortcake.commands import adopt, config, create, edit, ls, restack, submit, sync, version
 
 app = typer.Typer()
 
@@ -14,6 +14,7 @@ app.command()(ls.ls)
 app.command()(adopt.adopt)
 app.command()(sync.sync)
 app.command()(submit.submit)
+app.command()(restack.restack)
 
 
 if __name__ == "__main__":
