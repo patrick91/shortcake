@@ -71,7 +71,7 @@ def test_ls_with_single_branch(
     result = runner.invoke(app, ["ls"])
     assert result.exit_code == 0
     assert "test-feature" in result.output
-    assert "(current)" in result.output
+    assert "◉" in result.output  # Current branch marker
 
 
 def test_ls_with_stacked_branches(
@@ -120,8 +120,9 @@ def test_ls_shows_tree_structure(
     assert result.exit_code == 0
     output = result.output
 
-    # Should contain tree characters
-    assert "└──" in output or "├──" in output
+    # Should contain vertical connector and branch markers
+    assert "│" in output
+    assert "◉" in output or "◯" in output
 
 
 def test_create_adds_metadata(

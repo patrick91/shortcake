@@ -95,9 +95,13 @@ Created commit: Add user authentication
     # Use snapshot to verify the exact tree structure output
     assert result.stdout == snapshot(
         """\
-└── add-password-validation (current)
-    └── add-login-form
-        └── add-user-authentication
+◉ add-password-validation
+│
+◯ add-login-form
+│
+◯ add-user-authentication
+│
+◯ main
 """
     )
 
@@ -158,8 +162,11 @@ def test_adopt_existing_branch_and_stack(
     assert result.exit_code == 0
     assert result.stdout == snapshot(
         """\
-└── extend-feature (current)
-    └── feature-base
+◉ extend-feature
+│
+◯ feature-base
+│
+◯ main
 """
     )
 
@@ -209,8 +216,13 @@ def test_multiple_parallel_stacks(
     assert result.exit_code == 0
     assert result.stdout == snapshot(
         """\
-├── feature-one
-└── feature-two (current)
+◯ feature-one
+│
+◯ main
+
+◉ feature-two
+│
+◯ main
 """
     )
 
@@ -228,8 +240,14 @@ def test_multiple_parallel_stacks(
     assert result.exit_code == 0
     assert result.stdout == snapshot(
         """\
-├── extend-feature-two (current)
-│   └── feature-two
-└── feature-one
+◉ extend-feature-two
+│
+◯ feature-two
+│
+◯ main
+
+◯ feature-one
+│
+◯ main
 """
     )
