@@ -370,13 +370,13 @@ def submit(
 
                 typer.echo(" done")
                 restacked_branches.append(branch.name)
-            except GitError as e:
+            except GitError:
                 typer.echo(" CONFLICT")
-                typer.echo(f"\nError: {e}", err=True)
+                typer.echo(f"\nError: Rebase conflict while rebasing {branch.name}.", err=True)
                 typer.echo("\nRebase conflict occurred. Please resolve manually:")
                 typer.echo("  1. Fix the conflicts in the affected files")
                 typer.echo("  2. Stage the resolved files: git add <files>")
-                typer.echo("  3. Continue: git rebase --continue")
+                typer.echo("  3. Continue: shortcake restack --continue")
                 typer.echo("  4. Then run: shortcake submit")
                 raise typer.Exit(1) from None
 
