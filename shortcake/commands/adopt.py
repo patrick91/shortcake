@@ -1,8 +1,7 @@
-import json
-
 import typer
 
 from shortcake.git import GitError, GitRepo
+from shortcake.metadata import get_branch_metadata, update_branch_metadata
 
 app = typer.Typer()
 
@@ -68,7 +67,7 @@ def adopt(
 ):
     """Adopt an existing branch to be tracked by shortcake.
 
-    Adds shortcake tracking (git notes) to an existing git branch.
+    Adds shortcake tracking to an existing git branch.
     Parent branch is automatically detected from git history, or can be specified manually.
 
     Examples:
@@ -97,9 +96,9 @@ def adopt(
             raise typer.Exit(1)
 
         # Check if already tracked
-        existing_notes = git.get_notes(branch_to_adopt, "shortcake")
+        existing_metadata = get_branch_metadata(branch_to_adopt)
 
-        if existing_notes and not force:
+        if existing_metadata.get("parent") and not force:
             typer.echo(
                 f"Error: Branch '{branch_to_adopt}' is already tracked by shortcake", err=True
             )
@@ -115,6 +114,12 @@ def adopt(
                 if dry_run:
                     typer.echo(f"Auto-detected parent: {detected_parent}")
                 parent = detected_parent
+            else:
+                # Fall back to main/master if no parent detected
+                if git.branch_exists("main"):
+                    parent = "main"
+                elif git.branch_exists("master"):
+                    parent = "master"
 
         # Validate parent if specified
         if parent:
@@ -124,29 +129,27 @@ def adopt(
                 raise typer.Exit(1)
 
         if not dry_run:
-            # Preserve existing notes (like pr_number) when force-updating
-            notes_data = {}
-            if existing_notes:
-                try:
-                    notes_data = json.loads(existing_notes)
-                except json.JSONDecodeError:
-                    pass
-
-            if parent:
-                notes_data["parent"] = parent
-                # Use origin/main or origin/master for trunk branches to match restack behavior
-                parent_ref = (
+            # Use origin/main or origin/master for trunk branches to match restack behavior
+            parent_ref = (
+                (
                     f"origin/{parent}"
                     if parent in ("main", "master") and git.has_remote("origin")
                     else parent
                 )
-                notes_data["parent_revision"] = git.get_commit_sha(parent_ref)
-            notes_json = json.dumps(notes_data)
-            git.update_notes(notes_json, branch_to_adopt, "shortcake")
+                if parent
+                else None
+            )
+            update_branch_metadata(
+                branch_to_adopt,
+                parent=parent,
+                parent_revision=git.get_commit_sha(parent_ref) if parent_ref else None,
+            )
 
         parent_info = f" with parent '{parent}'" if parent else ""
         action = (
-            "Would adopt" if dry_run else ("Updated" if force and existing_notes else "Adopted")
+            "Would adopt"
+            if dry_run
+            else ("Updated" if force and existing_metadata.get("parent") else "Adopted")
         )
         typer.echo(f"{action} branch '{branch_to_adopt}'{parent_info}")
 

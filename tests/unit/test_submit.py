@@ -12,6 +12,7 @@ from typer.testing import CliRunner
 from shortcake.cli import app
 from shortcake.git import GitRepo
 from shortcake.github import GitHubError, parse_github_remote
+from tests.helpers.git_helpers import add_notes
 
 runner = CliRunner()
 
@@ -89,7 +90,7 @@ def test_submit_no_remote(isolated_git_repo: Path, isolated_config: Path):
     test_file.write_text("test content")
     git.add_files("test.txt")
     git.commit("Add test file")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature")
 
     result = runner.invoke(app, ["submit"])
     assert result.exit_code == 1
@@ -109,7 +110,7 @@ def test_submit_no_github_token(
     test_file.write_text("test content")
     git.add_files("test.txt")
     git.commit("Add test file")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature")
 
     # Add a remote
     git.add_remote("origin", "git@github.com:testuser/testrepo.git")
@@ -136,7 +137,7 @@ def test_submit_dry_run(
     test_file.write_text("test content")
     git.add_files("test.txt")
     git.commit("Add test file")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature")
 
     # Add a remote
     git.add_remote("origin", "git@github.com:testuser/testrepo.git")
@@ -164,7 +165,8 @@ def test_submit_dry_run_existing_pr(
     test_file.write_text("test content")
     git.add_files("test.txt")
     git.commit("Add test file")
-    git.add_notes(
+    add_notes(
+        isolated_git_repo,
         json.dumps(
             {
                 "parent": "main",
@@ -172,8 +174,7 @@ def test_submit_dry_run_existing_pr(
                 "pr_url": "https://github.com/testuser/testrepo/pull/123",
             }
         ),
-        "HEAD",
-        "shortcake",
+        "feature",
     )
 
     # Add a remote
@@ -200,14 +201,14 @@ def test_submit_dry_run_default_submits_stack(
     (isolated_git_repo / "f1.txt").write_text("f1")
     git.add_files("f1.txt")
     git.commit("Add feature 1")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature-1")
 
     # Create second branch stacked on first
     git.create_branch("feature-2", checkout=True)
     (isolated_git_repo / "f2.txt").write_text("f2")
     git.add_files("f2.txt")
     git.commit("Add feature 2")
-    git.add_notes(json.dumps({"parent": "feature-1"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "feature-1"}), "feature-2")
 
     # Add a remote
     git.add_remote("origin", "git@github.com:testuser/testrepo.git")
@@ -240,7 +241,7 @@ def test_submit_creates_pr(
     test_file.write_text("test content")
     git.add_files("test.txt")
     git.commit("Add test file")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature")
 
     # Set mock token
     monkeypatch.setenv("GITHUB_TOKEN", "test-token")
@@ -322,7 +323,7 @@ def test_submit_finds_existing_pr(
     test_file.write_text("test content")
     git.add_files("test.txt")
     git.commit("Add test file")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature")
 
     # Push the feature branch to local remote
     subprocess.run(["git", "push", "-u", "origin", "feature"], cwd=isolated_git_repo, check=True)

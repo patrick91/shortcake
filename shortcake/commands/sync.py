@@ -1,12 +1,12 @@
 """Sync command for rebasing stacked branches after merges."""
 
-import json
 from dataclasses import dataclass
 
 import typer
 
 from shortcake import get_cli_name
 from shortcake.git import GitError, GitRepo
+from shortcake.metadata import get_all_branch_metadata, get_branch_metadata, update_branch_metadata
 
 app = typer.Typer()
 
@@ -27,21 +27,14 @@ def _get_tracked_branches(git: GitRepo) -> dict[str, BranchInfo]:
         Dict mapping branch name to BranchInfo.
     """
     branches: dict[str, BranchInfo] = {}
+    all_metadata = get_all_branch_metadata()
 
-    for branch_name in git.get_branches():
-        notes = git.get_notes(branch_name, "shortcake")
-        if notes:
-            try:
-                notes_data = json.loads(notes)
-                parent = notes_data.get("parent")
-            except (json.JSONDecodeError, AttributeError):
-                parent = None
-
-            branches[branch_name] = BranchInfo(
-                name=branch_name,
-                parent=parent,
-                commit_sha=git.get_commit_sha(branch_name),
-            )
+    for branch_name, metadata in all_metadata.items():
+        branches[branch_name] = BranchInfo(
+            name=branch_name,
+            parent=metadata.get("parent"),
+            commit_sha=git.get_commit_sha(branch_name),
+        )
 
     return branches
 
@@ -380,20 +373,13 @@ def sync(
         typer.echo(f"  • {branch} onto {new_parent}...", nl=False)
         try:
             # Get the old parent's commit SHA before rebasing
-            # First try from branches dict, then from git notes (parent_revision)
+            # First try from branches dict, then from metadata (parent_revision)
             if old_parent in branches:
                 old_parent_sha = branches[old_parent].commit_sha
             else:
-                # Parent was deleted - try to get parent_revision from notes
-                notes = git.get_notes(branch, "shortcake")
-                if notes:
-                    try:
-                        notes_data = json.loads(notes)
-                        old_parent_sha = notes_data.get("parent_revision")
-                    except json.JSONDecodeError:
-                        old_parent_sha = None
-                else:
-                    old_parent_sha = None
+                # Parent was deleted - try to get parent_revision from metadata
+                metadata = get_branch_metadata(branch)
+                old_parent_sha = metadata.get("parent_revision")
 
                 if not old_parent_sha:
                     # Fallback: use merge-base with new parent
@@ -417,24 +403,16 @@ def sync(
             typer.echo(f"  {cli} sync --abort")
             raise typer.Exit(1) from None
 
-    # Update git notes for rebased branches
+    # Update metadata for rebased branches
     typer.echo("\nUpdating branch parents:")
     for branch, new_parent in rebased_branches:
-        # Get current notes and update parent info
-        notes = git.get_notes(branch, "shortcake")
-        if notes:
-            try:
-                notes_data = json.loads(notes)
-            except json.JSONDecodeError:
-                notes_data = {}
-        else:
-            notes_data = {}
-
         # Store local branch name (main), not origin/main
         parent_name = main_branch if new_parent.startswith("origin/") else new_parent
-        notes_data["parent"] = parent_name
-        notes_data["parent_revision"] = git.get_commit_sha(new_parent)
-        git.update_notes(json.dumps(notes_data), branch, "shortcake")
+        update_branch_metadata(
+            branch,
+            parent=parent_name,
+            parent_revision=git.get_commit_sha(new_parent),
+        )
         typer.echo(f"  • {branch}: parent → {parent_name}")
 
     # Delete merged branches

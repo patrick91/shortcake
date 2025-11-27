@@ -8,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from shortcake.cli import app
+from tests.helpers.git_helpers import get_notes
 
 type GitEditorScript = Callable[[str], None]
 
@@ -444,16 +445,14 @@ def test_command_amending_initial_commit(
 
 
 @pytest.mark.parametrize("command", ["edit", "modify"])
-def test_command_preserves_shortcake_notes(
+def test_command_preserves_shortcake_metadata(
     command: str,
     isolated_git_repo: Path,
     isolated_config: Path,
     git_editor_script: GitEditorScript,
 ):
-    """Test that edit/modify preserves shortcake notes after amending."""
-    from shortcake.git import GitRepo
-
-    # Create initial commit with shortcake (which adds notes)
+    """Test that edit/modify preserves shortcake metadata after amending."""
+    # Create initial commit with shortcake (which adds metadata)
     test_file = isolated_git_repo / "test.txt"
     test_file.write_text("initial content")
     stage_all(isolated_git_repo)
@@ -462,9 +461,8 @@ def test_command_preserves_shortcake_notes(
     result = runner.invoke(app, ["create"])
     assert result.exit_code == 0
 
-    # Verify notes exist
-    git = GitRepo(isolated_git_repo)
-    notes_before = git.get_notes("HEAD", "shortcake")
+    # Verify metadata exists
+    notes_before = get_notes(isolated_git_repo, "initial-feature")
     assert notes_before is not None
     assert "parent" in notes_before
 
@@ -475,7 +473,7 @@ def test_command_preserves_shortcake_notes(
     result = runner.invoke(app, [command])
     assert result.exit_code == 0
 
-    # Verify notes are preserved after amend
-    notes_after = git.get_notes("HEAD", "shortcake")
+    # Verify metadata is preserved after amend (it's stored by branch name, not commit SHA)
+    notes_after = get_notes(isolated_git_repo, "initial-feature")
     assert notes_after is not None
     assert notes_after == notes_before

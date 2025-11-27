@@ -1,40 +1,23 @@
 """Navigation commands for moving through the stack."""
 
-import json
 from typing import Annotated
 
 import typer
 
 from shortcake.git import GitError, GitRepo
+from shortcake.metadata import (
+    get_all_branch_metadata,
+    get_branch_metadata,
+    get_children,
+)
 
 app = typer.Typer()
 
 
-def _get_branch_metadata(git: GitRepo, branch: str) -> dict:
-    """Get shortcake metadata for a branch from git notes."""
-    notes = git.get_notes(branch, "shortcake")
-    if notes:
-        try:
-            return json.loads(notes)
-        except json.JSONDecodeError:
-            return {}
-    return {}
-
-
-def _get_parent(git: GitRepo, branch: str) -> str | None:
+def _get_parent(branch: str) -> str | None:
     """Get the parent branch of the given branch."""
-    metadata = _get_branch_metadata(git, branch)
+    metadata = get_branch_metadata(branch)
     return metadata.get("parent")
-
-
-def _get_children(git: GitRepo, branch: str) -> list[str]:
-    """Get all branches that have the given branch as their parent."""
-    children = []
-    for branch_name in git.get_branches():
-        metadata = _get_branch_metadata(git, branch_name)
-        if metadata.get("parent") == branch:
-            children.append(branch_name)
-    return children
 
 
 def _is_trunk(branch: str) -> bool:
@@ -57,7 +40,7 @@ def up():
         typer.echo("Already at trunk (main/master)")
         return
 
-    parent = _get_parent(git, current)
+    parent = _get_parent(current)
     if not parent:
         typer.echo(f"Branch '{current}' has no parent (not managed by shortcake)")
         raise typer.Exit(1)
@@ -76,7 +59,7 @@ def down():
         raise typer.Exit(1) from None
 
     current = git.get_current_branch()
-    children = _get_children(git, current)
+    children = get_children(current)
 
     if not children:
         typer.echo(f"No child branches found for '{current}'")
@@ -108,7 +91,7 @@ def top():
     # Walk down to find the leaf (top of stack)
     branch = current
     while True:
-        children = _get_children(git, branch)
+        children = get_children(branch)
         if not children:
             break
         if len(children) > 1:
@@ -142,7 +125,7 @@ def bottom():
     # Walk up to find the root (bottom of stack)
     branch = current
     while True:
-        parent = _get_parent(git, branch)
+        parent = _get_parent(branch)
         if not parent or _is_trunk(parent):
             break
         branch = parent
@@ -155,10 +138,10 @@ def bottom():
     typer.echo(f"Switched to {branch}")
 
 
-def _find_branch_by_pr_number(git: GitRepo, pr_number: int) -> str | None:
+def _find_branch_by_pr_number(pr_number: int) -> str | None:
     """Find a branch by its PR number."""
-    for branch_name in git.get_branches():
-        metadata = _get_branch_metadata(git, branch_name)
+    all_metadata = get_all_branch_metadata()
+    for branch_name, metadata in all_metadata.items():
         if metadata.get("pr_number") == pr_number:
             return branch_name
     return None
@@ -186,7 +169,7 @@ def checkout(
     # Check if target is a PR number (all digits)
     if target.isdigit():
         pr_number = int(target)
-        branch = _find_branch_by_pr_number(git, pr_number)
+        branch = _find_branch_by_pr_number(pr_number)
         if not branch:
             typer.echo(f"Error: No branch found for PR #{pr_number}", err=True)
             raise typer.Exit(1)

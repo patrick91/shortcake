@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from shortcake.cli import app
 from shortcake.git import GitRepo
+from tests.helpers.git_helpers import add_notes, get_notes
 
 runner = CliRunner()
 
@@ -37,7 +38,7 @@ def test_sync_all_up_to_date(isolated_git_repo: Path, isolated_config: Path):
 
     # Add shortcake tracking
     notes_data = {"parent": "main"}
-    git.add_notes(json.dumps(notes_data), "feature-1", "shortcake")
+    add_notes(isolated_git_repo, json.dumps(notes_data), "feature-1")
 
     result = runner.invoke(app, ["sync"])
     assert result.exit_code == 0
@@ -54,7 +55,7 @@ def test_sync_dry_run_shows_plan(isolated_git_repo: Path, isolated_config: Path)
     test_file1.write_text("parent feature")
     git.add_files("parent.txt")
     git.commit("Add parent feature")
-    git.add_notes(json.dumps({"parent": "main"}), "feature-parent", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature-parent")
 
     # Create child branch
     git.create_branch("feature-child", checkout=True)
@@ -62,7 +63,7 @@ def test_sync_dry_run_shows_plan(isolated_git_repo: Path, isolated_config: Path)
     test_file2.write_text("child feature")
     git.add_files("child.txt")
     git.commit("Add child feature")
-    git.add_notes(json.dumps({"parent": "feature-parent"}), "feature-child", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "feature-parent"}), "feature-child")
 
     # Simulate merging parent into main by making parent an ancestor of main
     # In real scenario, GitHub merge would update main
@@ -87,7 +88,7 @@ def test_sync_rebases_child_after_parent_merged(isolated_git_repo: Path, isolate
     test_file1.write_text("parent feature")
     git.add_files("parent.txt")
     git.commit("Add parent feature")
-    git.add_notes(json.dumps({"parent": "main"}), "feature-parent", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature-parent")
 
     # Create child branch with its own commit
     git.create_branch("feature-child", checkout=True)
@@ -95,7 +96,7 @@ def test_sync_rebases_child_after_parent_merged(isolated_git_repo: Path, isolate
     test_file2.write_text("child feature")
     git.add_files("child.txt")
     git.commit("Add child feature")
-    git.add_notes(json.dumps({"parent": "feature-parent"}), "feature-child", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "feature-parent"}), "feature-child")
 
     # Merge parent into main (simulating GitHub merge)
     git.checkout_branch("main")
@@ -109,7 +110,7 @@ def test_sync_rebases_child_after_parent_merged(isolated_git_repo: Path, isolate
     assert "Sync complete" in result.stdout
 
     # Verify child's parent was updated to main
-    notes = git.get_notes("feature-child", "shortcake")
+    notes = get_notes(isolated_git_repo, "feature-child")
     assert notes is not None
     notes_data = json.loads(notes)
     assert notes_data.get("parent") == "main"
@@ -127,21 +128,21 @@ def test_sync_handles_deep_stack(isolated_git_repo: Path, isolated_config: Path)
     (isolated_git_repo / "f1.txt").write_text("f1")
     git.add_files("f1.txt")
     git.commit("Add f1")
-    git.add_notes(json.dumps({"parent": "main"}), "feature-1", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature-1")
 
     # Create level 2: feature-2 off feature-1
     git.create_branch("feature-2", checkout=True)
     (isolated_git_repo / "f2.txt").write_text("f2")
     git.add_files("f2.txt")
     git.commit("Add f2")
-    git.add_notes(json.dumps({"parent": "feature-1"}), "feature-2", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "feature-1"}), "feature-2")
 
     # Create level 3: feature-3 off feature-2
     git.create_branch("feature-3", checkout=True)
     (isolated_git_repo / "f3.txt").write_text("f3")
     git.add_files("f3.txt")
     git.commit("Add f3")
-    git.add_notes(json.dumps({"parent": "feature-2"}), "feature-3", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "feature-2"}), "feature-3")
 
     # Merge feature-1 into main
     git.checkout_branch("main")
@@ -155,12 +156,12 @@ def test_sync_handles_deep_stack(isolated_git_repo: Path, isolated_config: Path)
     assert not git.branch_exists("feature-1")
 
     # feature-2's parent should now be main
-    notes = git.get_notes("feature-2", "shortcake")
+    notes = get_notes(isolated_git_repo, "feature-2")
     assert notes is not None
     assert json.loads(notes).get("parent") == "main"
 
     # feature-3's parent should still be feature-2
-    notes = git.get_notes("feature-3", "shortcake")
+    notes = get_notes(isolated_git_repo, "feature-3")
     assert notes is not None
     assert json.loads(notes).get("parent") == "feature-2"
 
@@ -188,7 +189,7 @@ def test_sync_preserves_unrelated_branches(isolated_git_repo: Path, isolated_con
     (isolated_git_repo / "a.txt").write_text("a")
     git.add_files("a.txt")
     git.commit("Add a")
-    git.add_notes(json.dumps({"parent": "main"}), "branch-a", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "branch-a")
 
     # Create and track branch-b (independent)
     git.checkout_branch("main")
@@ -196,7 +197,7 @@ def test_sync_preserves_unrelated_branches(isolated_git_repo: Path, isolated_con
     (isolated_git_repo / "b.txt").write_text("b")
     git.add_files("b.txt")
     git.commit("Add b")
-    git.add_notes(json.dumps({"parent": "main"}), "branch-b", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "branch-b")
 
     # Merge branch-a into main
     git.checkout_branch("main")
@@ -211,7 +212,7 @@ def test_sync_preserves_unrelated_branches(isolated_git_repo: Path, isolated_con
 
     # branch-b should be untouched
     assert git.branch_exists("branch-b")
-    notes = git.get_notes("branch-b", "shortcake")
+    notes = get_notes(isolated_git_repo, "branch-b")
     assert notes is not None
     assert json.loads(notes).get("parent") == "main"
 
@@ -225,14 +226,14 @@ def test_sync_detects_squash_merge(isolated_git_repo: Path, isolated_config: Pat
     (isolated_git_repo / "feature.txt").write_text("feature content")
     git.add_files("feature.txt")
     git.commit("Add feature")
-    git.add_notes(json.dumps({"parent": "main"}), "feature-parent", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature-parent")
 
     # Create child branch
     git.create_branch("feature-child", checkout=True)
     (isolated_git_repo / "child.txt").write_text("child content")
     git.add_files("child.txt")
     git.commit("Add child")
-    git.add_notes(json.dumps({"parent": "feature-parent"}), "feature-child", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "feature-parent"}), "feature-child")
 
     # Simulate squash merge: create a NEW commit on main with the same file content
     git.checkout_branch("main")
@@ -248,7 +249,7 @@ def test_sync_detects_squash_merge(isolated_git_repo: Path, isolated_config: Pat
     assert not git.branch_exists("feature-parent")
 
     # feature-child should have its parent updated to main
-    notes = git.get_notes("feature-child", "shortcake")
+    notes = get_notes(isolated_git_repo, "feature-child")
     assert notes is not None
     assert json.loads(notes).get("parent") == "main"
 
@@ -262,21 +263,21 @@ def test_sync_squash_merge_with_stack(isolated_git_repo: Path, isolated_config: 
     (isolated_git_repo / "f1.txt").write_text("f1 content")
     git.add_files("f1.txt")
     git.commit("Add f1")
-    git.add_notes(json.dumps({"parent": "main"}), "feature-1", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature-1")
 
     # Level 2: feature-2 off feature-1
     git.create_branch("feature-2", checkout=True)
     (isolated_git_repo / "f2.txt").write_text("f2 content")
     git.add_files("f2.txt")
     git.commit("Add f2")
-    git.add_notes(json.dumps({"parent": "feature-1"}), "feature-2", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "feature-1"}), "feature-2")
 
     # Level 3: feature-3 off feature-2
     git.create_branch("feature-3", checkout=True)
     (isolated_git_repo / "f3.txt").write_text("f3 content")
     git.add_files("f3.txt")
     git.commit("Add f3")
-    git.add_notes(json.dumps({"parent": "feature-2"}), "feature-3", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "feature-2"}), "feature-3")
 
     # Squash merge feature-1 into main
     git.checkout_branch("main")
@@ -292,11 +293,11 @@ def test_sync_squash_merge_with_stack(isolated_git_repo: Path, isolated_config: 
     assert not git.branch_exists("feature-1")
 
     # feature-2's parent should now be main
-    notes = git.get_notes("feature-2", "shortcake")
+    notes = get_notes(isolated_git_repo, "feature-2")
     assert notes is not None
     assert json.loads(notes).get("parent") == "main"
 
     # feature-3's parent should still be feature-2
-    notes = git.get_notes("feature-3", "shortcake")
+    notes = get_notes(isolated_git_repo, "feature-3")
     assert notes is not None
     assert json.loads(notes).get("parent") == "feature-2"

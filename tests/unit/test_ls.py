@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 
 from shortcake.cli import app
 from shortcake.git import GitRepo
+from tests.helpers.git_helpers import get_notes
 
 runner = CliRunner()
 
@@ -123,7 +124,7 @@ def test_ls_shows_tree_structure(
     assert "└──" in output or "├──" in output
 
 
-def test_create_adds_git_note(
+def test_create_adds_metadata(
     in_repo: Path, isolated_config: Path, git_editor_script: GitEditorScript
 ):
     # Create a branch
@@ -135,9 +136,8 @@ def test_create_adds_git_note(
     result = runner.invoke(app, ["create"])
     assert result.exit_code == 0
 
-    # Check that git notes were added
-    git = GitRepo()
-    notes = git.get_notes("HEAD", "shortcake")
+    # Check that metadata was added
+    notes = get_notes(in_repo, "test-feature")
     assert notes is not None
     assert "parent" in notes
 

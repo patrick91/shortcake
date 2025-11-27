@@ -1,23 +1,18 @@
 """Submit command for pushing branches and creating/updating PRs."""
 
-import json
 from dataclasses import dataclass
 
 import typer
 
 from shortcake import get_cli_name
-
-# Import restack helpers
-from shortcake.commands.restack import (
-    RESTACK_STATE_FILE,
-    _get_remote_ref,
-    _needs_restack,
-)
-from shortcake.commands.restack import (
-    _get_branch_metadata as _get_restack_metadata,
-)
+from shortcake.commands.restack import _get_remote_ref, _needs_restack
 from shortcake.git import GitError, GitRepo
 from shortcake.github import GitHubClient, GitHubError, get_github_repo_info
+from shortcake.metadata import (
+    get_all_branch_metadata,
+    get_branch_metadata,
+    update_branch_metadata,
+)
 
 app = typer.Typer()
 
@@ -33,22 +28,6 @@ class BranchSubmitInfo:
     pr_url: str | None = None
 
 
-def _get_branch_metadata(git: GitRepo, branch: str) -> dict:
-    """Get shortcake metadata for a branch from git notes."""
-    notes = git.get_notes(branch, "shortcake")
-    if notes:
-        try:
-            return json.loads(notes)
-        except json.JSONDecodeError:
-            return {}
-    return {}
-
-
-def _update_branch_metadata(git: GitRepo, branch: str, metadata: dict) -> None:
-    """Update shortcake metadata for a branch in git notes."""
-    git.update_notes(json.dumps(metadata), branch, "shortcake")
-
-
 def _get_stack_branches(git: GitRepo, start_branch: str) -> list[BranchSubmitInfo]:
     """Get all branches in the stack from bottom to top.
 
@@ -62,11 +41,12 @@ def _get_stack_branches(git: GitRepo, start_branch: str) -> list[BranchSubmitInf
     Returns:
         List of BranchSubmitInfo from bottom of stack to top
     """
+    all_metadata = get_all_branch_metadata()
     branches = []
     current = start_branch
 
     while current:
-        metadata = _get_branch_metadata(git, current)
+        metadata = all_metadata.get(current, {})
         parent = metadata.get("parent")
 
         if not parent:
@@ -87,7 +67,7 @@ def _get_stack_branches(git: GitRepo, start_branch: str) -> list[BranchSubmitInf
         )
 
         # Check if parent is a shortcake branch or if we've reached main/master
-        parent_metadata = _get_branch_metadata(git, parent)
+        parent_metadata = all_metadata.get(parent, {})
         if not parent_metadata.get("parent"):
             break  # Parent is not managed by shortcake (likely main)
 
@@ -98,13 +78,12 @@ def _get_stack_branches(git: GitRepo, start_branch: str) -> list[BranchSubmitInf
     return branches
 
 
-def _get_children(git: GitRepo, branch: str) -> list[str]:
+def _get_children(branch: str) -> list[str]:
     """Get all branches that have the given branch as their parent."""
     children = []
-    for branch_name in git.get_branches():
-        metadata = _get_branch_metadata(git, branch_name)
-        if metadata.get("parent") == branch:
-            children.append(branch_name)
+    for name, meta in get_all_branch_metadata().items():
+        if meta.get("parent") == branch:
+            children.append(name)
     return children
 
 
@@ -118,12 +97,13 @@ def _get_descendant_branches(git: GitRepo, branch: str) -> list[BranchSubmitInfo
     Returns:
         List of BranchSubmitInfo for all descendants, in topological order
     """
+    all_metadata = get_all_branch_metadata()
     result = []
-    queue = _get_children(git, branch)
+    queue = _get_children(branch)
 
     while queue:
         child = queue.pop(0)
-        metadata = _get_branch_metadata(git, child)
+        metadata = all_metadata.get(child, {})
         if metadata.get("parent"):
             commit_msg = git.get_commit_message(child)
             first_line = commit_msg.split("\n")[0] if commit_msg else child
@@ -137,7 +117,7 @@ def _get_descendant_branches(git: GitRepo, branch: str) -> list[BranchSubmitInfo
                 )
             )
             # Add this child's children to the queue
-            queue.extend(_get_children(git, child))
+            queue.extend(_get_children(child))
 
     return result
 
@@ -279,7 +259,7 @@ def submit(
         raise typer.Exit(1)
 
     # Get branch metadata
-    metadata = _get_branch_metadata(git, current_branch)
+    metadata = get_branch_metadata(current_branch)
     if not metadata.get("parent"):
         typer.echo(
             f"Error: Branch '{current_branch}' is not managed by shortcake. "
@@ -340,16 +320,9 @@ def submit(
         return
 
     # Restack branches that need it before pushing
-    # First, save notes for all branches (in case we hit a conflict)
-    saved_notes: dict[str, dict] = {}
-    for branch in branches:
-        branch_metadata = _get_restack_metadata(git, branch.name)
-        if branch_metadata:
-            saved_notes[branch.name] = branch_metadata
-
     restacked_branches: list[str] = []
     for branch in branches:
-        branch_metadata = _get_restack_metadata(git, branch.name)
+        branch_metadata = get_branch_metadata(branch.name)
         parent = branch_metadata.get("parent")
         if not parent:
             continue
@@ -377,20 +350,15 @@ def submit(
                         git.checkout_branch(branch.name)
                         git.rebase(rebase_target)
 
-                # Update notes with new parent_revision
-                updated_metadata = branch_metadata.copy()
-                updated_metadata["parent_revision"] = git.get_commit_sha(rebase_target)
-                git.update_notes(json.dumps(updated_metadata), branch.name, "shortcake")
+                # Update metadata with new parent_revision
+                update_branch_metadata(
+                    branch.name, parent_revision=git.get_commit_sha(rebase_target)
+                )
 
                 typer.echo(" done")
                 restacked_branches.append(branch.name)
             except GitError:
                 typer.echo(" CONFLICT")
-
-                # Save state so restack --continue can restore notes
-                state_file = git.working_dir / RESTACK_STATE_FILE
-                state = {"notes": saved_notes}
-                state_file.write_text(json.dumps(state))
 
                 typer.echo(f"\nError: Rebase conflict while rebasing {branch.name}.", err=True)
                 typer.echo("\nRebase conflict occurred. Please resolve manually:")
@@ -466,7 +434,7 @@ def submit(
             # Determine base branch for PR
             # If parent is a shortcake branch, use it as base
             # Otherwise, use main
-            parent_metadata = _get_branch_metadata(git, branch.parent)
+            parent_metadata = get_branch_metadata(branch.parent)
             if parent_metadata.get("parent"):
                 # Parent is also a shortcake branch, use it as base
                 base_branch = branch.parent
@@ -527,10 +495,7 @@ def submit(
                         submitted_prs.append((branch.name, pr.html_url, pr.number))
 
                 # Update metadata with PR info
-                branch_metadata = _get_branch_metadata(git, branch.name)
-                branch_metadata["pr_number"] = pr.number
-                branch_metadata["pr_url"] = pr.html_url
-                _update_branch_metadata(git, branch.name, branch_metadata)
+                update_branch_metadata(branch.name, pr_number=pr.number, pr_url=pr.html_url)
 
                 # Update branch object with PR number for stack description
                 branch.pr_number = pr.number
