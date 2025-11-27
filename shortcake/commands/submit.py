@@ -157,6 +157,7 @@ def _generate_stack_description(
     branches: list[BranchSubmitInfo],
     current_branch: str,
     main_branch: str,
+    pr_states: dict[int, str] | None = None,
 ) -> str:
     """Generate a markdown description of the stack for PR body.
 
@@ -164,17 +165,26 @@ def _generate_stack_description(
         branches: List of branches in the stack (bottom to top)
         current_branch: The branch this description is for
         main_branch: The name of the main/trunk branch
+        pr_states: Optional dict mapping PR number to state ('open', 'closed', 'merged')
 
     Returns:
         Markdown string describing the stack
     """
+    pr_states = pr_states or {}
     lines = ["## Stack"]
 
     # Show branches from top to bottom (reverse order)
     for branch in reversed(branches):
         pr_link = f"#{branch.pr_number}" if branch.pr_number else branch.name
+
+        # Check if PR is merged/closed
+        state = pr_states.get(branch.pr_number) if branch.pr_number else None
+        is_merged = state in ("closed", "merged")
+
         if branch.name == current_branch:
             lines.append(f"- **{pr_link}** ⬅")
+        elif is_merged:
+            lines.append(f"- ~~{pr_link}~~ ✅")
         else:
             lines.append(f"- {pr_link}")
 
@@ -515,6 +525,17 @@ def submit(
         if len(full_stack) > 1 or force:
             typer.echo()
             typer.echo("Updating PR descriptions with stack info...")
+
+            # Collect PR states for all branches in the stack
+            pr_states: dict[int, str] = {}
+            for branch in full_stack:
+                if branch.pr_number:
+                    try:
+                        pr_info = github.get_pull_request(owner, repo, branch.pr_number)
+                        pr_states[branch.pr_number] = pr_info.state
+                    except GitHubError:
+                        pass
+
             # Update ALL PRs in the full stack, not just the ones submitted
             for branch in full_stack:
                 if branch.pr_number:
@@ -522,9 +543,13 @@ def submit(
                         # Get current PR to preserve existing body
                         current_pr = github.get_pull_request(owner, repo, branch.pr_number)
 
+                        # Skip updating closed/merged PRs
+                        if current_pr.state != "open":
+                            continue
+
                         # Generate stack description using FULL stack
                         stack_desc = _generate_stack_description(
-                            full_stack, branch.name, main_branch
+                            full_stack, branch.name, main_branch, pr_states
                         )
 
                         # Update PR body
