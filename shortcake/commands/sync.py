@@ -17,25 +17,25 @@ app = typer.Typer()
 
 
 @dataclass
-class BranchInfo:
-    """Information about a tracked branch."""
+class SyncBranchInfo:
+    """Information about a branch for syncing."""
 
     name: str
     parent: str | None
     commit_sha: str
 
 
-def _get_tracked_branches(git: GitRepo) -> dict[str, BranchInfo]:
+def _get_tracked_branches(git: GitRepo) -> dict[str, SyncBranchInfo]:
     """Get all shortcake-tracked branches with their metadata.
 
     Returns:
-        Dict mapping branch name to BranchInfo.
+        Dict mapping branch name to SyncBranchInfo.
     """
-    branches: dict[str, BranchInfo] = {}
+    branches: dict[str, SyncBranchInfo] = {}
     all_metadata = get_all_branch_metadata()
 
     for branch_name, metadata in all_metadata.items():
-        branches[branch_name] = BranchInfo(
+        branches[branch_name] = SyncBranchInfo(
             name=branch_name,
             parent=metadata.get("parent"),
             commit_sha=git.get_commit_sha(branch_name),
@@ -89,11 +89,11 @@ def _get_main_branch(git: GitRepo) -> str:
     raise GitError("Neither 'main' nor 'master' branch exists")
 
 
-def _topological_sort(branches: dict[str, BranchInfo]) -> list[str]:
+def _topological_sort(branches: dict[str, SyncBranchInfo]) -> list[str]:
     """Sort branches in topological order (parents before children).
 
     Args:
-        branches: Dict of branch name to BranchInfo.
+        branches: Dict of branch name to SyncBranchInfo.
 
     Returns:
         List of branch names sorted so parents come before children.
@@ -122,7 +122,7 @@ def _topological_sort(branches: dict[str, BranchInfo]) -> list[str]:
 def _find_new_parent(
     branch: str,
     old_parent: str,
-    branches: dict[str, BranchInfo],
+    branches: dict[str, SyncBranchInfo],
     main_branch: str,
 ) -> str:
     """Find the new parent for a branch whose parent was merged.
