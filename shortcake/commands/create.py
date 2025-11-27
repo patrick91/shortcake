@@ -162,7 +162,7 @@ def create(
             # Use origin/main or origin/master for trunk branches to match restack behavior
             parent_ref = (
                 f"origin/{original_branch}"
-                if original_branch in ("main", "master") and git.has_remote("origin")
+                if git.is_trunk_branch(original_branch) and git.has_remote("origin")
                 else original_branch
             )
             update_branch_metadata(

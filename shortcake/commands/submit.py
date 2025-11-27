@@ -115,15 +115,6 @@ def _get_descendant_branches(git: GitRepo, branch: str) -> list[BranchSubmitInfo
     return result
 
 
-def _get_main_branch(git: GitRepo) -> str:
-    """Get the name of the main branch."""
-    if git.branch_exists("main"):
-        return "main"
-    if git.branch_exists("master"):
-        return "master"
-    raise GitError("Neither 'main' nor 'master' branch exists")
-
-
 # Markers for the stack section in PR body
 STACK_START_MARKER = "<!-- shortcake stack start -->"
 STACK_END_MARKER = "<!-- shortcake stack end -->"
@@ -244,10 +235,10 @@ def submit(
 
     cli = get_cli_name()
     current_branch = git.get_current_branch()
-    main_branch = _get_main_branch(git)
+    main_branch = git.get_main_branch()
 
     # Check if on main branch
-    if current_branch in ("main", "master"):
+    if git.is_trunk_branch(current_branch):
         print_error("Cannot submit from main/master branch")
         raise typer.Exit(1)
 

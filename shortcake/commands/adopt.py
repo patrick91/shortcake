@@ -22,7 +22,6 @@ def find_best_parent(git: GitRepo, branch: str) -> str | None:
     """
     all_branches = git.get_branches()
     candidates = []
-    main_branches = {"main", "master"}
 
     for potential_parent in all_branches:
         # Skip the branch itself
@@ -46,7 +45,7 @@ def find_best_parent(git: GitRepo, branch: str) -> str | None:
     # Prefer non-main branches if they're the closest
     # If only main/master is available, use it
     for candidate, _ in candidates:
-        if candidate not in main_branches:
+        if not git.is_trunk_branch(candidate):
             return candidate
 
     # Fallback to main/master if it's the only option
@@ -90,7 +89,7 @@ def adopt(
             print_error(f"Branch '{branch_to_adopt}' does not exist")
             raise typer.Exit(1)
 
-        if branch_to_adopt in {"main", "master"}:
+        if git.is_trunk_branch(branch_to_adopt):
             print_error(f"Cannot adopt '{branch_to_adopt}' branch")
             raise typer.Exit(1)
 
@@ -128,7 +127,7 @@ def adopt(
             parent_ref = (
                 (
                     f"origin/{parent}"
-                    if parent in ("main", "master") and git.has_remote("origin")
+                    if git.is_trunk_branch(parent) and git.has_remote("origin")
                     else parent
                 )
                 if parent

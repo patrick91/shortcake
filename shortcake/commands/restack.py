@@ -39,7 +39,7 @@ def _get_remote_ref(git: GitRepo, branch: str) -> str:
     Returns:
         The remote ref (e.g., origin/main) or the original branch name
     """
-    if branch in ("main", "master") and git.has_remote("origin"):
+    if git.is_trunk_branch(branch) and git.has_remote("origin"):
         return f"origin/{branch}"
     return branch
 
@@ -231,7 +231,7 @@ def restack(
     current_branch = git.get_current_branch()
 
     # Check if on main branch
-    if current_branch in ("main", "master"):
+    if git.is_trunk_branch(current_branch):
         print_error("Cannot restack from main/master branch")
         raise typer.Exit(1)
 
@@ -256,7 +256,7 @@ def restack(
 
     # Check if parent branch exists - if not, suggest running sync
     parent = metadata.get("parent")
-    if parent and parent not in ("main", "master"):
+    if parent and not git.is_trunk_branch(parent):
         if not git.branch_exists(parent):
             print_error(
                 f"Parent branch '{parent}' no longer exists. "

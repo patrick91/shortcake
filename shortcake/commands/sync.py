@@ -71,25 +71,6 @@ def _is_branch_merged(git: GitRepo, branch: str, into: str = "main") -> bool:
     return git.is_tree_subset(branch, into)
 
 
-def _get_main_branch(git: GitRepo) -> str:
-    """Get the name of the main branch (main or master).
-
-    Args:
-        git: GitRepo instance.
-
-    Returns:
-        'main' or 'master' depending on which exists.
-
-    Raises:
-        GitError: If neither main nor master exists.
-    """
-    if git.branch_exists("main"):
-        return "main"
-    if git.branch_exists("master"):
-        return "master"
-    raise GitError("Neither 'main' nor 'master' branch exists")
-
-
 def _topological_sort(branches: dict[str, SyncBranchInfo]) -> list[str]:
     """Sort branches in topological order (parents before children).
 
@@ -125,6 +106,7 @@ def _find_new_parent(
     old_parent: str,
     branches: dict[str, SyncBranchInfo],
     main_branch: str,
+    merged_branches: list[str],
 ) -> str:
     """Find the new parent for a branch whose parent was merged.
 
@@ -135,18 +117,23 @@ def _find_new_parent(
         old_parent: The old (merged) parent.
         branches: All tracked branches.
         main_branch: Name of the main branch.
+        merged_branches: List of branches that have been merged.
 
     Returns:
         The name of the new parent branch.
     """
-    # If old parent is main or doesn't exist in tracked branches, return main
-    if old_parent == main_branch or old_parent not in branches:
-        return main_branch
+    # Walk up the parent chain until we find a non-merged branch or reach main
+    current = old_parent
+    while current and current != main_branch:
+        if current not in branches:
+            return main_branch
 
-    # Check if the old parent's parent exists and is not merged
-    grandparent = branches[old_parent].parent
-    if grandparent and grandparent in branches:
-        return grandparent
+        # If current is not merged, it's our new parent
+        if current not in merged_branches:
+            return current
+
+        # Current is merged, walk up to its parent
+        current = branches[current].parent
 
     return main_branch
 
@@ -214,7 +201,7 @@ def sync(
         raise typer.Exit(1)
 
     try:
-        main_branch = _get_main_branch(git)
+        main_branch = git.get_main_branch()
     except GitError as e:
         print_error(str(e))
         raise typer.Exit(1) from None
@@ -321,7 +308,9 @@ def sync(
 
             if parent_merged or parent_missing:
                 # Use rebase_target (origin/main) for rebasing onto trunk
-                new_parent = _find_new_parent(name, info.parent, branches, main_branch)
+                new_parent = _find_new_parent(
+                    name, info.parent, branches, main_branch, merged_branches
+                )
                 # If new_parent is main, use the rebase_target instead
                 if new_parent == main_branch:
                     new_parent = rebase_target
