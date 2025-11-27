@@ -1,6 +1,7 @@
 """Navigation commands for moving through the stack."""
 
 import json
+from typing import Annotated
 
 import typer
 
@@ -152,3 +153,49 @@ def bottom():
 
     git.checkout_branch(branch)
     typer.echo(f"Switched to {branch}")
+
+
+def _find_branch_by_pr_number(git: GitRepo, pr_number: int) -> str | None:
+    """Find a branch by its PR number."""
+    for branch_name in git.get_branches():
+        metadata = _get_branch_metadata(git, branch_name)
+        if metadata.get("pr_number") == pr_number:
+            return branch_name
+    return None
+
+
+@app.command()
+def checkout(
+    target: Annotated[
+        str,
+        typer.Argument(help="Branch name or PR number (e.g., 'feature-1' or '123')"),
+    ],
+):
+    """Switch to a branch by name or PR number.
+
+    Examples:
+        shortcake checkout feature-1    # Switch by branch name
+        shortcake checkout 123          # Switch by PR number
+    """
+    try:
+        git = GitRepo()
+    except GitError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1) from None
+
+    # Check if target is a PR number (all digits)
+    if target.isdigit():
+        pr_number = int(target)
+        branch = _find_branch_by_pr_number(git, pr_number)
+        if not branch:
+            typer.echo(f"Error: No branch found for PR #{pr_number}", err=True)
+            raise typer.Exit(1)
+        git.checkout_branch(branch)
+        typer.echo(f"Switched to {branch} (PR #{pr_number})")
+    else:
+        # Target is a branch name
+        if not git.branch_exists(target):
+            typer.echo(f"Error: Branch '{target}' does not exist", err=True)
+            raise typer.Exit(1)
+        git.checkout_branch(target)
+        typer.echo(f"Switched to {target}")
