@@ -2,11 +2,11 @@
 
 import typer
 from rich.console import Console
-from rich_toolkit.menu import Menu
+from rich_toolkit.menu import Menu, Option
 
 from shortcake import get_cli_name
 from shortcake.git import GitError, GitRepo
-from shortcake.metadata import get_all_branch_metadata, get_branch_metadata, update_branch_metadata
+from shortcake.metadata import get_branch_metadata, update_branch_metadata
 
 app = typer.Typer()
 console = Console(stderr=True)
@@ -15,7 +15,6 @@ console = Console(stderr=True)
 def _pick_new_parent(git: GitRepo, branch_to_move: str, current_parent: str | None) -> str | None:
     """Show interactive menu to pick new parent branch."""
     all_branches = git.get_branches()
-    all_metadata = get_all_branch_metadata()
 
     # Build options: all branches except the one being moved
     options = []
@@ -24,19 +23,16 @@ def _pick_new_parent(git: GitRepo, branch_to_move: str, current_parent: str | No
             continue
         # Mark current parent
         suffix = " (current parent)" if b == current_parent else ""
-        # Mark tracked branches
-        if b in all_metadata:
-            options.append((b, f"{b}{suffix}"))
-        else:
-            options.append((b, f"{b}{suffix}"))
+        options.append(Option({"value": b, "name": f"{b}{suffix}"}))
 
     if not options:
         return None
 
     result = Menu(
-        options,
-        title=f"Select new parent for '{branch_to_move}'",
-    ).run()
+        label=f"Select new parent for '{branch_to_move}'",
+        options=options,
+        allow_filtering=True,
+    ).ask()
 
     return result
 
@@ -135,7 +131,7 @@ def move(
             # Rebase onto new parent
             typer.echo(f"Rebasing '{branch_to_move}' onto '{onto}'...")
             try:
-                git.rebase(onto, old_parent_rev)
+                git.rebase_onto(onto, old_parent_rev, branch_to_move)
             except GitError as e:
                 if "CONFLICT" in str(e) or "could not apply" in str(e):
                     console.print()
