@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 import typer
 
+from shortcake import get_cli_name
+
 # Import restack helpers
 from shortcake.commands.restack import (
     _get_branch_metadata as _get_restack_metadata,
@@ -263,6 +265,7 @@ def submit(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from None
 
+    cli = get_cli_name()
     current_branch = git.get_current_branch()
     main_branch = _get_main_branch(git)
 
@@ -276,7 +279,7 @@ def submit(
     if not metadata.get("parent"):
         typer.echo(
             f"Error: Branch '{current_branch}' is not managed by shortcake. "
-            "Use 'shortcake adopt' first.",
+            f"Use '{cli} adopt' first.",
             err=True,
         )
         raise typer.Exit(1)
@@ -376,8 +379,8 @@ def submit(
                 typer.echo("\nRebase conflict occurred. Please resolve manually:")
                 typer.echo("  1. Fix the conflicts in the affected files")
                 typer.echo("  2. Stage the resolved files: git add <files>")
-                typer.echo("  3. Continue: shortcake restack --continue")
-                typer.echo("  4. Then run: shortcake submit")
+                typer.echo(f"  3. Continue: {cli} restack --continue")
+                typer.echo(f"  4. Then run: {cli} submit")
                 raise typer.Exit(1) from None
 
     # Return to original branch if we restacked anything

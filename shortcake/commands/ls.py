@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 import typer
 
+from shortcake import get_cli_name
 from shortcake.git import GitError, GitRepo
 
 app = typer.Typer()
@@ -118,9 +119,10 @@ def ls():
     branches = _get_shortcake_branches(git)
 
     if not branches:
+        cli = get_cli_name()
         typer.echo("No shortcake-managed branches found")
         typer.echo(
-            "Use 'shortcake create' to create a new stack or 'shortcake adopt' to track existing branches"
+            f"Use '{cli} create' to create a new stack or '{cli} adopt' to track existing branches"
         )
         return
 

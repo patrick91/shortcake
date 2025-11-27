@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 import typer
 
+from shortcake import get_cli_name
 from shortcake.git import GitError, GitRepo
 
 app = typer.Typer()
@@ -204,11 +205,13 @@ def sync(
             typer.echo(f"Error: {e}", err=True)
             raise typer.Exit(1) from None
 
+    cli = get_cli_name()
+
     # Check for rebase in progress
     if git.is_rebase_in_progress():
         typer.echo("Error: A rebase is already in progress", err=True)
-        typer.echo("Run 'shortcake sync --continue' after resolving conflicts")
-        typer.echo("Or run 'shortcake sync --abort' to abort")
+        typer.echo(f"Run '{cli} sync --continue' after resolving conflicts")
+        typer.echo(f"Or run '{cli} sync --abort' to abort")
         raise typer.Exit(1)
 
     try:
@@ -372,9 +375,9 @@ def sync(
             typer.echo(" CONFLICT")
             typer.echo(f"\nError: {e}", err=True)
             typer.echo("\nResolve the conflicts, then run:")
-            typer.echo("  shortcake sync --continue")
+            typer.echo(f"  {cli} sync --continue")
             typer.echo("\nOr abort with:")
-            typer.echo("  shortcake sync --abort")
+            typer.echo(f"  {cli} sync --abort")
             raise typer.Exit(1) from None
 
     # Update git notes for rebased branches
