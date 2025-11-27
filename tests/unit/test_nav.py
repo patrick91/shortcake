@@ -15,13 +15,13 @@ runner = CliRunner()
 def test_up_help():
     result = runner.invoke(app, ["up", "--help"])
     assert result.exit_code == 0
-    assert "parent branch" in result.output.lower()
+    assert "child branch" in result.output.lower()
 
 
 def test_down_help():
     result = runner.invoke(app, ["down", "--help"])
     assert result.exit_code == 0
-    assert "child branch" in result.output.lower()
+    assert "parent branch" in result.output.lower()
 
 
 def test_top_help():
@@ -36,33 +36,7 @@ def test_bottom_help():
     assert "bottom of the stack" in result.output.lower()
 
 
-def test_up_from_child_branch(isolated_git_repo: Path, isolated_config: Path):
-    git = GitRepo()
-
-    # Create parent branch
-    git.create_branch("parent-branch", checkout=True)
-    (isolated_git_repo / "parent.txt").write_text("parent")
-    git.add_files(["parent.txt"])
-    git.commit("Add parent")
-    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "parent-branch")
-
-    # Create child branch
-    git.create_branch("child-branch", checkout=True)
-    (isolated_git_repo / "child.txt").write_text("child")
-    git.add_files(["child.txt"])
-    git.commit("Add child")
-    add_notes(isolated_git_repo, json.dumps({"parent": "parent-branch"}), "child-branch")
-
-    # We're on child-branch, go up
-    result = runner.invoke(app, ["up"])
-    assert result.exit_code == 0
-    assert "parent-branch" in result.output
-
-    # Verify we switched
-    assert git.get_current_branch() == "parent-branch"
-
-
-def test_down_from_parent_branch(isolated_git_repo: Path, isolated_config: Path):
+def test_up_from_parent_branch(isolated_git_repo: Path, isolated_config: Path):
     git = GitRepo()
 
     # Create parent branch
@@ -82,13 +56,39 @@ def test_down_from_parent_branch(isolated_git_repo: Path, isolated_config: Path)
     # Go back to parent
     git.checkout_branch("parent-branch")
 
-    # Go down to child
-    result = runner.invoke(app, ["down"])
+    # Go up to child (toward tip)
+    result = runner.invoke(app, ["up"])
     assert result.exit_code == 0
     assert "child-branch" in result.output
 
     # Verify we switched
     assert git.get_current_branch() == "child-branch"
+
+
+def test_down_from_child_branch(isolated_git_repo: Path, isolated_config: Path):
+    git = GitRepo()
+
+    # Create parent branch
+    git.create_branch("parent-branch", checkout=True)
+    (isolated_git_repo / "parent.txt").write_text("parent")
+    git.add_files(["parent.txt"])
+    git.commit("Add parent")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "parent-branch")
+
+    # Create child branch
+    git.create_branch("child-branch", checkout=True)
+    (isolated_git_repo / "child.txt").write_text("child")
+    git.add_files(["child.txt"])
+    git.commit("Add child")
+    add_notes(isolated_git_repo, json.dumps({"parent": "parent-branch"}), "child-branch")
+
+    # We're on child-branch, go down to parent (toward main)
+    result = runner.invoke(app, ["down"])
+    assert result.exit_code == 0
+    assert "parent-branch" in result.output
+
+    # Verify we switched
+    assert git.get_current_branch() == "parent-branch"
 
 
 def test_top_moves_to_leaf(isolated_git_repo: Path, isolated_config: Path):
@@ -156,26 +156,27 @@ def test_bottom_moves_to_root(isolated_git_repo: Path, isolated_config: Path):
     assert git.get_current_branch() == "branch1"
 
 
-def test_up_from_main(isolated_git_repo: Path, isolated_config: Path):
-    # We're on main
-    result = runner.invoke(app, ["up"])
-    assert result.exit_code == 0
-    assert "trunk" in result.output.lower()
-
-
-def test_down_no_children(isolated_git_repo: Path, isolated_config: Path):
+def test_up_no_children(isolated_git_repo: Path, isolated_config: Path):
     git = GitRepo()
 
-    # Create a branch with no children
+    # Create a branch with no children (leaf)
     git.create_branch("leaf-branch", checkout=True)
     (isolated_git_repo / "leaf.txt").write_text("leaf")
     git.add_files(["leaf.txt"])
     git.commit("Add leaf")
     add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "leaf-branch")
 
+    # Going up from leaf should say already at top
+    result = runner.invoke(app, ["up"])
+    assert result.exit_code == 0
+    assert "top of stack" in result.output.lower()
+
+
+def test_down_from_main(isolated_git_repo: Path, isolated_config: Path):
+    # We're on main, going down should say already at trunk
     result = runner.invoke(app, ["down"])
     assert result.exit_code == 0
-    assert "no child" in result.output.lower()
+    assert "trunk" in result.output.lower()
 
 
 def test_checkout_help():

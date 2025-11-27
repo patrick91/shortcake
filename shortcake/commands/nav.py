@@ -14,6 +14,26 @@ from shortcake.metadata import (
 app = typer.Typer()
 
 
+def _safe_checkout(git: GitRepo, branch: str) -> None:
+    """Checkout a branch with user-friendly error handling."""
+    try:
+        git.checkout_branch(branch)
+    except GitError as e:
+        error_str = str(e)
+        if "local changes" in error_str and "would be overwritten" in error_str:
+            typer.echo(
+                "Error: You have uncommitted changes that would be overwritten.",
+                err=True,
+            )
+            typer.echo(
+                "Please commit or stash your changes before switching branches.",
+                err=True,
+            )
+        else:
+            typer.echo(f"Error: Failed to checkout '{branch}': {e}", err=True)
+        raise typer.Exit(1) from None
+
+
 def _get_parent(branch: str) -> str | None:
     """Get the parent branch of the given branch."""
     metadata = get_branch_metadata(branch)
@@ -27,7 +47,35 @@ def _is_trunk(branch: str) -> bool:
 
 @app.command()
 def up():
-    """Move to the parent branch (toward main)."""
+    """Move up the stack to a child branch (toward tip, away from main)."""
+    try:
+        git = GitRepo()
+    except GitError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1) from None
+
+    current = git.get_current_branch()
+    children = get_children(current)
+
+    if not children:
+        typer.echo(f"Already at top of stack (no children for '{current}')")
+        return
+
+    if len(children) == 1:
+        _safe_checkout(git, children[0])
+        typer.echo(f"Switched to {children[0]}")
+    else:
+        # Multiple children - show options
+        typer.echo("Multiple child branches:")
+        for i, child in enumerate(children, 1):
+            typer.echo(f"  {i}. {child}")
+        typer.echo()
+        typer.echo("Use 'git checkout <branch>' to switch to one")
+
+
+@app.command()
+def down():
+    """Move down the stack to the parent branch (toward main)."""
     try:
         git = GitRepo()
     except GitError as e:
@@ -45,36 +93,8 @@ def up():
         typer.echo(f"Branch '{current}' has no parent (not managed by shortcake)")
         raise typer.Exit(1)
 
-    git.checkout_branch(parent)
+    _safe_checkout(git, parent)
     typer.echo(f"Switched to {parent}")
-
-
-@app.command()
-def down():
-    """Move to a child branch (away from main)."""
-    try:
-        git = GitRepo()
-    except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1) from None
-
-    current = git.get_current_branch()
-    children = get_children(current)
-
-    if not children:
-        typer.echo(f"No child branches found for '{current}'")
-        return
-
-    if len(children) == 1:
-        git.checkout_branch(children[0])
-        typer.echo(f"Switched to {children[0]}")
-    else:
-        # Multiple children - show options
-        typer.echo("Multiple child branches:")
-        for i, child in enumerate(children, 1):
-            typer.echo(f"  {i}. {child}")
-        typer.echo()
-        typer.echo("Use 'git checkout <branch>' to switch to one")
 
 
 @app.command()
@@ -103,7 +123,7 @@ def top():
         typer.echo("Already at top of stack")
         return
 
-    git.checkout_branch(branch)
+    _safe_checkout(git, branch)
     typer.echo(f"Switched to {branch}")
 
 
@@ -134,7 +154,7 @@ def bottom():
         typer.echo("Already at bottom of stack")
         return
 
-    git.checkout_branch(branch)
+    _safe_checkout(git, branch)
     typer.echo(f"Switched to {branch}")
 
 
@@ -173,12 +193,12 @@ def checkout(
         if not branch:
             typer.echo(f"Error: No branch found for PR #{pr_number}", err=True)
             raise typer.Exit(1)
-        git.checkout_branch(branch)
+        _safe_checkout(git, branch)
         typer.echo(f"Switched to {branch} (PR #{pr_number})")
     else:
         # Target is a branch name
         if not git.branch_exists(target):
             typer.echo(f"Error: Branch '{target}' does not exist", err=True)
             raise typer.Exit(1)
-        git.checkout_branch(target)
+        _safe_checkout(git, target)
         typer.echo(f"Switched to {target}")
