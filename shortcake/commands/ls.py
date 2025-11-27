@@ -65,6 +65,7 @@ def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
 
     # Get set of all tracked branch names
     tracked_names = {b.name for b in branches}
+    branch_map = {b.name: b for b in branches}
 
     # Build a map of children for each parent
     children_map: dict[str | None, list[BranchInfo]] = {}
@@ -84,42 +85,103 @@ def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
             pr_indicator = f" #{branch.pr_number}"
         else:
             pr_indicator = ""
-        return f"{indent}{marker} {branch.name}{pr_indicator}"
+        current_indicator = "  ← you are here" if branch.is_current else ""
+        return f"{indent}{marker} {branch.name}{pr_indicator}{current_indicator}"
 
-    def add_stack(branch: BranchInfo, indent: str = ""):
-        """Recursively add a branch and its ancestors (tip first, base last)."""
-        lines.append(format_branch_line(branch, indent))
-        lines.append(f"{indent}│")
+    def get_stack_to_base(branch: BranchInfo) -> list[BranchInfo]:
+        """Get list of branches from tip to base (excluding untracked base)."""
+        stack = [branch]
+        current = branch
+        while current.parent and current.parent in tracked_names:
+            current = branch_map[current.parent]
+            stack.append(current)
+        return stack
 
-        # Check if parent is tracked
-        if branch.parent and branch.parent in tracked_names:
-            parent = next(b for b in branches if b.name == branch.parent)
-            add_stack(parent, indent)
+    def get_base_parent(branch: BranchInfo) -> str | None:
+        """Get the untracked base parent (e.g., main/master)."""
+        current = branch
+        while current.parent and current.parent in tracked_names:
+            current = branch_map[current.parent]
+        return current.parent
 
     # Find leaf branches (tips of stacks - branches with no children)
     leaf_branches = [b for b in branches if b.name not in children_map]
     leaf_branches.sort(key=lambda b: b.name)
 
-    # Find base parents (main/master etc)
-    base_parents: set[str] = set()
-    for branch in branches:
-        if branch.parent and branch.parent not in tracked_names:
-            base_parents.add(branch.parent)
+    # Group leaves by their base parent
+    base_to_leaves: dict[str | None, list[BranchInfo]] = {}
+    for leaf in leaf_branches:
+        base = get_base_parent(leaf)
+        if base not in base_to_leaves:
+            base_to_leaves[base] = []
+        base_to_leaves[base].append(leaf)
 
-    # For each leaf, build its stack from tip to base
-    for i, leaf in enumerate(leaf_branches):
-        add_stack(leaf)
-
-        # Add the base branch at the bottom
-        # Find which base this stack connects to
+    def stack_contains_current(leaf: BranchInfo) -> bool:
+        """Check if the stack from this leaf contains the current branch."""
         current = leaf
-        while current.parent and current.parent in tracked_names:
-            current = next(b for b in branches if b.name == current.parent)
-        if current.parent:
-            lines.append(f"◯ {current.parent}")
+        while current:
+            if current.is_current:
+                return True
+            if current.parent and current.parent in tracked_names:
+                current = branch_map[current.parent]
+            else:
+                break
+        return False
 
-        # Add separator between stacks if there are multiple
-        if i < len(leaf_branches) - 1:
+    # Sort leaves so the stack with current branch is last (on main line)
+    for base in base_to_leaves:
+        base_to_leaves[base].sort(key=lambda leaf: (stack_contains_current(leaf), leaf.name))
+
+    # Process each base and its stacks
+    for base_idx, (base, leaves) in enumerate(
+        sorted(base_to_leaves.items(), key=lambda x: x[0] or "")
+    ):
+        if len(leaves) == 1:
+            # Single stack - simple output
+            stack = get_stack_to_base(leaves[0])
+            for branch in stack:
+                lines.append(format_branch_line(branch))
+                lines.append("│")
+            if base:
+                lines.append(f"◯ {base}")
+        else:
+            # Multiple stacks sharing the same base
+            # Find where stacks diverge (common ancestors)
+            stacks = [get_stack_to_base(leaf) for leaf in leaves]
+
+            # Find common suffix (shared ancestors)
+            min_len = min(len(s) for s in stacks)
+            common_count = 0
+            for i in range(1, min_len + 1):
+                if all(s[-i].name == stacks[0][-i].name for s in stacks):
+                    common_count = i
+                else:
+                    break
+
+            # Output each stack's unique part with indentation
+            for stack_idx, stack in enumerate(stacks):
+                unique_part = stack[:-common_count] if common_count > 0 else stack
+                is_last_stack = stack_idx == len(stacks) - 1
+
+                for branch in unique_part:
+                    lines.append(format_branch_line(branch, "│ " if not is_last_stack else ""))
+                    lines.append("│ │" if not is_last_stack else "│")
+
+                if not is_last_stack:
+                    lines.append("├─┘")
+
+            # Output common ancestors
+            if common_count > 0:
+                common_part = stacks[0][-common_count:]
+                for branch in common_part:
+                    lines.append(format_branch_line(branch))
+                    lines.append("│")
+
+            if base:
+                lines.append(f"◯ {base}")
+
+        # Separator between different bases
+        if base_idx < len(base_to_leaves) - 1:
             lines.append("")
 
     return lines
