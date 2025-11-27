@@ -405,6 +405,38 @@ def test_generate_stack_description():
     assert "main" in lines[4]  # Base
 
 
+def test_generate_stack_description_with_merged_prs():
+    from shortcake.commands.submit import BranchSubmitInfo, _generate_stack_description
+
+    branches = [
+        BranchSubmitInfo(
+            name="feature-1", parent="main", commit_message="Add feature 1", pr_number=1
+        ),
+        BranchSubmitInfo(
+            name="feature-2",
+            parent="feature-1",
+            commit_message="Add feature 2",
+            pr_number=2,
+        ),
+        BranchSubmitInfo(
+            name="feature-3",
+            parent="feature-2",
+            commit_message="Add feature 3",
+            pr_number=3,
+        ),
+    ]
+
+    # Test with PR #1 merged
+    pr_states = {1: "merged", 2: "open", 3: "open"}
+    desc = _generate_stack_description(branches, "feature-3", "main", pr_states)
+
+    assert "## Stack" in desc
+    assert "**#3** ⬅" in desc  # Current branch is highlighted
+    assert "- #2" in desc  # PR #2 is open
+    assert "~~#1~~ ✅" in desc  # PR #1 is merged (strikethrough + checkmark)
+    assert "main" in desc
+
+
 def test_update_pr_body_with_stack_new_body():
     from shortcake.commands.submit import _update_pr_body_with_stack
 
