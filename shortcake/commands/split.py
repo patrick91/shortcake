@@ -273,7 +273,7 @@ def split(
         cli = get_cli_name()
 
         # Check if on main branch
-        if current_branch in ("main", "master"):
+        if git.is_trunk_branch(current_branch):
             print_error("Cannot split main/master branch")
             raise typer.Exit(1)
 

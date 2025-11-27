@@ -71,7 +71,7 @@ def move(
             raise typer.Exit(1)
 
         # Can't move main/master
-        if branch_to_move in ("main", "master"):
+        if git.is_trunk_branch(branch_to_move):
             console.print(f"[bold red]Error:[/] Cannot move '{branch_to_move}' branch")
             raise typer.Exit(1)
 

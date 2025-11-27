@@ -270,6 +270,25 @@ class GitRepo:
         except Exception:
             return False
 
+    def get_main_branch(self) -> str:
+        """Get the name of the main/trunk branch.
+
+        Returns:
+            'main' or 'master' depending on which exists.
+
+        Raises:
+            GitError: If neither main nor master exists.
+        """
+        if self.branch_exists("main"):
+            return "main"
+        if self.branch_exists("master"):
+            return "master"
+        raise GitError("Neither 'main' nor 'master' branch exists")
+
+    def is_trunk_branch(self, branch: str) -> bool:
+        """Check if a branch is a trunk branch (main or master)."""
+        return branch in ("main", "master")
+
     def get_notes(self, ref: str = "HEAD", notes_ref: str = "shortcake") -> str | None:
         """Get git notes for a commit.
 

@@ -301,3 +301,52 @@ def test_sync_squash_merge_with_stack(isolated_git_repo: Path, isolated_config: 
     notes = get_notes(isolated_git_repo, "feature-3")
     assert notes is not None
     assert json.loads(notes).get("parent") == "feature-2"
+
+
+def test_sync_multiple_consecutive_branches_merged(isolated_git_repo: Path, isolated_config: Path):
+    """Test sync when multiple consecutive branches in a stack are merged.
+
+    Scenario: main → A → B → C, both A and B are merged.
+    Expected: C should be rebased onto main (not onto A which is also merged).
+    """
+    git = GitRepo()
+
+    # Create A off main
+    git.create_branch("branch-a", checkout=True)
+    (isolated_git_repo / "a.txt").write_text("a content")
+    git.add_files("a.txt")
+    git.commit("Add a")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "branch-a")
+
+    # Create B off A
+    git.create_branch("branch-b", checkout=True)
+    (isolated_git_repo / "b.txt").write_text("b content")
+    git.add_files("b.txt")
+    git.commit("Add b")
+    add_notes(isolated_git_repo, json.dumps({"parent": "branch-a"}), "branch-b")
+
+    # Create C off B
+    git.create_branch("branch-c", checkout=True)
+    (isolated_git_repo / "c.txt").write_text("c content")
+    git.add_files("c.txt")
+    git.commit("Add c")
+    add_notes(isolated_git_repo, json.dumps({"parent": "branch-b"}), "branch-c")
+
+    # Merge both A and B into main (simulating merging the first two PRs)
+    git.checkout_branch("main")
+    git.repo.git.merge("branch-a", "--no-ff", "-m", "Merge branch-a")
+    git.repo.git.merge("branch-b", "--no-ff", "-m", "Merge branch-b")
+
+    # Run sync
+    result = runner.invoke(app, ["sync"])
+    assert result.exit_code == 0
+
+    # Both A and B should be deleted (merged)
+    assert not git.branch_exists("branch-a")
+    assert not git.branch_exists("branch-b")
+
+    # C should still exist and its parent should be main (not branch-a!)
+    assert git.branch_exists("branch-c")
+    notes = get_notes(isolated_git_repo, "branch-c")
+    assert notes is not None
+    assert json.loads(notes).get("parent") == "main"

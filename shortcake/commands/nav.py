@@ -35,11 +35,6 @@ def _get_parent(branch: str) -> str | None:
     return metadata.get("parent")
 
 
-def _is_trunk(branch: str) -> bool:
-    """Check if branch is a trunk branch (main/master)."""
-    return branch in ("main", "master")
-
-
 @app.command()
 def up():
     """Move up the stack to a child branch (toward tip, away from main)."""
@@ -79,7 +74,7 @@ def down():
 
     current = git.get_current_branch()
 
-    if _is_trunk(current):
+    if git.is_trunk_branch(current):
         typer.echo("Already at trunk (main/master)")
         return
 
@@ -133,7 +128,7 @@ def bottom():
 
     current = git.get_current_branch()
 
-    if _is_trunk(current):
+    if git.is_trunk_branch(current):
         typer.echo("Already at trunk (main/master)")
         return
 
@@ -141,7 +136,7 @@ def bottom():
     branch = current
     while True:
         parent = _get_parent(branch)
-        if not parent or _is_trunk(parent):
+        if not parent or git.is_trunk_branch(parent):
             break
         branch = parent
 
