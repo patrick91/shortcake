@@ -12,6 +12,7 @@ from shortcake.metadata import (
     get_children,
     update_branch_metadata,
 )
+from shortcake.output import print_error, print_warning
 
 app = typer.Typer()
 
@@ -189,7 +190,7 @@ def restack(
     try:
         git = GitRepo()
     except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None
 
     cli = get_cli_name()
@@ -197,32 +198,32 @@ def restack(
     # Handle --abort
     if abort:
         if not git.is_rebase_in_progress():
-            typer.echo("Error: No rebase in progress", err=True)
+            print_error("No rebase in progress")
             raise typer.Exit(1)
         try:
             git.rebase_abort()
             typer.echo("Rebase aborted")
             return
         except GitError as e:
-            typer.echo(f"Error: {e}", err=True)
+            print_error(str(e))
             raise typer.Exit(1) from None
 
     # Handle --continue
     if continue_rebase:
         if not git.is_rebase_in_progress():
-            typer.echo("Error: No rebase in progress", err=True)
+            print_error("No rebase in progress")
             raise typer.Exit(1)
         try:
             git.rebase_continue()
             typer.echo("Rebase continued successfully")
             return
         except GitError as e:
-            typer.echo(f"Error: {e}", err=True)
+            print_error(str(e))
             raise typer.Exit(1) from None
 
     # Check for rebase in progress
     if git.is_rebase_in_progress():
-        typer.echo("Error: A rebase is already in progress", err=True)
+        print_error("A rebase is already in progress")
         typer.echo(f"Run '{cli} restack --continue' after resolving conflicts")
         typer.echo(f"Or run '{cli} restack --abort' to abort")
         raise typer.Exit(1)
@@ -231,16 +232,14 @@ def restack(
 
     # Check if on main branch
     if current_branch in ("main", "master"):
-        typer.echo("Error: Cannot restack from main/master branch", err=True)
+        print_error("Cannot restack from main/master branch")
         raise typer.Exit(1)
 
     # Check if current branch is managed by shortcake
     metadata = get_branch_metadata(current_branch)
     if not metadata.get("parent"):
-        typer.echo(
-            f"Error: Branch '{current_branch}' is not managed by shortcake. "
-            f"Use '{cli} adopt' first.",
-            err=True,
+        print_error(
+            f"Branch '{current_branch}' is not managed by shortcake. " f"Use '{cli} adopt' first."
         )
         raise typer.Exit(1)
 
@@ -253,16 +252,15 @@ def restack(
             try:
                 git.fetch("origin")
             except GitError as e:
-                typer.echo(f"Warning: Failed to fetch: {e}", err=True)
+                print_warning(f"Failed to fetch: {e}")
 
     # Check if parent branch exists - if not, suggest running sync
     parent = metadata.get("parent")
     if parent and parent not in ("main", "master"):
         if not git.branch_exists(parent):
-            typer.echo(
-                f"Error: Parent branch '{parent}' no longer exists.\n"
-                f"This usually means it was merged. Run '{cli} sync' to update parent references.",
-                err=True,
+            print_error(
+                f"Parent branch '{parent}' no longer exists. "
+                f"This usually means it was merged. Run '{cli} sync' to update parent references."
             )
             raise typer.Exit(1)
 
@@ -330,7 +328,7 @@ def restack(
         except GitError as e:
             typer.echo(" CONFLICT")
 
-            typer.echo(f"\nError: {e}", err=True)
+            print_error(str(e))
             typer.echo("\nTo resolve:")
             typer.echo("  1. Fix the conflicts in the affected files")
             typer.echo("  2. Stage the resolved files: git add <files>")

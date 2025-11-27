@@ -1,6 +1,7 @@
 import typer
 
 from shortcake import config
+from shortcake.output import print_error
 
 app = typer.Typer()
 
@@ -31,7 +32,7 @@ def config_cmd(
 
     elif action == "get":
         if not key:
-            typer.echo("Error: Key is required for 'get' action", err=True)
+            print_error("Key is required for 'get' action")
             raise typer.Exit(1)
 
         cfg = config.load_config()
@@ -44,7 +45,7 @@ def config_cmd(
 
     elif action == "set":
         if not key or not value:
-            typer.echo("Error: Both key and value are required for 'set' action", err=True)
+            print_error("Both key and value are required for 'set' action")
             raise typer.Exit(1)
 
         # Handle boolean values
@@ -56,15 +57,13 @@ def config_cmd(
                 config.set_keep_emoji(False)
                 typer.echo(f"Set {key} = false")
             else:
-                typer.echo(f"Error: Invalid value for {key}. Use 'true' or 'false'", err=True)
-
+                print_error(f"Invalid value for {key}. Use 'true' or 'false'")
                 raise typer.Exit(1)
         else:
-            typer.echo(f"Error: Unknown configuration key '{key}'", err=True)
+            print_error(f"Unknown configuration key '{key}'")
             cfg = config.load_config()
             typer.echo(f"Available keys: {', '.join(cfg.model_dump().keys())}")
-
             raise typer.Exit(1)
     else:
-        typer.echo(f"Error: Unknown action '{action}'. Use 'list', 'get', or 'set'", err=True)
+        print_error(f"Unknown action '{action}'. Use 'list', 'get', or 'set'")
         raise typer.Exit(1)

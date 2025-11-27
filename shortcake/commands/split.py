@@ -12,6 +12,7 @@ from shortcake.metadata import (
     get_children,
     update_branch_metadata,
 )
+from shortcake.output import print_error, print_warning
 
 app = typer.Typer()
 
@@ -54,7 +55,7 @@ def split(
     try:
         git = GitRepo()
     except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None
 
     state_file = git.working_dir / SPLIT_STATE_FILE
@@ -62,7 +63,7 @@ def split(
     # Handle --abort
     if abort:
         if not state_file.exists():
-            typer.echo("Error: No split in progress", err=True)
+            print_error("No split in progress")
             raise typer.Exit(1)
 
         try:
@@ -85,19 +86,19 @@ def split(
             typer.echo("Split aborted, restored original state")
             return
         except Exception as e:
-            typer.echo(f"Error aborting split: {e}", err=True)
+            print_error(f"Failed to abort split: {e}")
             raise typer.Exit(1) from None
 
     # Handle --finish
     if finish:
         if not state_file.exists():
-            typer.echo("Error: No split in progress", err=True)
+            print_error("No split in progress")
             raise typer.Exit(1)
 
         try:
             state = json.loads(state_file.read_text())
         except json.JSONDecodeError:
-            typer.echo("Error: Invalid split state file", err=True)
+            print_error("Invalid split state file")
             raise typer.Exit(1) from None
 
         # If there are staged changes, commit them first (like --continue)
@@ -110,13 +111,13 @@ def split(
                 try:
                     git.commit(no_verify=no_verify)
                 except GitError as e:
-                    typer.echo(f"Error: {e}", err=True)
+                    print_error(str(e))
                     raise typer.Exit(1) from None
             else:
                 try:
                     git.commit(message.strip(), no_verify=no_verify)
                 except GitError as e:
-                    typer.echo(f"Error: {e}", err=True)
+                    print_error(str(e))
                     raise typer.Exit(1) from None
 
             # Generate branch name from commit message
@@ -158,7 +159,7 @@ def split(
 
         # Check for any remaining uncommitted changes (unstaged)
         if git.repo.is_dirty(untracked_files=True):
-            typer.echo("Error: You have uncommitted changes", err=True)
+            print_error("You have uncommitted changes")
             typer.echo("Stage and commit them, or discard with 'git checkout -- .'")
             raise typer.Exit(1)
 
@@ -168,19 +169,19 @@ def split(
     # Handle --continue
     if continue_split:
         if not state_file.exists():
-            typer.echo("Error: No split in progress", err=True)
+            print_error("No split in progress")
             typer.echo("Start a split with: shortcake split --by-hunk")
             raise typer.Exit(1)
 
         try:
             state = json.loads(state_file.read_text())
         except json.JSONDecodeError:
-            typer.echo("Error: Invalid split state file", err=True)
+            print_error("Invalid split state file")
             raise typer.Exit(1) from None
 
         # Check if there are staged changes
         if not git.has_staged_changes():
-            typer.echo("Error: No staged changes", err=True)
+            print_error("No staged changes")
             typer.echo("Stage changes with 'git add -p' or 'git add <files>'")
             raise typer.Exit(1)
 
@@ -193,13 +194,13 @@ def split(
             try:
                 git.commit(no_verify=no_verify)
             except GitError as e:
-                typer.echo(f"Error: {e}", err=True)
+                print_error(str(e))
                 raise typer.Exit(1) from None
         else:
             try:
                 git.commit(message.strip(), no_verify=no_verify)
             except GitError as e:
-                typer.echo(f"Error: {e}", err=True)
+                print_error(str(e))
                 raise typer.Exit(1) from None
 
         # Generate branch name from commit message
@@ -264,7 +265,7 @@ def split(
     if by_hunk:
         # Check if split already in progress
         if state_file.exists():
-            typer.echo("Error: A split is already in progress", err=True)
+            print_error("A split is already in progress")
             typer.echo("Run 'shortcake split --continue' or 'shortcake split --abort'")
             raise typer.Exit(1)
 
@@ -273,7 +274,7 @@ def split(
 
         # Check if on main branch
         if current_branch in ("main", "master"):
-            typer.echo("Error: Cannot split main/master branch", err=True)
+            print_error("Cannot split main/master branch")
             raise typer.Exit(1)
 
         # Check if branch is managed by shortcake
@@ -311,7 +312,7 @@ def split(
             git.repo.git.reset("--soft", "HEAD^")
         except Exception as e:
             state_file.unlink()
-            typer.echo(f"Error: Failed to reset: {e}", err=True)
+            print_error(f"Failed to reset: {e}")
             raise typer.Exit(1) from None
 
         # Unstage all changes
@@ -336,7 +337,7 @@ def split(
         return
 
     # No mode specified
-    typer.echo("Error: Please specify --by-hunk to start a split", err=True)
+    print_error("Please specify --by-hunk to start a split")
     typer.echo("")
     typer.echo("Usage: shortcake split --by-hunk")
     raise typer.Exit(1)
@@ -349,7 +350,7 @@ def _finish_split(git: GitRepo, state: dict, state_file: Path) -> None:
     original_branch = state["original_branch"]
 
     if not created_branches:
-        typer.echo("Error: No branches were created during split", err=True)
+        print_error("No branches were created during split")
         typer.echo("Run 'shortcake split --abort' to restore original state")
         raise typer.Exit(1)
 
@@ -380,7 +381,7 @@ def _finish_split(git: GitRepo, state: dict, state_file: Path) -> None:
             # The parent relationship stays the same
             typer.echo(f"Renamed '{last_branch}' → '{original_branch}' (preserves existing PR)")
         except GitError as e:
-            typer.echo(f"Warning: Could not rename to original branch: {e}", err=True)
+            print_warning(f"Could not rename to original branch: {e}")
 
     # Update children to point to the original branch (now the last in the stack)
     if children:
@@ -390,7 +391,7 @@ def _finish_split(git: GitRepo, state: dict, state_file: Path) -> None:
                 update_branch_metadata(child, parent=original_branch)
                 typer.echo(f"  • {child}: parent → {original_branch}")
             except Exception as e:
-                typer.echo(f"  • {child}: Failed to update - {e}", err=True)
+                print_warning(f"{child}: Failed to update - {e}")
 
     # Clean up state file
     state_file.unlink()

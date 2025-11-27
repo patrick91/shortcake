@@ -6,6 +6,7 @@ from rich.console import Console
 from shortcake import get_cli_name
 from shortcake.git import GitError, GitRepo
 from shortcake.metadata import get_all_branch_metadata
+from shortcake.output import print_error
 
 console = Console()
 
@@ -52,7 +53,7 @@ def _build_tree_lines(branches: list[BranchDisplayInfo]) -> list[str]:
 
     Shows the stack with tip at top and base at bottom.
     Uses ◉ for current branch, ◯ for others.
-    This makes 'up' (to parent) go visually down, and 'down' (to child) go visually up.
+    This makes 'up' (to child) go visually up, and 'down' (to parent) go visually down.
 
     Args:
         branches: List of BranchDisplayInfo objects.
@@ -198,7 +199,7 @@ def ls():
     try:
         git = GitRepo()
     except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None
 
     branches = _get_shortcake_branches(git)

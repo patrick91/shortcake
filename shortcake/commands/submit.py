@@ -14,6 +14,7 @@ from shortcake.metadata import (
     get_children,
     update_branch_metadata,
 )
+from shortcake.output import print_error
 
 app = typer.Typer()
 
@@ -238,7 +239,7 @@ def submit(
     try:
         git = GitRepo()
     except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None
 
     cli = get_cli_name()
@@ -247,29 +248,27 @@ def submit(
 
     # Check if on main branch
     if current_branch in ("main", "master"):
-        typer.echo("Error: Cannot submit from main/master branch", err=True)
+        print_error("Cannot submit from main/master branch")
         raise typer.Exit(1)
 
     # Get branch metadata
     metadata = get_branch_metadata(current_branch)
     if not metadata.get("parent"):
-        typer.echo(
-            f"Error: Branch '{current_branch}' is not managed by shortcake. "
-            f"Use '{cli} adopt' first.",
-            err=True,
+        print_error(
+            f"Branch '{current_branch}' is not managed by shortcake. " f"Use '{cli} adopt' first."
         )
         raise typer.Exit(1)
 
     # Check for remote
     if not git.has_remote("origin"):
-        typer.echo("Error: No 'origin' remote configured", err=True)
+        print_error("No 'origin' remote configured")
         raise typer.Exit(1)
 
     # Get GitHub repo info
     try:
         owner, repo = get_github_repo_info(git)
     except GitHubError as e:
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None
 
     if dry_run:
@@ -352,7 +351,7 @@ def submit(
             except GitError:
                 typer.echo(" CONFLICT")
 
-                typer.echo(f"\nError: Rebase conflict while rebasing {branch.name}.", err=True)
+                print_error(f"Rebase conflict while rebasing {branch.name}.")
                 typer.echo("\nRebase conflict occurred. Please resolve manually:")
                 typer.echo("  1. Fix the conflicts in the affected files")
                 typer.echo("  2. Stage the resolved files: git add <files>")
@@ -391,7 +390,7 @@ def submit(
     try:
         github = GitHubClient()
     except GitHubError as e:
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None
 
     try:
@@ -420,7 +419,7 @@ def submit(
                     )
                 except GitError as e:
                     typer.echo(" FAILED")
-                    typer.echo(f"Error pushing branch: {e}", err=True)
+                    print_error(f"Failed to push branch: {e}")
                     raise typer.Exit(1) from None
 
             # Determine base branch for PR
@@ -495,7 +494,7 @@ def submit(
 
             except GitHubError as e:
                 typer.echo(" FAILED")
-                typer.echo(f"Error with GitHub API: {e}", err=True)
+                print_error(f"GitHub API error: {e}")
                 raise typer.Exit(1) from None
 
         # Update PR bodies with stack info
