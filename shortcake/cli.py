@@ -6,6 +6,7 @@ from shortcake.commands import (
     create,
     edit,
     ls,
+    move,
     nav,
     restack,
     split,
@@ -29,6 +30,7 @@ app.command()(sync.sync)
 app.command()(submit.submit)
 app.command()(restack.restack)
 app.command()(split.split)
+app.command()(move.move)
 
 # Navigation commands
 app.command()(nav.up)
