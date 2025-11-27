@@ -48,9 +48,10 @@ def _get_shortcake_branches(git: GitRepo) -> list[BranchInfo]:
 
 
 def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
-    """Build a tree visualization of the branch stack.
+    """Build a vertical stack visualization.
 
-    Shows the stack with leaves (tip of stack) at the top and roots (base) at the bottom.
+    Shows the stack with tip at top and base at bottom.
+    Uses ◉ for current branch, ◯ for others.
     This makes 'up' (to parent) go visually down, and 'down' (to child) go visually up.
 
     Args:
@@ -62,8 +63,8 @@ def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
     if not branches:
         return []
 
-    # Build maps for navigation
-    branch_map = {b.name: b for b in branches}
+    # Get set of all tracked branch names
+    tracked_names = {b.name for b in branches}
 
     # Build a map of children for each parent
     children_map: dict[str | None, list[BranchInfo]] = {}
@@ -74,43 +75,52 @@ def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
 
     lines: list[str] = []
 
-    def format_branch(branch: BranchInfo, prefix: str, connector: str) -> str:
+    def format_branch_line(branch: BranchInfo, indent: str = "") -> str:
         """Format a single branch line."""
-        current_indicator = " (current)" if branch.is_current else ""
+        marker = "◉" if branch.is_current else "◯"
         if branch.pr_number and branch.pr_url:
             pr_indicator = f" [link={branch.pr_url}]#{branch.pr_number}[/link]"
         elif branch.pr_number:
             pr_indicator = f" #{branch.pr_number}"
         else:
             pr_indicator = ""
-        return f"{prefix}{connector}{branch.name}{pr_indicator}{current_indicator}"
+        return f"{indent}{marker} {branch.name}{pr_indicator}"
 
-    def add_branch_and_ancestors(branch: BranchInfo, prefix: str = "", is_last: bool = True):
-        """Add branch and its ancestors to the tree (leaf at top, root at bottom)."""
-        connector = "└── " if is_last else "├── "
-        lines.append(format_branch(branch, prefix, connector))
+    def add_stack(branch: BranchInfo, indent: str = ""):
+        """Recursively add a branch and its ancestors (tip first, base last)."""
+        lines.append(format_branch_line(branch, indent))
+        lines.append(f"{indent}│")
 
-        # Add parent below with more indentation
-        if branch.parent and branch.parent in branch_map:
-            parent = branch_map[branch.parent]
-            extension = "    " if is_last else "│   "
-            add_branch_and_ancestors(parent, prefix + extension, True)
+        # Check if parent is tracked
+        if branch.parent and branch.parent in tracked_names:
+            parent = next(b for b in branches if b.name == branch.parent)
+            add_stack(parent, indent)
 
-    # Find leaf branches (those with no children among tracked branches)
+    # Find leaf branches (tips of stacks - branches with no children)
     leaf_branches = [b for b in branches if b.name not in children_map]
-
-    # Also include branches whose only children are not in tracked set
-    for branch in branches:
-        children = children_map.get(branch.name, [])
-        if not children and branch not in leaf_branches:
-            leaf_branches.append(branch)
-
-    # Sort leaves for consistent output
     leaf_branches.sort(key=lambda b: b.name)
 
-    for i, branch in enumerate(leaf_branches):
-        is_last = i == len(leaf_branches) - 1
-        add_branch_and_ancestors(branch, "", is_last)
+    # Find base parents (main/master etc)
+    base_parents: set[str] = set()
+    for branch in branches:
+        if branch.parent and branch.parent not in tracked_names:
+            base_parents.add(branch.parent)
+
+    # For each leaf, build its stack from tip to base
+    for i, leaf in enumerate(leaf_branches):
+        add_stack(leaf)
+
+        # Add the base branch at the bottom
+        # Find which base this stack connects to
+        current = leaf
+        while current.parent and current.parent in tracked_names:
+            current = next(b for b in branches if b.name == current.parent)
+        if current.parent:
+            lines.append(f"◯ {current.parent}")
+
+        # Add separator between stacks if there are multiple
+        if i < len(leaf_branches) - 1:
+            lines.append("")
 
     return lines
 
