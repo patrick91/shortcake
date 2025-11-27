@@ -35,6 +35,7 @@ app.command()(nav.down)
 app.command()(nav.top)
 app.command()(nav.bottom)
 app.command()(nav.checkout)
+app.command(name="co")(nav.checkout)
 
 
 if __name__ == "__main__":
