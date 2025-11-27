@@ -19,15 +19,9 @@ def _do_edit(no_verify: bool = False) -> None:
             typer.echo("Error: No staged changes to amend. Use 'git add' first.", err=True)
             raise typer.Exit(1)
 
-        # Save existing shortcake notes before amending (amend changes commit SHA)
-        existing_notes = git.get_notes("HEAD", "shortcake")
-
         # Amend the commit without opening editor (reuse previous message)
+        # Note: Metadata is stored by branch name in JSON, so no need to save/restore
         git.commit(amend=True, no_verify=no_verify)
-
-        # Re-attach shortcake notes to the new commit SHA
-        if existing_notes:
-            git.add_notes(existing_notes, "HEAD", "shortcake")
 
         typer.echo("Successfully amended the commit")
 

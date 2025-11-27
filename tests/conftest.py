@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 import respx
 
+from shortcake import metadata
 from tests.helpers.git_helpers import (
     create_bare_repo,
     create_branch,
@@ -41,6 +42,9 @@ def isolated_git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     repo_path = tmp_path / "test_repo"
     repo_path.mkdir()
     monkeypatch.chdir(repo_path)
+
+    # Reset metadata store singleton so it discovers the new .git directory
+    metadata.reset_store()
 
     subprocess.run(["git", "init", "-b", "main"], cwd=repo_path, check=True, capture_output=True)
     subprocess.run(

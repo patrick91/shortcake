@@ -1,15 +1,12 @@
 """Restack command for rebasing stacked branches onto updated parent branches."""
 
-import json
 from dataclasses import dataclass
 
 import typer
 
 from shortcake import get_cli_name
 from shortcake.git import GitError, GitRepo
-
-# File to store notes during restack (in .git directory)
-RESTACK_STATE_FILE = ".git/shortcake-restack-state.json"
+from shortcake.metadata import get_all_branch_metadata, get_branch_metadata, update_branch_metadata
 
 app = typer.Typer()
 
@@ -20,18 +17,7 @@ class BranchInfo:
 
     name: str
     parent: str
-    notes_data: dict
-
-
-def _get_branch_metadata(git: GitRepo, branch: str) -> dict:
-    """Get shortcake metadata for a branch from git notes."""
-    notes = git.get_notes(branch, "shortcake")
-    if notes:
-        try:
-            return json.loads(notes)
-        except json.JSONDecodeError:
-            return {}
-    return {}
+    metadata: dict
 
 
 def _get_remote_ref(git: GitRepo, branch: str) -> str:
@@ -97,42 +83,39 @@ def _needs_restack(
         return True  # On error, assume needs restack
 
 
-def _get_stack_from_current(git: GitRepo, current_branch: str) -> list[BranchInfo]:
+def _get_stack_from_current(current_branch: str) -> list[BranchInfo]:
     """Get the stack of branches from trunk up to current branch.
 
     Walks up from current branch to find all ancestors in the stack,
     then returns them in order from bottom (closest to trunk) to top.
 
     Args:
-        git: GitRepo instance
         current_branch: The current branch (top of stack)
 
     Returns:
         List of BranchInfo from bottom of stack to current branch
     """
+    all_metadata = get_all_branch_metadata()
     branches = []
     branch = current_branch
 
     while branch:
-        metadata = _get_branch_metadata(git, branch)
+        metadata = all_metadata.get(branch, {})
         parent = metadata.get("parent")
 
         if not parent:
             break  # Not a shortcake-managed branch or reached trunk
 
-        # Use remote ref for trunk branches (main/master)
-        rebase_target = _get_remote_ref(git, parent)
-
         branches.append(
             BranchInfo(
                 name=branch,
-                parent=rebase_target,
-                notes_data=metadata,
+                parent=parent,
+                metadata=metadata,
             )
         )
 
         # Check if parent is also a shortcake branch
-        parent_metadata = _get_branch_metadata(git, parent)
+        parent_metadata = all_metadata.get(parent, {})
         if not parent_metadata.get("parent"):
             break  # Parent is trunk (main/master)
 
@@ -143,42 +126,41 @@ def _get_stack_from_current(git: GitRepo, current_branch: str) -> list[BranchInf
     return branches
 
 
-def _get_children(git: GitRepo, branch: str) -> list[str]:
+def _get_children(branch: str) -> list[str]:
     """Get all branches that have the given branch as their parent."""
     children = []
-    for branch_name in git.get_branches():
-        metadata = _get_branch_metadata(git, branch_name)
-        if metadata.get("parent") == branch:
-            children.append(branch_name)
+    for name, meta in get_all_branch_metadata().items():
+        if meta.get("parent") == branch:
+            children.append(name)
     return children
 
 
-def _get_descendant_branches(git: GitRepo, branch: str) -> list[BranchInfo]:
+def _get_descendant_branches(branch: str) -> list[BranchInfo]:
     """Get all descendant branches (children, grandchildren, etc.) in topological order.
 
     Args:
-        git: GitRepo instance
         branch: The branch to find descendants of
 
     Returns:
         List of BranchInfo for all descendants, in topological order (parents before children)
     """
+    all_metadata = get_all_branch_metadata()
     result = []
-    queue = _get_children(git, branch)
+    queue = _get_children(branch)
 
     while queue:
         child = queue.pop(0)
-        metadata = _get_branch_metadata(git, child)
+        metadata = all_metadata.get(child, {})
         if metadata.get("parent"):
             result.append(
                 BranchInfo(
                     name=child,
                     parent=metadata["parent"],
-                    notes_data=metadata,
+                    metadata=metadata,
                 )
             )
             # Add this child's children to the queue
-            queue.extend(_get_children(git, child))
+            queue.extend(_get_children(child))
 
     return result
 
@@ -214,6 +196,8 @@ def restack(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from None
 
+    cli = get_cli_name()
+
     # Handle --abort
     if abort:
         if not git.is_rebase_in_progress():
@@ -221,12 +205,6 @@ def restack(
             raise typer.Exit(1)
         try:
             git.rebase_abort()
-
-            # Clean up state file
-            state_file = git.working_dir / RESTACK_STATE_FILE
-            if state_file.exists():
-                state_file.unlink()
-
             typer.echo("Rebase aborted")
             return
         except GitError as e:
@@ -240,36 +218,11 @@ def restack(
             raise typer.Exit(1)
         try:
             git.rebase_continue()
-
-            # Restore notes from saved state
-            state_file = git.working_dir / RESTACK_STATE_FILE
-            if state_file.exists():
-                try:
-                    state = json.loads(state_file.read_text())
-                    saved_notes = state.get("notes", {})
-                    current_branch = git.get_current_branch()
-
-                    # Restore notes for the current branch
-                    if current_branch in saved_notes:
-                        git.update_notes(
-                            json.dumps(saved_notes[current_branch]),
-                            current_branch,
-                            "shortcake",
-                        )
-                        typer.echo(f"Restored tracking for {current_branch}")
-
-                    # Clean up state file
-                    state_file.unlink()
-                except (json.JSONDecodeError, KeyError):
-                    pass  # Ignore errors reading state
-
             typer.echo("Rebase continued successfully")
             return
         except GitError as e:
             typer.echo(f"Error: {e}", err=True)
             raise typer.Exit(1) from None
-
-    cli = get_cli_name()
 
     # Check for rebase in progress
     if git.is_rebase_in_progress():
@@ -286,7 +239,7 @@ def restack(
         raise typer.Exit(1)
 
     # Check if current branch is managed by shortcake
-    metadata = _get_branch_metadata(git, current_branch)
+    metadata = get_branch_metadata(current_branch)
     if not metadata.get("parent"):
         typer.echo(
             f"Error: Branch '{current_branch}' is not managed by shortcake. "
@@ -318,10 +271,10 @@ def restack(
             raise typer.Exit(1)
 
     # Get stack from trunk up to current branch
-    stack_up = _get_stack_from_current(git, current_branch)
+    stack_up = _get_stack_from_current(current_branch)
 
     # Get descendant branches (children, grandchildren, etc.)
-    descendants = _get_descendant_branches(git, current_branch)
+    descendants = _get_descendant_branches(current_branch)
 
     # Combine: stack up to current + descendants
     all_branches = stack_up + descendants
@@ -330,26 +283,25 @@ def restack(
         typer.echo("No branches to restack")
         return
 
+    # Resolve parent refs (use origin/main for trunk)
+    for branch in all_branches:
+        branch.parent = _get_remote_ref(git, branch.parent)
+
     if dry_run:
         typer.echo("\nWould check the following branches:")
         for branch in all_branches:
-            needs = _needs_restack(git, branch.name, branch.parent, branch.notes_data, debug=debug)
+            needs = _needs_restack(git, branch.name, branch.parent, branch.metadata, debug=debug)
             status = "needs restack" if needs else "up to date"
             typer.echo(f"  {branch.name} → {branch.parent} ({status})")
         return
 
     typer.echo(f"\nChecking {len(all_branches)} branch(es)...")
 
-    # Save notes for all branches before rebasing (SHAs will change)
-    saved_notes: dict[str, dict] = {}
-    for branch in all_branches:
-        saved_notes[branch.name] = branch.notes_data
-
     # Rebase each branch in order, but only if needed
     restacked_count = 0
     for branch in all_branches:
         # Check if this branch actually needs rebasing
-        if not _needs_restack(git, branch.name, branch.parent, branch.notes_data, debug=debug):
+        if not _needs_restack(git, branch.name, branch.parent, branch.metadata, debug=debug):
             typer.echo(f"  {branch.name} does not need to be restacked")
             continue
 
@@ -360,7 +312,7 @@ def restack(
             # Use stored parent_revision as the rebase --from point
             # This is what Charcoal/Graphite do - it's the SHA where the branch
             # was originally based, which may differ from merge-base if parent was rebased
-            stored_parent_rev = branch.notes_data.get("parent_revision")
+            stored_parent_rev = branch.metadata.get("parent_revision")
 
             if stored_parent_rev:
                 # Rebase: git rebase --onto parent stored_parent_rev branch
@@ -374,20 +326,13 @@ def restack(
                     git.checkout_branch(branch.name)
                     git.rebase(branch.parent)
 
-            # Update notes with new parent_revision and re-attach to new commit SHA
-            updated_notes = saved_notes[branch.name].copy()
-            updated_notes["parent_revision"] = git.get_commit_sha(branch.parent)
-            git.update_notes(json.dumps(updated_notes), branch.name, "shortcake")
+            # Update metadata with new parent_revision
+            update_branch_metadata(branch.name, parent_revision=git.get_commit_sha(branch.parent))
 
             typer.echo(" done")
 
         except GitError as e:
             typer.echo(" CONFLICT")
-
-            # Save state so we can restore notes on --continue
-            state_file = git.working_dir / RESTACK_STATE_FILE
-            state = {"notes": saved_notes}
-            state_file.write_text(json.dumps(state))
 
             typer.echo(f"\nError: {e}", err=True)
             typer.echo("\nTo resolve:")

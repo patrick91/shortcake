@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from shortcake.cli import app
 from shortcake.git import GitRepo
+from tests.helpers.git_helpers import add_notes, get_notes
 
 runner = CliRunner()
 
@@ -27,7 +28,7 @@ def test_split_requires_by_hunk_flag(isolated_git_repo: Path, isolated_config: P
     (isolated_git_repo / "test.txt").write_text("content")
     git.add_files("test.txt")
     git.commit("Add feature")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature")
 
     result = runner.invoke(app, ["split"])
     assert result.exit_code == 1
@@ -69,7 +70,7 @@ def test_split_by_hunk_starts_split(isolated_git_repo: Path, isolated_config: Pa
     (isolated_git_repo / "file2.txt").write_text("content2")
     git.add_files(["file1.txt", "file2.txt"])
     git.commit("Add files")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature")
 
     result = runner.invoke(app, ["split", "--by-hunk"])
     assert result.exit_code == 0
@@ -100,7 +101,7 @@ def test_split_abort(isolated_git_repo: Path, isolated_config: Path):
     (isolated_git_repo / "file1.txt").write_text("content1")
     git.add_files("file1.txt")
     git.commit("Add files")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature")
 
     original_commit = git.get_current_commit()
 
@@ -142,7 +143,7 @@ def test_split_continue_no_staged_changes(isolated_git_repo: Path, isolated_conf
     (isolated_git_repo / "file1.txt").write_text("content1")
     git.add_files("file1.txt")
     git.commit("Add files")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature")
 
     # Start split
     result = runner.invoke(app, ["split", "--by-hunk"])
@@ -162,7 +163,7 @@ def test_split_already_in_progress(isolated_git_repo: Path, isolated_config: Pat
     (isolated_git_repo / "file1.txt").write_text("content1")
     git.add_files("file1.txt")
     git.commit("Add files")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature")
 
     # Start split
     result = runner.invoke(app, ["split", "--by-hunk"])
@@ -183,7 +184,7 @@ def test_split_continue_creates_branch(isolated_git_repo: Path, isolated_config:
     (isolated_git_repo / "file2.txt").write_text("content2")
     git.add_files(["file1.txt", "file2.txt"])
     git.commit("Add files")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature")
 
     # Start split
     result = runner.invoke(app, ["split", "--by-hunk"])
@@ -200,7 +201,7 @@ def test_split_continue_creates_branch(isolated_git_repo: Path, isolated_config:
     # Should have created a branch with shortcake notes
     branches = git.get_branches()
     new_branch = [b for b in branches if b.startswith("add-file1")][0]
-    notes = git.get_notes(new_branch, "shortcake")
+    notes = get_notes(isolated_git_repo, new_branch)
     assert notes is not None
     assert "parent" in notes
 
@@ -214,7 +215,7 @@ def test_split_full_workflow(isolated_git_repo: Path, isolated_config: Path):
     (isolated_git_repo / "utils.py").write_text("utils code")
     git.add_files(["api.py", "utils.py"])
     git.commit("Add api and utils")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature")
 
     # Start split
     result = runner.invoke(app, ["split", "--by-hunk"])

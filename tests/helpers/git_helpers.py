@@ -1,8 +1,10 @@
 """Git helper utilities for testing."""
 
+import json
 from pathlib import Path
 
 from shortcake.git import GitRepo
+from shortcake.metadata import BranchMetadata, MetadataStore
 
 
 def create_commit(repo_path: Path, message: str, file_changes: dict[str, str] | None = None) -> str:
@@ -78,33 +80,70 @@ def branch_exists(repo_path: Path, branch_name: str) -> bool:
 
 
 def get_notes(repo_path: Path, ref: str = "HEAD", notes_ref: str = "shortcake") -> str | None:
-    """Get git notes for a commit.
+    """Get metadata for a branch as JSON string (for backwards compatibility).
 
     Args:
         repo_path: Path to the repository
-        ref: The commit ref to get notes for
-        notes_ref: The notes ref to read from
+        ref: The commit ref (branch name or HEAD) to get metadata for
+        notes_ref: Ignored (for backwards compatibility)
 
     Returns:
-        The notes content or None if no notes exist
+        The metadata as JSON string or None if no metadata exists
     """
     git = GitRepo(repo_path)
-    return git.get_notes(ref, notes_ref)
+    git_dir = repo_path / ".git"
+    store = MetadataStore(git_dir)
+
+    # If ref is HEAD, resolve to branch name
+    if ref == "HEAD":
+        branch = git.get_current_branch()
+    else:
+        branch = ref
+
+    metadata = store.get(branch)
+    if not metadata:
+        return None
+    return json.dumps(metadata)
+
+
+def get_metadata(repo_path: Path, branch: str) -> BranchMetadata:
+    """Get metadata for a branch.
+
+    Args:
+        repo_path: Path to the repository
+        branch: The branch name to get metadata for
+
+    Returns:
+        The branch metadata dict
+    """
+    git_dir = repo_path / ".git"
+    store = MetadataStore(git_dir)
+    return store.get(branch)
 
 
 def add_notes(
     repo_path: Path, content: str, ref: str = "HEAD", notes_ref: str = "shortcake"
 ) -> None:
-    """Add git notes to a commit.
+    """Add metadata for a branch (for backwards compatibility).
 
     Args:
         repo_path: Path to the repository
-        content: The notes content to add
-        ref: The commit ref to add notes to
-        notes_ref: The notes ref to write to
+        content: The metadata content as JSON string
+        ref: The commit ref (branch name) to add metadata for
+        notes_ref: Ignored (for backwards compatibility)
     """
     git = GitRepo(repo_path)
-    git.add_notes(content, ref, notes_ref)
+    git_dir = repo_path / ".git"
+    store = MetadataStore(git_dir)
+
+    # If ref is HEAD, resolve to branch name
+    if ref == "HEAD":
+        branch = git.get_current_branch()
+    else:
+        branch = ref
+
+    metadata = json.loads(content)
+    store.set(branch, metadata)
 
 
 def setup_remote(local_repo: Path, remote_repo: Path, remote_name: str = "origin") -> None:

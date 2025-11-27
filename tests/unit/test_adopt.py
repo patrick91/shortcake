@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from shortcake.cli import app
 from shortcake.git import GitRepo
+from tests.helpers.git_helpers import get_notes
 
 runner = CliRunner()
 
@@ -32,8 +33,8 @@ def test_adopt_current_branch_no_argument(isolated_git_repo: Path, isolated_conf
     assert result.exit_code == 0
     assert "Adopted branch 'my-feature'" in result.stdout
 
-    # Verify notes were added
-    notes = git.get_notes("my-feature", "shortcake")
+    # Verify metadata was added
+    notes = get_notes(isolated_git_repo, "my-feature")
     assert notes is not None
 
 
@@ -48,8 +49,8 @@ def test_adopt_specific_branch_with_argument(isolated_git_repo: Path, isolated_c
     assert result.exit_code == 0
     assert "Adopted branch 'my-feature'" in result.stdout
 
-    # Verify notes were added
-    notes = git.get_notes("my-feature", "shortcake")
+    # Verify metadata was added
+    notes = get_notes(isolated_git_repo, "my-feature")
     assert notes is not None
 
 
@@ -186,8 +187,8 @@ def test_adopt_branch_with_stacked_structure(isolated_git_repo: Path, isolated_c
     result = runner.invoke(app, ["adopt", "--parent", "feature-1"])
     assert result.exit_code == 0
 
-    # Verify parent relationship in notes
-    notes = git.get_notes("feature-2", "shortcake")
+    # Verify parent relationship in metadata
+    notes = get_notes(isolated_git_repo, "feature-2")
     assert notes is not None
     notes_data = json.loads(notes)
     assert notes_data.get("parent") == "feature-1"
@@ -223,7 +224,7 @@ def test_adopt_auto_detect_parent(isolated_git_repo: Path, isolated_config: Path
     assert result.exit_code == 0
 
     # Verify parent was set correctly
-    notes = git.get_notes("feature-2", "shortcake")
+    notes = get_notes(isolated_git_repo, "feature-2")
     assert notes is not None
     notes_data = json.loads(notes)
     assert notes_data.get("parent") == "feature-1"
@@ -264,7 +265,7 @@ def test_adopt_auto_detect_closest_parent(isolated_git_repo: Path, isolated_conf
     result = runner.invoke(app, ["adopt"])
     assert result.exit_code == 0
 
-    notes = git.get_notes("feature-3", "shortcake")
+    notes = get_notes(isolated_git_repo, "feature-3")
     assert notes is not None
     notes_data = json.loads(notes)
     assert notes_data.get("parent") == "feature-2"
@@ -286,7 +287,7 @@ def test_adopt_dry_run_shows_what_would_happen(isolated_git_repo: Path, isolated
     assert "Would adopt" in result.stdout
 
     # Verify nothing was actually adopted
-    notes = git.get_notes("feature-1", "shortcake")
+    notes = get_notes(isolated_git_repo, "feature-1")
     assert notes is None
 
 
@@ -318,7 +319,7 @@ def test_adopt_dry_run_with_auto_detect_parent(isolated_git_repo: Path, isolated
     assert "Auto-detected parent: feature-1" in result.stdout
 
     # Verify nothing was adopted
-    notes = git.get_notes("feature-2", "shortcake")
+    notes = get_notes(isolated_git_repo, "feature-2")
     assert notes is None
 
 
@@ -350,7 +351,7 @@ def test_adopt_explicit_parent_overrides_auto_detect(
     assert result.exit_code == 0
 
     # Verify explicit parent was used
-    notes = git.get_notes("feature-2", "shortcake")
+    notes = get_notes(isolated_git_repo, "feature-2")
     assert notes is not None
     notes_data = json.loads(notes)
     assert notes_data.get("parent") == "main"
@@ -375,7 +376,7 @@ def test_adopt_fallback_to_main_when_no_other_parent(
     assert "Adopted branch 'my-feature' with parent 'main'" in result.stdout
 
     # Verify parent was set to main
-    notes = git.get_notes("my-feature", "shortcake")
+    notes = get_notes(isolated_git_repo, "my-feature")
     assert notes is not None
     notes_data = json.loads(notes)
     assert notes_data.get("parent") == "main"

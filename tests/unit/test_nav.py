@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from shortcake.cli import app
 from shortcake.git import GitRepo
+from tests.helpers.git_helpers import add_notes
 
 runner = CliRunner()
 
@@ -43,14 +44,14 @@ def test_up_from_child_branch(isolated_git_repo: Path, isolated_config: Path):
     (isolated_git_repo / "parent.txt").write_text("parent")
     git.add_files(["parent.txt"])
     git.commit("Add parent")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "parent-branch")
 
     # Create child branch
     git.create_branch("child-branch", checkout=True)
     (isolated_git_repo / "child.txt").write_text("child")
     git.add_files(["child.txt"])
     git.commit("Add child")
-    git.add_notes(json.dumps({"parent": "parent-branch"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "parent-branch"}), "child-branch")
 
     # We're on child-branch, go up
     result = runner.invoke(app, ["up"])
@@ -69,14 +70,14 @@ def test_down_from_parent_branch(isolated_git_repo: Path, isolated_config: Path)
     (isolated_git_repo / "parent.txt").write_text("parent")
     git.add_files(["parent.txt"])
     git.commit("Add parent")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "parent-branch")
 
     # Create child branch
     git.create_branch("child-branch", checkout=True)
     (isolated_git_repo / "child.txt").write_text("child")
     git.add_files(["child.txt"])
     git.commit("Add child")
-    git.add_notes(json.dumps({"parent": "parent-branch"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "parent-branch"}), "child-branch")
 
     # Go back to parent
     git.checkout_branch("parent-branch")
@@ -98,19 +99,19 @@ def test_top_moves_to_leaf(isolated_git_repo: Path, isolated_config: Path):
     (isolated_git_repo / "file1.txt").write_text("1")
     git.add_files(["file1.txt"])
     git.commit("Add file1")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "branch1")
 
     git.create_branch("branch2", checkout=True)
     (isolated_git_repo / "file2.txt").write_text("2")
     git.add_files(["file2.txt"])
     git.commit("Add file2")
-    git.add_notes(json.dumps({"parent": "branch1"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "branch1"}), "branch2")
 
     git.create_branch("branch3", checkout=True)
     (isolated_git_repo / "file3.txt").write_text("3")
     git.add_files(["file3.txt"])
     git.commit("Add file3")
-    git.add_notes(json.dumps({"parent": "branch2"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "branch2"}), "branch3")
 
     # Go to branch1
     git.checkout_branch("branch1")
@@ -132,19 +133,19 @@ def test_bottom_moves_to_root(isolated_git_repo: Path, isolated_config: Path):
     (isolated_git_repo / "file1.txt").write_text("1")
     git.add_files(["file1.txt"])
     git.commit("Add file1")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "branch1")
 
     git.create_branch("branch2", checkout=True)
     (isolated_git_repo / "file2.txt").write_text("2")
     git.add_files(["file2.txt"])
     git.commit("Add file2")
-    git.add_notes(json.dumps({"parent": "branch1"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "branch1"}), "branch2")
 
     git.create_branch("branch3", checkout=True)
     (isolated_git_repo / "file3.txt").write_text("3")
     git.add_files(["file3.txt"])
     git.commit("Add file3")
-    git.add_notes(json.dumps({"parent": "branch2"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "branch2"}), "branch3")
 
     # We're on branch3, go to bottom
     result = runner.invoke(app, ["bottom"])
@@ -170,7 +171,7 @@ def test_down_no_children(isolated_git_repo: Path, isolated_config: Path):
     (isolated_git_repo / "leaf.txt").write_text("leaf")
     git.add_files(["leaf.txt"])
     git.commit("Add leaf")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "leaf-branch")
 
     result = runner.invoke(app, ["down"])
     assert result.exit_code == 0
@@ -191,7 +192,7 @@ def test_checkout_by_branch_name(isolated_git_repo: Path, isolated_config: Path)
     (isolated_git_repo / "feature.txt").write_text("feature")
     git.add_files(["feature.txt"])
     git.commit("Add feature")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature-branch")
 
     # Go back to main
     git.checkout_branch("main")
@@ -211,7 +212,7 @@ def test_checkout_by_pr_number(isolated_git_repo: Path, isolated_config: Path):
     (isolated_git_repo / "feature.txt").write_text("feature")
     git.add_files(["feature.txt"])
     git.commit("Add feature")
-    git.add_notes(json.dumps({"parent": "main", "pr_number": 42}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main", "pr_number": 42}), "feature-branch")
 
     # Go back to main
     git.checkout_branch("main")

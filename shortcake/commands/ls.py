@@ -1,10 +1,13 @@
-import json
 from dataclasses import dataclass
 
 import typer
+from rich.console import Console
 
 from shortcake import get_cli_name
 from shortcake.git import GitError, GitRepo
+from shortcake.metadata import get_all_branch_metadata
+
+console = Console()
 
 app = typer.Typer()
 
@@ -16,34 +19,30 @@ class BranchInfo:
     name: str
     parent: str | None
     is_current: bool
+    pr_number: int | None = None
+    pr_url: str | None = None
 
 
 def _get_shortcake_branches(git: GitRepo) -> list[BranchInfo]:
-    """Get all branches that are managed by shortcake (have shortcake git notes).
+    """Get all branches that are managed by shortcake.
 
     Returns:
         List of BranchInfo objects for shortcake-managed branches.
     """
     branches: list[BranchInfo] = []
     current_branch = git.get_current_branch()
+    all_metadata = get_all_branch_metadata()
 
-    for branch_name in git.get_branches():
-        notes = git.get_notes(branch_name, "shortcake")
-        if notes:
-            # Parse notes to get parent if exists
-            try:
-                notes_data = json.loads(notes)
-                parent = notes_data.get("parent")
-            except (json.JSONDecodeError, AttributeError):
-                parent = None
-
-            branches.append(
-                BranchInfo(
-                    name=branch_name,
-                    parent=parent,
-                    is_current=branch_name == current_branch,
-                )
+    for branch_name, metadata in all_metadata.items():
+        branches.append(
+            BranchInfo(
+                name=branch_name,
+                parent=metadata.get("parent"),
+                is_current=branch_name == current_branch,
+                pr_number=metadata.get("pr_number"),
+                pr_url=metadata.get("pr_url"),
             )
+        )
 
     return branches
 
@@ -78,7 +77,15 @@ def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
         connector = "└── " if is_last else "├── "
         current_indicator = " (current)" if branch.is_current else ""
 
-        lines.append(f"{prefix}{connector}{branch.name}{current_indicator}")
+        # PR indicator with optional link
+        if branch.pr_number and branch.pr_url:
+            pr_indicator = f" [link={branch.pr_url}]#{branch.pr_number}[/link]"
+        elif branch.pr_number:
+            pr_indicator = f" #{branch.pr_number}"
+        else:
+            pr_indicator = ""
+
+        lines.append(f"{prefix}{connector}{branch.name}{pr_indicator}{current_indicator}")
 
         # Get children of this branch
         children = children_map.get(branch.name, [])
@@ -128,4 +135,4 @@ def ls():
 
     tree_lines = _build_tree_lines(branches)
     for line in tree_lines:
-        typer.echo(line)
+        console.print(line)

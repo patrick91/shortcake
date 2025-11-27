@@ -7,37 +7,16 @@ import typer
 
 from shortcake import get_cli_name
 from shortcake.git import GitError, GitRepo
+from shortcake.metadata import (
+    get_branch_metadata,
+    get_children,
+    update_branch_metadata,
+)
 
 app = typer.Typer()
 
 # File to store state during split (in .git directory)
 SPLIT_STATE_FILE = ".git/shortcake-split-state.json"
-
-
-def _get_branch_metadata(git: GitRepo, branch: str) -> dict:
-    """Get shortcake metadata for a branch from git notes."""
-    notes = git.get_notes(branch, "shortcake")
-    if notes:
-        try:
-            return json.loads(notes)
-        except json.JSONDecodeError:
-            return {}
-    return {}
-
-
-def _get_children(git: GitRepo, branch: str) -> list[str]:
-    """Get all branches that have the given branch as their parent."""
-    children = []
-    for branch_name in git.get_branches():
-        metadata = _get_branch_metadata(git, branch_name)
-        if metadata.get("parent") == branch:
-            children.append(branch_name)
-    return children
-
-
-def _update_branch_metadata(git: GitRepo, branch: str, metadata: dict) -> None:
-    """Update shortcake metadata for a branch in git notes."""
-    git.update_notes(json.dumps(metadata), branch, "shortcake")
 
 
 @app.command()
@@ -96,9 +75,9 @@ def split(
             git.checkout_branch(original_branch)
             git.repo.git.reset("--hard", original_commit)
 
-            # Restore original notes
+            # Restore original metadata
             if original_notes:
-                git.update_notes(json.dumps(original_notes), original_branch, "shortcake")
+                update_branch_metadata(original_branch, **original_notes)
 
             # Clean up state file
             state_file.unlink()
@@ -164,9 +143,12 @@ def split(
             else:
                 parent = state["original_parent"]
 
-            # Add shortcake notes with parent_revision
-            notes = {"parent": parent, "parent_revision": git.get_commit_sha(parent)}
-            git.add_notes(json.dumps(notes), branch_name, "shortcake")
+            # Store metadata with parent_revision
+            update_branch_metadata(
+                branch_name,
+                parent=parent,
+                parent_revision=git.get_commit_sha(parent),
+            )
 
             # Track this branch
             created_branches.append(branch_name)
@@ -246,9 +228,12 @@ def split(
             # Parent is the original branch's parent
             parent = state["original_parent"]
 
-        # Add shortcake notes with parent_revision
-        notes = {"parent": parent, "parent_revision": git.get_commit_sha(parent)}
-        git.add_notes(json.dumps(notes), branch_name, "shortcake")
+        # Store metadata with parent_revision
+        update_branch_metadata(
+            branch_name,
+            parent=parent,
+            parent_revision=git.get_commit_sha(parent),
+        )
 
         # Track this branch
         created_branches.append(branch_name)
@@ -292,7 +277,7 @@ def split(
             raise typer.Exit(1)
 
         # Check if branch is managed by shortcake
-        metadata = _get_branch_metadata(git, current_branch)
+        metadata = get_branch_metadata(current_branch)
         if not metadata.get("parent"):
             typer.echo(
                 f"Error: Branch '{current_branch}' is not managed by shortcake. "
@@ -302,7 +287,7 @@ def split(
             raise typer.Exit(1)
 
         # Check for children - warn user
-        children = _get_children(git, current_branch)
+        children = get_children(current_branch)
         if children:
             typer.echo(f"Warning: Branch '{current_branch}' has children: {', '.join(children)}")
             typer.echo("After split, you'll need to update their parent manually.")
@@ -402,11 +387,9 @@ def _finish_split(git: GitRepo, state: dict, state_file: Path) -> None:
         typer.echo(f"\nUpdating child branches to point to '{original_branch}':")
         for child in children:
             try:
-                child_metadata = _get_branch_metadata(git, child)
-                child_metadata["parent"] = original_branch
-                _update_branch_metadata(git, child, child_metadata)
+                update_branch_metadata(child, parent=original_branch)
                 typer.echo(f"  • {child}: parent → {original_branch}")
-            except GitError as e:
+            except Exception as e:
                 typer.echo(f"  • {child}: Failed to update - {e}", err=True)
 
     # Clean up state file

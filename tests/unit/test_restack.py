@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 
 from shortcake.cli import app
 from shortcake.git import GitRepo
+from tests.helpers.git_helpers import add_notes, get_notes
 
 runner = CliRunner()
 
@@ -56,7 +57,7 @@ def test_restack_dry_run(isolated_git_repo: Path, isolated_config: Path):
     test_file.write_text("test content")
     git.add_files("test.txt")
     git.commit("Add test file")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), git.get_current_branch())
 
     result = runner.invoke(app, ["restack", "--dry-run"])
     assert result.exit_code == 0
@@ -73,20 +74,20 @@ def test_restack_single_branch(isolated_git_repo: Path, isolated_config: Path):
     test_file.write_text("test content")
     git.add_files("test.txt")
     git.commit("Add test file")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature")
 
     result = runner.invoke(app, ["restack"])
     assert result.exit_code == 0
     # Branch is already up-to-date (just created on main), so no rebase needed
     assert "up to date" in result.output or "Restack complete" in result.output
 
-    # Verify notes are preserved
-    notes = git.get_notes("feature", "shortcake")
+    # Verify metadata is preserved
+    notes = get_notes(isolated_git_repo, "feature")
     assert notes is not None
     assert "parent" in notes
 
 
-def test_restack_preserves_notes(isolated_git_repo: Path, isolated_config: Path):
+def test_restack_preserves_metadata(isolated_git_repo: Path, isolated_config: Path):
     git = GitRepo()
 
     # Create a tracked branch with extra metadata
@@ -97,13 +98,13 @@ def test_restack_preserves_notes(isolated_git_repo: Path, isolated_config: Path)
     git.commit("Add test file")
 
     original_notes = {"parent": "main", "pr_number": 42, "pr_url": "https://example.com/pr/42"}
-    git.add_notes(json.dumps(original_notes), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps(original_notes), "feature")
 
     result = runner.invoke(app, ["restack"])
     assert result.exit_code == 0
 
-    # Verify all notes are preserved
-    notes = git.get_notes("feature", "shortcake")
+    # Verify all metadata is preserved
+    notes = get_notes(isolated_git_repo, "feature")
     assert notes is not None
     notes_data = json.loads(notes)
     assert notes_data["parent"] == "main"
@@ -119,14 +120,14 @@ def test_restack_stacked_branches(isolated_git_repo: Path, isolated_config: Path
     (isolated_git_repo / "f1.txt").write_text("f1")
     git.add_files("f1.txt")
     git.commit("Add feature 1")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature-1")
 
     # Create second branch stacked on first
     git.create_branch("feature-2", checkout=True)
     (isolated_git_repo / "f2.txt").write_text("f2")
     git.add_files("f2.txt")
     git.commit("Add feature 2")
-    git.add_notes(json.dumps({"parent": "feature-1"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "feature-1"}), "feature-2")
 
     result = runner.invoke(app, ["restack"])
     assert result.exit_code == 0
@@ -135,9 +136,9 @@ def test_restack_stacked_branches(isolated_git_repo: Path, isolated_config: Path
     # Branches are already up-to-date (just created), so no rebase needed
     assert "up to date" in result.output or "Restack complete" in result.output
 
-    # Verify notes are preserved for both
-    notes1 = git.get_notes("feature-1", "shortcake")
-    notes2 = git.get_notes("feature-2", "shortcake")
+    # Verify metadata is preserved for both
+    notes1 = get_notes(isolated_git_repo, "feature-1")
+    notes2 = get_notes(isolated_git_repo, "feature-2")
     assert notes1 is not None
     assert notes2 is not None
 
@@ -150,21 +151,21 @@ def test_restack_includes_descendants(isolated_git_repo: Path, isolated_config: 
     (isolated_git_repo / "f1.txt").write_text("f1")
     git.add_files("f1.txt")
     git.commit("Add feature 1")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), git.get_current_branch())
 
     # Create second branch stacked on first
     git.create_branch("feature-2", checkout=True)
     (isolated_git_repo / "f2.txt").write_text("f2")
     git.add_files("f2.txt")
     git.commit("Add feature 2")
-    git.add_notes(json.dumps({"parent": "feature-1"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "feature-1"}), "feature-2")
 
     # Create third branch stacked on second
     git.create_branch("feature-3", checkout=True)
     (isolated_git_repo / "f3.txt").write_text("f3")
     git.add_files("f3.txt")
     git.commit("Add feature 3")
-    git.add_notes(json.dumps({"parent": "feature-2"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "feature-2"}), "feature-3")
 
     # Go back to feature-1 and restack - should include feature-2 and feature-3
     git.checkout_branch("feature-1")
@@ -186,7 +187,7 @@ def test_restack_abort_no_rebase_in_progress(isolated_git_repo: Path, isolated_c
     test_file.write_text("test content")
     git.add_files("test.txt")
     git.commit("Add test file")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), git.get_current_branch())
 
     result = runner.invoke(app, ["restack", "--abort"])
     assert result.exit_code == 1
@@ -202,7 +203,7 @@ def test_restack_continue_no_rebase_in_progress(isolated_git_repo: Path, isolate
     test_file.write_text("test content")
     git.add_files("test.txt")
     git.commit("Add test file")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), git.get_current_branch())
 
     result = runner.invoke(app, ["restack", "--continue"])
     assert result.exit_code == 1
@@ -224,7 +225,7 @@ def test_restack_after_main_updated(
     (isolated_git_repo / "feature.txt").write_text("feature content")
     git.add_files("feature.txt")
     git.commit("Add feature")
-    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), git.get_current_branch())
 
     # Simulate main being updated on remote (add a commit to main and push)
     git.checkout_branch("main")

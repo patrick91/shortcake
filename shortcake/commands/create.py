@@ -1,4 +1,3 @@
-import json
 import re
 import time
 
@@ -6,6 +5,7 @@ import typer
 
 from shortcake import config
 from shortcake.git import GitError, GitRepo
+from shortcake.metadata import update_branch_metadata
 
 app = typer.Typer()
 
@@ -154,21 +154,21 @@ def create(
         git.rename_branch(temp_branch_name, branch_name)
         temp_branch_name = None  # Mark as renamed so cleanup doesn't try to delete it
 
-        # Add shortcake notes to track this branch
+        # Store branch metadata
         # The parent is the branch we were on before creating this one
         # Also store parent_revision so we can detect when restack is needed
-        notes_data = {}
         if original_branch:
-            notes_data["parent"] = original_branch
             # Use origin/main or origin/master for trunk branches to match restack behavior
             parent_ref = (
                 f"origin/{original_branch}"
                 if original_branch in ("main", "master") and git.has_remote("origin")
                 else original_branch
             )
-            notes_data["parent_revision"] = git.get_commit_sha(parent_ref)
-        notes_json = json.dumps(notes_data)
-        git.add_notes(notes_json, "HEAD", "shortcake")
+            update_branch_metadata(
+                branch_name,
+                parent=original_branch,
+                parent_revision=git.get_commit_sha(parent_ref),
+            )
 
         typer.echo(f"Created and switched to branch: {branch_name}")
         typer.echo(f"Created commit: {commit_message}")
