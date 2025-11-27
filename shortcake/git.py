@@ -161,13 +161,12 @@ class GitRepo:
         try:
             if amend:
                 # GitPython's amend is a bit tricky, use git directly
+                # Don't capture output so pre-commit hooks stream naturally to terminal
                 cmd = ["git", "commit", "--amend", "--no-edit"]
                 if no_verify:
                     cmd.append("--no-verify")
                 subprocess.run(
                     cmd,
-                    capture_output=True,
-                    text=True,
                     check=True,
                     cwd=self.working_dir,
                 )

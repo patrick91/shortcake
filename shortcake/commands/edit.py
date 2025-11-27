@@ -29,13 +29,13 @@ def _do_edit(no_verify: bool = False) -> None:
 
     except GitError as e:
         error_msg = str(e)
-        console.print()  # Add blank line after any hook output
-        if "returned non-zero exit status 1" in error_msg:
-            # Pre-commit hook failed - the hook output was already shown
+        console.print()  # Add blank line after hook output
+        # Pre-commit hook failed - the hook output was already shown above
+        if "non-zero exit status" in error_msg:
             console.print("[bold red]Amend failed.[/] Pre-commit hooks modified files or failed.")
             console.print("Review the changes, stage them, and try again.")
         else:
-            console.print(f"[bold red]Error:[/] Failed to amend commit - {error_msg}")
+            console.print(f"[bold red]Error:[/] {error_msg}")
         raise typer.Exit(1) from None
 
 
