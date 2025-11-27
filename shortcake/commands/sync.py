@@ -6,7 +6,12 @@ import typer
 
 from shortcake import get_cli_name
 from shortcake.git import GitError, GitRepo
-from shortcake.metadata import get_all_branch_metadata, get_branch_metadata, update_branch_metadata
+from shortcake.metadata import (
+    delete_branch_metadata,
+    get_all_branch_metadata,
+    get_branch_metadata,
+    update_branch_metadata,
+)
 
 app = typer.Typer()
 
@@ -334,6 +339,7 @@ def sync(
             else:
                 try:
                     git.delete_branch(name)
+                    delete_branch_metadata(name)
                     typer.echo(f"Deleted merged branch: {name}")
                 except GitError as e:
                     typer.echo(f"Warning: Could not delete {name}: {e}", err=True)
@@ -420,6 +426,7 @@ def sync(
     for name in merged_branches:
         try:
             git.delete_branch(name)
+            delete_branch_metadata(name)
             typer.echo(f"  • Deleted: {name}")
         except GitError as e:
             typer.echo(f"  • Warning: Could not delete {name}: {e}", err=True)
