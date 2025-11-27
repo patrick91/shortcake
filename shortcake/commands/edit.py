@@ -1,8 +1,10 @@
 import typer
+from rich.console import Console
 
 from shortcake.git import GitError, GitRepo
 
 app = typer.Typer()
+console = Console(stderr=True)
 
 
 def _do_edit(no_verify: bool = False) -> None:
@@ -10,13 +12,13 @@ def _do_edit(no_verify: bool = False) -> None:
     try:
         git = GitRepo()
     except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
+        console.print(f"[bold red]Error:[/] {e}")
         raise typer.Exit(1) from None
 
     try:
         # Check if there are staged changes
         if not git.has_staged_changes():
-            typer.echo("Error: No staged changes to amend. Use 'git add' first.", err=True)
+            console.print("[bold red]Error:[/] No staged changes to amend. Use 'git add' first.")
             raise typer.Exit(1)
 
         # Amend the commit without opening editor (reuse previous message)
@@ -27,13 +29,13 @@ def _do_edit(no_verify: bool = False) -> None:
 
     except GitError as e:
         error_msg = str(e)
+        console.print()  # Add blank line after any hook output
         if "returned non-zero exit status 1" in error_msg:
             # Pre-commit hook failed - the hook output was already shown
-            typer.echo("")  # Add blank line after hook output
-            typer.echo("Amend failed. Pre-commit hooks modified files or failed.", err=True)
-            typer.echo("Review the changes, stage them, and try again.", err=True)
+            console.print("[bold red]Amend failed.[/] Pre-commit hooks modified files or failed.")
+            console.print("Review the changes, stage them, and try again.")
         else:
-            typer.echo(f"Error: Failed to amend commit - {error_msg}", err=True)
+            console.print(f"[bold red]Error:[/] Failed to amend commit - {error_msg}")
         raise typer.Exit(1) from None
 
 
