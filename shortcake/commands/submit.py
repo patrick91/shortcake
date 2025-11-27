@@ -9,11 +9,12 @@ from shortcake import get_cli_name
 
 # Import restack helpers
 from shortcake.commands.restack import (
-    _get_branch_metadata as _get_restack_metadata,
-)
-from shortcake.commands.restack import (
+    RESTACK_STATE_FILE,
     _get_remote_ref,
     _needs_restack,
+)
+from shortcake.commands.restack import (
+    _get_branch_metadata as _get_restack_metadata,
 )
 from shortcake.git import GitError, GitRepo
 from shortcake.github import GitHubClient, GitHubError, get_github_repo_info
@@ -240,7 +241,10 @@ def submit(
         False, "--dry-run", "-n", help="Show what would be done without making changes"
     ),
     force: bool = typer.Option(
-        False, "--force", "-f", help="Force push branches and update PR descriptions"
+        False,
+        "--force",
+        "-f",
+        help="Force push branches (override remote changes) and update PR descriptions",
     ),
 ):
     """Push branches and create or update pull requests.
@@ -336,6 +340,13 @@ def submit(
         return
 
     # Restack branches that need it before pushing
+    # First, save notes for all branches (in case we hit a conflict)
+    saved_notes: dict[str, dict] = {}
+    for branch in branches:
+        branch_metadata = _get_restack_metadata(git, branch.name)
+        if branch_metadata:
+            saved_notes[branch.name] = branch_metadata
+
     restacked_branches: list[str] = []
     for branch in branches:
         branch_metadata = _get_restack_metadata(git, branch.name)
@@ -375,6 +386,12 @@ def submit(
                 restacked_branches.append(branch.name)
             except GitError:
                 typer.echo(" CONFLICT")
+
+                # Save state so restack --continue can restore notes
+                state_file = git.working_dir / RESTACK_STATE_FILE
+                state = {"notes": saved_notes}
+                state_file.write_text(json.dumps(state))
+
                 typer.echo(f"\nError: Rebase conflict while rebasing {branch.name}.", err=True)
                 typer.echo("\nRebase conflict occurred. Please resolve manually:")
                 typer.echo("  1. Fix the conflicts in the affected files")
@@ -435,7 +452,12 @@ def submit(
 
             if needs_push or force:
                 try:
-                    git.push("origin", branch.name, force_with_lease=True)
+                    git.push(
+                        "origin",
+                        branch.name,
+                        force=force,
+                        force_with_lease=not force,
+                    )
                 except GitError as e:
                     typer.echo(" FAILED")
                     typer.echo(f"Error pushing branch: {e}", err=True)

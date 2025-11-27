@@ -341,8 +341,9 @@ class GitRepo:
         """
         try:
             cmd = ["git", "push", remote_name, branch_name]
-            if force or force_with_lease:
-                # Always use --force-with-lease for safety
+            if force:
+                cmd.append("--force")
+            elif force_with_lease:
                 cmd.append("--force-with-lease")
 
             result = subprocess.run(
@@ -521,6 +522,26 @@ class GitRepo:
                 raise GitError("Rebase conflict.") from e
             raise GitError(f"Failed to rebase: {e.stderr or e.stdout}") from e
 
+    def merge_ff_only(self, ref: str) -> None:
+        """Fast-forward merge the current branch to a ref.
+
+        Args:
+            ref: The ref to fast-forward to.
+
+        Raises:
+            GitError: If merge fails (not fast-forwardable).
+        """
+        try:
+            subprocess.run(
+                ["git", "merge", "--ff-only", ref],
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=self.working_dir,
+            )
+        except subprocess.CalledProcessError as e:
+            raise GitError(f"Failed to fast-forward merge: {e.stderr or e.stdout}") from e
+
     def rebase_continue(self) -> None:
         """Continue a rebase after resolving conflicts.
 
@@ -587,6 +608,30 @@ class GitRepo:
             return self.repo.commit(ref).hexsha
         except Exception as e:
             raise GitError(f"Failed to get commit SHA for '{ref}': {e}") from e
+
+    def update_ref(self, ref: str, sha: str) -> None:
+        """Update a ref to point to a specific commit.
+
+        Args:
+            ref: The ref to update (e.g., 'refs/heads/my-branch').
+            sha: The commit SHA to point to.
+
+        Raises:
+            GitError: If unable to update the ref.
+        """
+        try:
+            result = subprocess.run(
+                ["git", "update-ref", ref, sha],
+                capture_output=True,
+                text=True,
+                cwd=self.working_dir,
+            )
+            if result.returncode != 0:
+                raise GitError(f"Failed to update ref: {result.stderr.strip()}")
+        except Exception as e:
+            if isinstance(e, GitError):
+                raise
+            raise GitError(f"Failed to update ref '{ref}': {e}") from e
 
     def has_remote(self, remote_name: str = "origin") -> bool:
         """Check if a remote exists.

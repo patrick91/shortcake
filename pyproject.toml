@@ -11,6 +11,7 @@ dependencies = [
     "gitpython>=3.1.45",
     "httpx>=0.28.1",
     "rich-toolkit>=0.17.0",
+    "wcwidth>=0.2.14",
 ]
 
 [project.scripts]
@@ -88,3 +89,6 @@ quote-style = "double"
 indent-style = "space"
 skip-magic-trailing-comma = false
 line-ending = "auto"
+
+[tool.uv.sources]
+rich-toolkit = { path = "../rich-toolkit", editable = true }

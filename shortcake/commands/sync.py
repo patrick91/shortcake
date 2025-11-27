@@ -238,6 +238,43 @@ def sync(
         typer.echo("No shortcake-managed branches found")
         return
 
+    # Check for branches that are behind their remote and fast-forward them
+    current_branch = git.get_current_branch()
+    branches_updated: list[str] = []
+
+    for name in branches:
+        remote_ref = f"origin/{name}"
+        try:
+            remote_sha = git.get_commit_sha(remote_ref)
+            local_sha = git.get_commit_sha(name)
+
+            if remote_sha == local_sha:
+                continue  # Already up to date
+
+            # Check if local is behind remote (remote is ahead)
+            if git.is_ancestor(local_sha, remote_sha):
+                if dry_run:
+                    typer.echo(f"Would fast-forward {name} to {remote_ref}")
+                else:
+                    # Fast-forward the branch
+                    if name == current_branch:
+                        # For current branch, use merge --ff-only to update working dir
+                        git.merge_ff_only(remote_ref)
+                    else:
+                        git.update_ref(f"refs/heads/{name}", remote_sha)
+                    branches_updated.append(name)
+        except GitError:
+            continue  # Remote branch doesn't exist
+
+    if branches_updated:
+        typer.echo(f"Fast-forwarded {len(branches_updated)} branch(es) to match remote:")
+        for name in branches_updated:
+            typer.echo(f"  • {name}")
+        typer.echo()
+
+        # Refresh branches dict after updates
+        branches = _get_tracked_branches(git)
+
     # Use remote main for merge detection if available (after fetch)
     merge_target = main_branch
     if git.has_remote("origin"):
