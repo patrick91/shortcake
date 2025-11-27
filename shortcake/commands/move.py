@@ -2,18 +2,48 @@
 
 import typer
 from rich.console import Console
+from rich_toolkit.menu import Menu
 
 from shortcake import get_cli_name
 from shortcake.git import GitError, GitRepo
-from shortcake.metadata import get_branch_metadata, update_branch_metadata
+from shortcake.metadata import get_all_branch_metadata, get_branch_metadata, update_branch_metadata
 
 app = typer.Typer()
 console = Console(stderr=True)
 
 
+def _pick_new_parent(git: GitRepo, branch_to_move: str, current_parent: str | None) -> str | None:
+    """Show interactive menu to pick new parent branch."""
+    all_branches = git.get_branches()
+    all_metadata = get_all_branch_metadata()
+
+    # Build options: all branches except the one being moved
+    options = []
+    for b in sorted(all_branches):
+        if b == branch_to_move:
+            continue
+        # Mark current parent
+        suffix = " (current parent)" if b == current_parent else ""
+        # Mark tracked branches
+        if b in all_metadata:
+            options.append((b, f"{b}{suffix}"))
+        else:
+            options.append((b, f"{b}{suffix}"))
+
+    if not options:
+        return None
+
+    result = Menu(
+        options,
+        title=f"Select new parent for '{branch_to_move}'",
+    ).run()
+
+    return result
+
+
 @app.command()
 def move(
-    onto: str = typer.Option(..., "--onto", "-o", help="New parent branch"),
+    onto: str | None = typer.Option(None, "--onto", "-o", help="New parent branch"),
     branch: str | None = typer.Argument(None, help="Branch to move (defaults to current)"),
     no_rebase: bool = typer.Option(False, "--no-rebase", help="Only update metadata, don't rebase"),
 ):
@@ -23,6 +53,7 @@ def move(
     Use --no-rebase to only update the metadata without rebasing.
 
     Examples:
+        sc move                          # Interactive: select new parent
         sc move --onto main              # Move current branch to main
         sc move feature-2 --onto main    # Move feature-2 to main
         sc move --onto feature-1 --no-rebase  # Only update parent, don't rebase
@@ -48,16 +79,6 @@ def move(
             console.print(f"[bold red]Error:[/] Cannot move '{branch_to_move}' branch")
             raise typer.Exit(1)
 
-        # Validate new parent exists
-        if not git.branch_exists(onto):
-            console.print(f"[bold red]Error:[/] Parent branch '{onto}' does not exist")
-            raise typer.Exit(1)
-
-        # Can't move onto itself
-        if branch_to_move == onto:
-            console.print("[bold red]Error:[/] Cannot move branch onto itself")
-            raise typer.Exit(1)
-
         # Check if branch is tracked
         metadata = get_branch_metadata(branch_to_move)
         old_parent = metadata.get("parent")
@@ -67,6 +88,23 @@ def move(
                 f"[bold red]Error:[/] Branch '{branch_to_move}' is not managed by shortcake. "
                 f"Use '{cli} adopt' first."
             )
+            raise typer.Exit(1)
+
+        # Interactive mode if --onto not provided
+        if onto is None:
+            onto = _pick_new_parent(git, branch_to_move, old_parent)
+            if onto is None:
+                typer.echo("Cancelled")
+                raise typer.Exit(0)
+
+        # Validate new parent exists
+        if not git.branch_exists(onto):
+            console.print(f"[bold red]Error:[/] Parent branch '{onto}' does not exist")
+            raise typer.Exit(1)
+
+        # Can't move onto itself
+        if branch_to_move == onto:
+            console.print("[bold red]Error:[/] Cannot move branch onto itself")
             raise typer.Exit(1)
 
         # Check if already has this parent
