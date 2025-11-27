@@ -175,3 +175,62 @@ def test_down_no_children(isolated_git_repo: Path, isolated_config: Path):
     result = runner.invoke(app, ["down"])
     assert result.exit_code == 0
     assert "no child" in result.output.lower()
+
+
+def test_checkout_help():
+    result = runner.invoke(app, ["checkout", "--help"])
+    assert result.exit_code == 0
+    assert "branch name" in result.output.lower() or "pr number" in result.output.lower()
+
+
+def test_checkout_by_branch_name(isolated_git_repo: Path, isolated_config: Path):
+    git = GitRepo()
+
+    # Create a branch
+    git.create_branch("feature-branch", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature")
+    git.add_files(["feature.txt"])
+    git.commit("Add feature")
+    git.add_notes(json.dumps({"parent": "main"}), "HEAD", "shortcake")
+
+    # Go back to main
+    git.checkout_branch("main")
+
+    # Checkout by branch name
+    result = runner.invoke(app, ["checkout", "feature-branch"])
+    assert result.exit_code == 0
+    assert "feature-branch" in result.output
+    assert git.get_current_branch() == "feature-branch"
+
+
+def test_checkout_by_pr_number(isolated_git_repo: Path, isolated_config: Path):
+    git = GitRepo()
+
+    # Create a branch with PR number
+    git.create_branch("feature-branch", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature")
+    git.add_files(["feature.txt"])
+    git.commit("Add feature")
+    git.add_notes(json.dumps({"parent": "main", "pr_number": 42}), "HEAD", "shortcake")
+
+    # Go back to main
+    git.checkout_branch("main")
+
+    # Checkout by PR number
+    result = runner.invoke(app, ["checkout", "42"])
+    assert result.exit_code == 0
+    assert "feature-branch" in result.output
+    assert "PR #42" in result.output
+    assert git.get_current_branch() == "feature-branch"
+
+
+def test_checkout_nonexistent_branch(isolated_git_repo: Path, isolated_config: Path):
+    result = runner.invoke(app, ["checkout", "nonexistent-branch"])
+    assert result.exit_code == 1
+    assert "does not exist" in result.output
+
+
+def test_checkout_nonexistent_pr(isolated_git_repo: Path, isolated_config: Path):
+    result = runner.invoke(app, ["checkout", "999"])
+    assert result.exit_code == 1
+    assert "No branch found for PR #999" in result.output
