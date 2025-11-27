@@ -11,6 +11,7 @@ from shortcake.github import GitHubClient, GitHubError, get_github_repo_info
 from shortcake.metadata import (
     get_all_branch_metadata,
     get_branch_metadata,
+    get_children,
     update_branch_metadata,
 )
 
@@ -78,15 +79,6 @@ def _get_stack_branches(git: GitRepo, start_branch: str) -> list[BranchSubmitInf
     return branches
 
 
-def _get_children(branch: str) -> list[str]:
-    """Get all branches that have the given branch as their parent."""
-    children = []
-    for name, meta in get_all_branch_metadata().items():
-        if meta.get("parent") == branch:
-            children.append(name)
-    return children
-
-
 def _get_descendant_branches(git: GitRepo, branch: str) -> list[BranchSubmitInfo]:
     """Get all descendant branches (children, grandchildren, etc.) in order.
 
@@ -99,7 +91,7 @@ def _get_descendant_branches(git: GitRepo, branch: str) -> list[BranchSubmitInfo
     """
     all_metadata = get_all_branch_metadata()
     result = []
-    queue = _get_children(branch)
+    queue = get_children(branch)
 
     while queue:
         child = queue.pop(0)
@@ -117,7 +109,7 @@ def _get_descendant_branches(git: GitRepo, branch: str) -> list[BranchSubmitInfo
                 )
             )
             # Add this child's children to the queue
-            queue.extend(_get_children(child))
+            queue.extend(get_children(child))
 
     return result
 

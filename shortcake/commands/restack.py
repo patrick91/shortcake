@@ -6,7 +6,12 @@ import typer
 
 from shortcake import get_cli_name
 from shortcake.git import GitError, GitRepo
-from shortcake.metadata import get_all_branch_metadata, get_branch_metadata, update_branch_metadata
+from shortcake.metadata import (
+    get_all_branch_metadata,
+    get_branch_metadata,
+    get_children,
+    update_branch_metadata,
+)
 
 app = typer.Typer()
 
@@ -126,15 +131,6 @@ def _get_stack_from_current(current_branch: str) -> list[BranchInfo]:
     return branches
 
 
-def _get_children(branch: str) -> list[str]:
-    """Get all branches that have the given branch as their parent."""
-    children = []
-    for name, meta in get_all_branch_metadata().items():
-        if meta.get("parent") == branch:
-            children.append(name)
-    return children
-
-
 def _get_descendant_branches(branch: str) -> list[BranchInfo]:
     """Get all descendant branches (children, grandchildren, etc.) in topological order.
 
@@ -146,7 +142,7 @@ def _get_descendant_branches(branch: str) -> list[BranchInfo]:
     """
     all_metadata = get_all_branch_metadata()
     result = []
-    queue = _get_children(branch)
+    queue = get_children(branch)
 
     while queue:
         child = queue.pop(0)
@@ -160,7 +156,7 @@ def _get_descendant_branches(branch: str) -> list[BranchInfo]:
                 )
             )
             # Add this child's children to the queue
-            queue.extend(_get_children(child))
+            queue.extend(get_children(child))
 
     return result
 
