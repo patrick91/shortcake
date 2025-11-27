@@ -24,7 +24,7 @@ def stage_all(repo_path: Path) -> None:
 def test_command_help(command: str):
     result = runner.invoke(app, [command, "--help"])
     assert result.exit_code == 0
-    assert "amending the commit" in result.stdout.lower()
+    assert "amending or adding a commit" in result.stdout.lower()
     assert "Stage your changes first" in result.stdout
 
 
@@ -395,6 +395,106 @@ def test_command_with_mixed_staged_unstaged_changes(
     assert unstaged_in_commit.stdout == "initial unstaged"
 
     assert unstaged_file.read_text() == "updated unstaged"
+
+
+@pytest.mark.parametrize("command", ["edit", "modify"])
+def test_command_with_message_creates_new_commit(
+    command: str,
+    isolated_git_repo: Path,
+    isolated_config: Path,
+    git_editor_script: GitEditorScript,
+):
+    test_file = isolated_git_repo / "test.txt"
+    test_file.write_text("initial content")
+    stage_all(isolated_git_repo)
+
+    commit_message = "Initial commit"
+    git_editor_script(commit_message)
+    result = runner.invoke(app, ["create"])
+    assert result.exit_code == 0
+
+    commit_count_before = subprocess.run(
+        ["git", "rev-list", "--count", "HEAD"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+    count_before = int(commit_count_before.stdout.strip())
+
+    test_file.write_text("updated content")
+    stage_all(isolated_git_repo)
+
+    new_message = "Add new feature"
+    result = runner.invoke(app, [command, "--message", new_message])
+    assert result.exit_code == 0
+    assert f"Created commit: {new_message}" in result.stdout
+
+    commit_count_after = subprocess.run(
+        ["git", "rev-list", "--count", "HEAD"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+    count_after = int(commit_count_after.stdout.strip())
+
+    # Should have one more commit
+    assert count_after == count_before + 1
+
+    # Verify the commit message
+    message_result = subprocess.run(
+        ["git", "log", "-1", "--format=%s"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+    assert message_result.stdout.strip() == new_message
+
+
+@pytest.mark.parametrize("command", ["edit", "modify"])
+def test_command_with_message_short_flag(
+    command: str,
+    isolated_git_repo: Path,
+    isolated_config: Path,
+    git_editor_script: GitEditorScript,
+):
+    test_file = isolated_git_repo / "test.txt"
+    test_file.write_text("initial content")
+    stage_all(isolated_git_repo)
+
+    commit_message = "Initial commit"
+    git_editor_script(commit_message)
+    result = runner.invoke(app, ["create"])
+    assert result.exit_code == 0
+
+    test_file.write_text("updated content")
+    stage_all(isolated_git_repo)
+
+    new_message = "Fix bug"
+    result = runner.invoke(app, [command, "-m", new_message])
+    assert result.exit_code == 0
+    assert f"Created commit: {new_message}" in result.stdout
+
+
+@pytest.mark.parametrize("command", ["edit", "modify"])
+def test_command_with_message_no_staged_changes(
+    command: str,
+    isolated_git_repo: Path,
+    isolated_config: Path,
+    git_editor_script: GitEditorScript,
+):
+    test_file = isolated_git_repo / "test.txt"
+    test_file.write_text("initial content")
+    stage_all(isolated_git_repo)
+
+    commit_message = "Initial commit"
+    git_editor_script(commit_message)
+    result = runner.invoke(app, ["create"])
+    assert result.exit_code == 0
+
+    # Don't stage any changes
+    result = runner.invoke(app, [command, "-m", "New commit"])
+    assert result.exit_code == 1
+    assert "No staged changes to commit" in result.output
 
 
 @pytest.mark.parametrize("command", ["edit", "modify"])
