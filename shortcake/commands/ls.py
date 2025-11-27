@@ -13,8 +13,8 @@ app = typer.Typer()
 
 
 @dataclass
-class BranchInfo:
-    """Information about a branch managed by shortcake."""
+class BranchDisplayInfo:
+    """Information about a branch for display in ls."""
 
     name: str
     parent: str | None
@@ -23,19 +23,19 @@ class BranchInfo:
     pr_url: str | None = None
 
 
-def _get_shortcake_branches(git: GitRepo) -> list[BranchInfo]:
+def _get_shortcake_branches(git: GitRepo) -> list[BranchDisplayInfo]:
     """Get all branches that are managed by shortcake.
 
     Returns:
-        List of BranchInfo objects for shortcake-managed branches.
+        List of BranchDisplayInfo objects for shortcake-managed branches.
     """
-    branches: list[BranchInfo] = []
+    branches: list[BranchDisplayInfo] = []
     current_branch = git.get_current_branch()
     all_metadata = get_all_branch_metadata()
 
     for branch_name, metadata in all_metadata.items():
         branches.append(
-            BranchInfo(
+            BranchDisplayInfo(
                 name=branch_name,
                 parent=metadata.get("parent"),
                 is_current=branch_name == current_branch,
@@ -47,7 +47,7 @@ def _get_shortcake_branches(git: GitRepo) -> list[BranchInfo]:
     return branches
 
 
-def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
+def _build_tree_lines(branches: list[BranchDisplayInfo]) -> list[str]:
     """Build a vertical stack visualization.
 
     Shows the stack with tip at top and base at bottom.
@@ -55,7 +55,7 @@ def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
     This makes 'up' (to parent) go visually down, and 'down' (to child) go visually up.
 
     Args:
-        branches: List of BranchInfo objects.
+        branches: List of BranchDisplayInfo objects.
 
     Returns:
         List of formatted strings representing the tree.
@@ -68,7 +68,7 @@ def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
     branch_map = {b.name: b for b in branches}
 
     # Build a map of children for each parent
-    children_map: dict[str | None, list[BranchInfo]] = {}
+    children_map: dict[str | None, list[BranchDisplayInfo]] = {}
     for branch in branches:
         if branch.parent not in children_map:
             children_map[branch.parent] = []
@@ -76,7 +76,7 @@ def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
 
     lines: list[str] = []
 
-    def format_branch_line(branch: BranchInfo, indent: str = "") -> str:
+    def format_branch_line(branch: BranchDisplayInfo, indent: str = "") -> str:
         """Format a single branch line."""
         marker = "◉" if branch.is_current else "◯"
         if branch.pr_number and branch.pr_url:
@@ -88,7 +88,7 @@ def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
         current_indicator = "  ← you are here" if branch.is_current else ""
         return f"{indent}{marker} {branch.name}{pr_indicator}{current_indicator}"
 
-    def get_stack_to_base(branch: BranchInfo) -> list[BranchInfo]:
+    def get_stack_to_base(branch: BranchDisplayInfo) -> list[BranchDisplayInfo]:
         """Get list of branches from tip to base (excluding untracked base)."""
         stack = [branch]
         current = branch
@@ -97,7 +97,7 @@ def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
             stack.append(current)
         return stack
 
-    def get_base_parent(branch: BranchInfo) -> str | None:
+    def get_base_parent(branch: BranchDisplayInfo) -> str | None:
         """Get the untracked base parent (e.g., main/master)."""
         current = branch
         while current.parent and current.parent in tracked_names:
@@ -109,14 +109,14 @@ def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
     leaf_branches.sort(key=lambda b: b.name)
 
     # Group leaves by their base parent
-    base_to_leaves: dict[str | None, list[BranchInfo]] = {}
+    base_to_leaves: dict[str | None, list[BranchDisplayInfo]] = {}
     for leaf in leaf_branches:
         base = get_base_parent(leaf)
         if base not in base_to_leaves:
             base_to_leaves[base] = []
         base_to_leaves[base].append(leaf)
 
-    def stack_contains_current(leaf: BranchInfo) -> bool:
+    def stack_contains_current(leaf: BranchDisplayInfo) -> bool:
         """Check if the stack from this leaf contains the current branch."""
         current = leaf
         while current:

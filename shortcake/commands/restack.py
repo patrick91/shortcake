@@ -17,8 +17,8 @@ app = typer.Typer()
 
 
 @dataclass
-class BranchInfo:
-    """Information about a branch in the stack."""
+class RestackBranchInfo:
+    """Information about a branch for restacking."""
 
     name: str
     parent: str
@@ -88,7 +88,7 @@ def _needs_restack(
         return True  # On error, assume needs restack
 
 
-def _get_stack_from_current(current_branch: str) -> list[BranchInfo]:
+def _get_stack_from_current(current_branch: str) -> list[RestackBranchInfo]:
     """Get the stack of branches from trunk up to current branch.
 
     Walks up from current branch to find all ancestors in the stack,
@@ -98,7 +98,7 @@ def _get_stack_from_current(current_branch: str) -> list[BranchInfo]:
         current_branch: The current branch (top of stack)
 
     Returns:
-        List of BranchInfo from bottom of stack to current branch
+        List of RestackBranchInfo from bottom of stack to current branch
     """
     all_metadata = get_all_branch_metadata()
     branches = []
@@ -112,7 +112,7 @@ def _get_stack_from_current(current_branch: str) -> list[BranchInfo]:
             break  # Not a shortcake-managed branch or reached trunk
 
         branches.append(
-            BranchInfo(
+            RestackBranchInfo(
                 name=branch,
                 parent=parent,
                 metadata=metadata,
@@ -131,14 +131,14 @@ def _get_stack_from_current(current_branch: str) -> list[BranchInfo]:
     return branches
 
 
-def _get_descendant_branches(branch: str) -> list[BranchInfo]:
+def _get_descendant_branches(branch: str) -> list[RestackBranchInfo]:
     """Get all descendant branches (children, grandchildren, etc.) in topological order.
 
     Args:
         branch: The branch to find descendants of
 
     Returns:
-        List of BranchInfo for all descendants, in topological order (parents before children)
+        List of RestackBranchInfo for all descendants, in topological order (parents before children)
     """
     all_metadata = get_all_branch_metadata()
     result = []
@@ -149,7 +149,7 @@ def _get_descendant_branches(branch: str) -> list[BranchInfo]:
         metadata = all_metadata.get(child, {})
         if metadata.get("parent"):
             result.append(
-                BranchInfo(
+                RestackBranchInfo(
                     name=child,
                     parent=metadata["parent"],
                     metadata=metadata,
