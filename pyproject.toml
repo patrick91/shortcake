@@ -15,6 +15,7 @@ dependencies = [
 
 [project.scripts]
 shortcake = "shortcake.cli:app"
+sc = "shortcake.cli:app"
 
 [build-system]
 requires = ["hatchling"]
