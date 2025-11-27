@@ -50,6 +50,9 @@ def _get_shortcake_branches(git: GitRepo) -> list[BranchInfo]:
 def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
     """Build a tree visualization of the branch stack.
 
+    Shows the stack with leaves (tip of stack) at the top and roots (base) at the bottom.
+    This makes 'up' (to parent) go visually down, and 'down' (to child) go visually up.
+
     Args:
         branches: List of BranchInfo objects.
 
@@ -59,8 +62,8 @@ def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
     if not branches:
         return []
 
-    # Get set of all tracked branch names
-    tracked_names = {b.name for b in branches}
+    # Build maps for navigation
+    branch_map = {b.name: b for b in branches}
 
     # Build a map of children for each parent
     children_map: dict[str | None, list[BranchInfo]] = {}
@@ -71,40 +74,43 @@ def _build_tree_lines(branches: list[BranchInfo]) -> list[str]:
 
     lines: list[str] = []
 
-    def add_branch_to_tree(branch: BranchInfo, prefix: str = "", is_last: bool = True):
-        """Recursively add branch and its children to the tree."""
-        # Determine the tree characters
-        connector = "└── " if is_last else "├── "
+    def format_branch(branch: BranchInfo, prefix: str, connector: str) -> str:
+        """Format a single branch line."""
         current_indicator = " (current)" if branch.is_current else ""
-
-        # PR indicator with optional link
         if branch.pr_number and branch.pr_url:
             pr_indicator = f" [link={branch.pr_url}]#{branch.pr_number}[/link]"
         elif branch.pr_number:
             pr_indicator = f" #{branch.pr_number}"
         else:
             pr_indicator = ""
+        return f"{prefix}{connector}{branch.name}{pr_indicator}{current_indicator}"
 
-        lines.append(f"{prefix}{connector}{branch.name}{pr_indicator}{current_indicator}")
+    def add_branch_and_ancestors(branch: BranchInfo, prefix: str = "", is_last: bool = True):
+        """Add branch and its ancestors to the tree (leaf at top, root at bottom)."""
+        connector = "└── " if is_last else "├── "
+        lines.append(format_branch(branch, prefix, connector))
 
-        # Get children of this branch
-        children = children_map.get(branch.name, [])
-
-        # Add children
-        for i, child in enumerate(children):
-            is_last_child = i == len(children) - 1
+        # Add parent below with more indentation
+        if branch.parent and branch.parent in branch_map:
+            parent = branch_map[branch.parent]
             extension = "    " if is_last else "│   "
-            add_branch_to_tree(child, prefix + extension, is_last_child)
+            add_branch_and_ancestors(parent, prefix + extension, True)
 
-    # Root branches are those with no parent OR whose parent is not tracked
-    root_branches: list[BranchInfo] = []
-    for parent_name, branches_list in children_map.items():
-        if parent_name is None or parent_name not in tracked_names:
-            root_branches.extend(branches_list)
+    # Find leaf branches (those with no children among tracked branches)
+    leaf_branches = [b for b in branches if b.name not in children_map]
 
-    for i, branch in enumerate(root_branches):
-        is_last = i == len(root_branches) - 1
-        add_branch_to_tree(branch, "", is_last)
+    # Also include branches whose only children are not in tracked set
+    for branch in branches:
+        children = children_map.get(branch.name, [])
+        if not children and branch not in leaf_branches:
+            leaf_branches.append(branch)
+
+    # Sort leaves for consistent output
+    leaf_branches.sort(key=lambda b: b.name)
+
+    for i, branch in enumerate(leaf_branches):
+        is_last = i == len(leaf_branches) - 1
+        add_branch_and_ancestors(branch, "", is_last)
 
     return lines
 
