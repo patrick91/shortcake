@@ -10,6 +10,7 @@ from shortcake.metadata import (
     get_branch_metadata,
     get_children,
 )
+from shortcake.output import print_error
 
 app = typer.Typer()
 
@@ -21,16 +22,10 @@ def _safe_checkout(git: GitRepo, branch: str) -> None:
     except GitError as e:
         error_str = str(e)
         if "local changes" in error_str and "would be overwritten" in error_str:
-            typer.echo(
-                "Error: You have uncommitted changes that would be overwritten.",
-                err=True,
-            )
-            typer.echo(
-                "Please commit or stash your changes before switching branches.",
-                err=True,
-            )
+            print_error("You have uncommitted changes that would be overwritten.")
+            print_error("Please commit or stash your changes before switching branches.")
         else:
-            typer.echo(f"Error: Failed to checkout '{branch}': {e}", err=True)
+            print_error(f"Failed to checkout '{branch}': {e}")
         raise typer.Exit(1) from None
 
 
@@ -51,7 +46,7 @@ def up():
     try:
         git = GitRepo()
     except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None
 
     current = git.get_current_branch()
@@ -79,7 +74,7 @@ def down():
     try:
         git = GitRepo()
     except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None
 
     current = git.get_current_branch()
@@ -90,7 +85,7 @@ def down():
 
     parent = _get_parent(current)
     if not parent:
-        typer.echo(f"Branch '{current}' has no parent (not managed by shortcake)")
+        print_error(f"Branch '{current}' has no parent (not managed by shortcake)")
         raise typer.Exit(1)
 
     _safe_checkout(git, parent)
@@ -103,7 +98,7 @@ def top():
     try:
         git = GitRepo()
     except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None
 
     current = git.get_current_branch()
@@ -133,7 +128,7 @@ def bottom():
     try:
         git = GitRepo()
     except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None
 
     current = git.get_current_branch()
@@ -183,7 +178,7 @@ def checkout(
     try:
         git = GitRepo()
     except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None
 
     # Check if target is a PR number (all digits)
@@ -191,14 +186,14 @@ def checkout(
         pr_number = int(target)
         branch = _find_branch_by_pr_number(pr_number)
         if not branch:
-            typer.echo(f"Error: No branch found for PR #{pr_number}", err=True)
+            print_error(f"No branch found for PR #{pr_number}")
             raise typer.Exit(1)
         _safe_checkout(git, branch)
         typer.echo(f"Switched to {branch} (PR #{pr_number})")
     else:
         # Target is a branch name
         if not git.branch_exists(target):
-            typer.echo(f"Error: Branch '{target}' does not exist", err=True)
+            print_error(f"Branch '{target}' does not exist")
             raise typer.Exit(1)
         _safe_checkout(git, target)
         typer.echo(f"Switched to {target}")

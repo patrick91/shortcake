@@ -6,6 +6,7 @@ import typer
 from shortcake import config
 from shortcake.git import GitError, GitRepo
 from shortcake.metadata import update_branch_metadata
+from shortcake.output import print_error
 
 app = typer.Typer()
 
@@ -87,14 +88,14 @@ def create(
 
         selected_gitmoji = pick_gitmoji()
         if selected_gitmoji is None:
-            typer.echo("Gitmoji selection cancelled", err=True)
+            print_error("Gitmoji selection cancelled")
             raise typer.Exit(1)
         selected_emoji = selected_gitmoji.emoji
 
     try:
         git = GitRepo()
     except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None
 
     # Get the original branch to restore on error
@@ -128,16 +129,16 @@ def create(
             error_msg = str(e)
             if "returned non-zero exit status 1" in error_msg:
                 # Commit was aborted or failed - provide a friendlier message
-                typer.echo("Commit aborted or failed. No changes were made.", err=True)
+                print_error("Commit aborted or failed. No changes were made.")
             else:
-                typer.echo(f"Error: {error_msg}", err=True)
+                print_error(error_msg)
             raise typer.Exit(1) from None
 
         # Get the commit message that was just created
         commit_message = git.get_last_commit_message()
 
         if not commit_message:
-            typer.echo("Error: Commit message cannot be empty", err=True)
+            print_error("Commit message cannot be empty")
             raise typer.Exit(1)
 
         # Generate branch name from commit message
@@ -182,5 +183,5 @@ def create(
             except GitError:
                 pass  # Ignore cleanup errors
 
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None

@@ -2,6 +2,7 @@ import typer
 
 from shortcake.git import GitError, GitRepo
 from shortcake.metadata import get_branch_metadata, update_branch_metadata
+from shortcake.output import print_error
 
 app = typer.Typer()
 
@@ -79,32 +80,27 @@ def adopt(
     try:
         git = GitRepo()
     except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None
 
     try:
         branch_to_adopt = branch or git.get_current_branch()
 
         if not git.branch_exists(branch_to_adopt):
-            typer.echo(f"Error: Branch '{branch_to_adopt}' does not exist", err=True)
-
+            print_error(f"Branch '{branch_to_adopt}' does not exist")
             raise typer.Exit(1)
 
         if branch_to_adopt in {"main", "master"}:
-            typer.echo(f"Error: Cannot adopt '{branch_to_adopt}' branch", err=True)
-
+            print_error(f"Cannot adopt '{branch_to_adopt}' branch")
             raise typer.Exit(1)
 
         # Check if already tracked
         existing_metadata = get_branch_metadata(branch_to_adopt)
 
         if existing_metadata.get("parent") and not force:
-            typer.echo(
-                f"Error: Branch '{branch_to_adopt}' is already tracked by shortcake", err=True
-            )
+            print_error(f"Branch '{branch_to_adopt}' is already tracked by shortcake")
             typer.echo("Use 'shortcake ls' to see all tracked branches")
             typer.echo("Use --force to update the parent")
-
             raise typer.Exit(1)
 
         # Auto-detect parent if not specified
@@ -124,8 +120,7 @@ def adopt(
         # Validate parent if specified
         if parent:
             if not git.branch_exists(parent):
-                typer.echo(f"Error: Parent branch '{parent}' does not exist", err=True)
-
+                print_error(f"Parent branch '{parent}' does not exist")
                 raise typer.Exit(1)
 
         if not dry_run:
@@ -154,5 +149,5 @@ def adopt(
         typer.echo(f"{action} branch '{branch_to_adopt}'{parent_info}")
 
     except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None

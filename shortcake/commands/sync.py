@@ -12,6 +12,7 @@ from shortcake.metadata import (
     get_branch_metadata,
     update_branch_metadata,
 )
+from shortcake.output import print_error, print_warning
 
 app = typer.Typer()
 
@@ -174,40 +175,40 @@ def sync(
     try:
         git = GitRepo()
     except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None
 
     # Handle --abort
     if abort:
         if not git.is_rebase_in_progress():
-            typer.echo("Error: No rebase in progress", err=True)
+            print_error("No rebase in progress")
             raise typer.Exit(1)
         try:
             git.rebase_abort()
             typer.echo("Rebase aborted")
             return
         except GitError as e:
-            typer.echo(f"Error: {e}", err=True)
+            print_error(str(e))
             raise typer.Exit(1) from None
 
     # Handle --continue
     if continue_rebase:
         if not git.is_rebase_in_progress():
-            typer.echo("Error: No rebase in progress", err=True)
+            print_error("No rebase in progress")
             raise typer.Exit(1)
         try:
             git.rebase_continue()
             typer.echo("Rebase continued successfully")
             return
         except GitError as e:
-            typer.echo(f"Error: {e}", err=True)
+            print_error(str(e))
             raise typer.Exit(1) from None
 
     cli = get_cli_name()
 
     # Check for rebase in progress
     if git.is_rebase_in_progress():
-        typer.echo("Error: A rebase is already in progress", err=True)
+        print_error("A rebase is already in progress")
         typer.echo(f"Run '{cli} sync --continue' after resolving conflicts")
         typer.echo(f"Or run '{cli} sync --abort' to abort")
         raise typer.Exit(1)
@@ -215,7 +216,7 @@ def sync(
     try:
         main_branch = _get_main_branch(git)
     except GitError as e:
-        typer.echo(f"Error: {e}", err=True)
+        print_error(str(e))
         raise typer.Exit(1) from None
 
     # Fetch from remote if available
@@ -227,7 +228,7 @@ def sync(
             try:
                 git.fetch("origin")
             except GitError as e:
-                typer.echo(f"Warning: Failed to fetch: {e}", err=True)
+                print_warning(f"Failed to fetch: {e}")
 
     # Get all tracked branches
     branches = _get_tracked_branches(git)
@@ -342,7 +343,7 @@ def sync(
                     delete_branch_metadata(name)
                     typer.echo(f"Deleted merged branch: {name}")
                 except GitError as e:
-                    typer.echo(f"Warning: Could not delete {name}: {e}", err=True)
+                    print_warning(f"Could not delete {name}: {e}")
         return
 
     # Sort branches to rebase in topological order
@@ -402,7 +403,7 @@ def sync(
             typer.echo(" done")
         except GitError as e:
             typer.echo(" CONFLICT")
-            typer.echo(f"\nError: {e}", err=True)
+            print_error(str(e))
             typer.echo("\nResolve the conflicts, then run:")
             typer.echo(f"  {cli} sync --continue")
             typer.echo("\nOr abort with:")
@@ -429,7 +430,7 @@ def sync(
             delete_branch_metadata(name)
             typer.echo(f"  • Deleted: {name}")
         except GitError as e:
-            typer.echo(f"  • Warning: Could not delete {name}: {e}", err=True)
+            print_warning(f"Could not delete {name}: {e}")
 
     # Return to original branch if it still exists
     try:
