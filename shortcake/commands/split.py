@@ -5,6 +5,7 @@ from pathlib import Path
 
 import typer
 
+from shortcake import get_cli_name
 from shortcake.git import GitError, GitRepo
 
 app = typer.Typer()
@@ -283,6 +284,7 @@ def split(
             raise typer.Exit(1)
 
         current_branch = git.get_current_branch()
+        cli = get_cli_name()
 
         # Check if on main branch
         if current_branch in ("main", "master"):
@@ -294,7 +296,7 @@ def split(
         if not metadata.get("parent"):
             typer.echo(
                 f"Error: Branch '{current_branch}' is not managed by shortcake. "
-                "Use 'shortcake adopt' first.",
+                f"Use '{cli} adopt' first.",
                 err=True,
             )
             raise typer.Exit(1)

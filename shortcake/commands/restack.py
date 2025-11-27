@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 import typer
 
+from shortcake import get_cli_name
 from shortcake.git import GitError, GitRepo
 
 # File to store notes during restack (in .git directory)
@@ -268,11 +269,13 @@ def restack(
             typer.echo(f"Error: {e}", err=True)
             raise typer.Exit(1) from None
 
+    cli = get_cli_name()
+
     # Check for rebase in progress
     if git.is_rebase_in_progress():
         typer.echo("Error: A rebase is already in progress", err=True)
-        typer.echo("Run 'shortcake restack --continue' after resolving conflicts")
-        typer.echo("Or run 'shortcake restack --abort' to abort")
+        typer.echo(f"Run '{cli} restack --continue' after resolving conflicts")
+        typer.echo(f"Or run '{cli} restack --abort' to abort")
         raise typer.Exit(1)
 
     current_branch = git.get_current_branch()
@@ -287,7 +290,7 @@ def restack(
     if not metadata.get("parent"):
         typer.echo(
             f"Error: Branch '{current_branch}' is not managed by shortcake. "
-            "Use 'shortcake adopt' first.",
+            f"Use '{cli} adopt' first.",
             err=True,
         )
         raise typer.Exit(1)
@@ -309,7 +312,7 @@ def restack(
         if not git.branch_exists(parent):
             typer.echo(
                 f"Error: Parent branch '{parent}' no longer exists.\n"
-                "This usually means it was merged. Run 'shortcake sync' to update parent references.",
+                f"This usually means it was merged. Run '{cli} sync' to update parent references.",
                 err=True,
             )
             raise typer.Exit(1)
@@ -390,9 +393,9 @@ def restack(
             typer.echo("\nTo resolve:")
             typer.echo("  1. Fix the conflicts in the affected files")
             typer.echo("  2. Stage the resolved files: git add <files>")
-            typer.echo("  3. Continue the restack: shortcake restack --continue")
+            typer.echo(f"  3. Continue the restack: {cli} restack --continue")
             typer.echo("\nOr abort with:")
-            typer.echo("  shortcake restack --abort")
+            typer.echo(f"  {cli} restack --abort")
             raise typer.Exit(1) from None
 
     # Return to the original branch
