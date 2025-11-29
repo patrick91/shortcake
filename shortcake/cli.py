@@ -5,6 +5,7 @@ from shortcake.commands import (
     config,
     create,
     edit,
+    get,
     ls,
     move,
     nav,
@@ -26,6 +27,7 @@ app.command(name="config")(config.config_cmd)
 app.command()(ls.ls)
 app.command()(adopt.adopt)
 app.command(name="add")(adopt.adopt)
+app.command()(get.get)
 app.command()(sync.sync)
 app.command()(submit.submit)
 app.command()(restack.restack)

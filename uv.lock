@@ -478,7 +478,7 @@ wheels = [
 
 [[package]]
 name = "rich-toolkit"
-version = "0.17.0"
+version = "0.15.1"
 source = { editable = "../rich-toolkit" }
 dependencies = [
     { name = "click" },
