@@ -1,6 +1,7 @@
 """Git operations using GitPython."""
 
 import subprocess
+from datetime import datetime
 from pathlib import Path
 
 from git import Repo
@@ -146,6 +147,7 @@ class GitRepo:
         amend: bool = False,
         no_verify: bool = False,
         message_prefix: str | None = None,
+        edit_message: bool = False,
     ) -> None:
         """Create a commit.
 
@@ -154,6 +156,7 @@ class GitRepo:
             amend: If True, amend the previous commit.
             no_verify: If True, skip pre-commit and commit-msg hooks.
             message_prefix: If provided, pre-fill the editor with this prefix.
+            edit_message: If True with amend, open editor to edit the message.
 
         Raises:
             GitError: If commit fails.
@@ -162,7 +165,9 @@ class GitRepo:
             if amend:
                 # GitPython's amend is a bit tricky, use git directly
                 # Don't capture output so pre-commit hooks stream naturally to terminal
-                cmd = ["git", "commit", "--amend", "--no-edit"]
+                cmd = ["git", "commit", "--amend"]
+                if not edit_message:
+                    cmd.append("--no-edit")
                 if no_verify:
                     cmd.append("--no-verify")
                 subprocess.run(
@@ -241,6 +246,25 @@ class GitRepo:
             return commit.message.strip()
         except Exception as e:
             raise GitError(f"Failed to get commit message for '{ref}': {e}") from e
+
+    def get_commit_date(self, ref: str = "HEAD") -> datetime:
+        """Get the commit date for a given ref.
+
+        Args:
+            ref: The commit reference (branch name, tag, SHA, etc.). Defaults to HEAD.
+
+        Returns:
+            The commit date as a datetime object.
+
+        Raises:
+            GitError: If unable to get commit date.
+        """
+        try:
+            commit = self.repo.commit(ref)
+            # committed_datetime is timezone-aware
+            return commit.committed_datetime
+        except Exception as e:
+            raise GitError(f"Failed to get commit date for '{ref}': {e}") from e
 
     def get_branches(self) -> list[str]:
         """Get list of all branch names in the repository.
@@ -408,6 +432,20 @@ class GitRepo:
         except Exception:
             # If HEAD doesn't exist (no commits yet), check if index has entries
             return len(self.repo.index.entries) > 0
+
+    def get_staged_diff(self) -> str:
+        """Get the diff of staged changes.
+
+        Returns:
+            The diff as a string.
+
+        Raises:
+            GitError: If getting the diff fails.
+        """
+        try:
+            return self.repo.git.diff("--cached")
+        except Exception as e:
+            raise GitError(f"Failed to get staged diff: {e}") from e
 
     def get_merge_base(self, branch1: str, branch2: str) -> str | None:
         """Get the merge-base (common ancestor) commit of two branches.
