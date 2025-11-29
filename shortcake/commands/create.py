@@ -1,4 +1,6 @@
 import re
+import shutil
+import subprocess
 import time
 
 import typer
@@ -9,6 +11,88 @@ from shortcake.metadata import update_branch_metadata
 from shortcake.output import print_error
 
 app = typer.Typer()
+
+
+def _is_claude_cli_available() -> bool:
+    """Check if Claude CLI is available.
+
+    Checks both PATH and common installation locations,
+    since claude may be installed as an alias.
+    """
+    # First try shutil.which for PATH lookup
+    if shutil.which("claude"):
+        return True
+
+    # Check common installation location (handles alias case)
+    import os
+
+    home = os.path.expanduser("~")
+    claude_path = os.path.join(home, ".claude", "local", "claude")
+    if os.path.isfile(claude_path) and os.access(claude_path, os.X_OK):
+        return True
+
+    return False
+
+
+def _get_claude_command() -> list[str]:
+    """Get the command to run Claude CLI.
+
+    Returns the appropriate command based on installation method.
+    """
+    if shutil.which("claude"):
+        return ["claude"]
+
+    # Check common installation location
+    import os
+
+    home = os.path.expanduser("~")
+    claude_path = os.path.join(home, ".claude", "local", "claude")
+    if os.path.isfile(claude_path):
+        return [claude_path]
+
+    return ["claude"]  # Fallback
+
+
+def _generate_commit_message_with_claude(diff: str, use_gitmoji: bool = False) -> str | None:
+    """Generate a commit message using Claude CLI.
+
+    Args:
+        diff: The git diff to analyze
+        use_gitmoji: If True, include a gitmoji prefix
+
+    Returns:
+        The generated commit message, or None if generation failed
+    """
+    gitmoji_instruction = ""
+    if use_gitmoji:
+        gitmoji_instruction = """
+Use a gitmoji prefix (e.g., ✨ for new feature, 🐛 for bug fix, ♻️ for refactor, 📝 for docs, etc.).
+"""
+
+    prompt = f"""Generate a concise commit message for this diff.
+{gitmoji_instruction}
+Rules:
+- First line should be max 72 characters
+- Use imperative mood (e.g., "Add feature" not "Added feature")
+- Be specific but concise
+- Only output the commit message, nothing else
+
+Diff:
+{diff}"""
+
+    try:
+        claude_cmd = _get_claude_command()
+        result = subprocess.run(
+            [*claude_cmd, "--print", "-p", prompt],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode == 0:
+            return result.stdout.strip()
+        return None
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
 
 
 def _generate_branch_name(commit_message: str, keep_emoji: bool = False) -> str:
@@ -65,6 +149,9 @@ def create(
     gitmoji: bool = typer.Option(
         False, "--gitmoji", "--gm", help="Select a gitmoji to prefix the commit message"
     ),
+    claude: bool = typer.Option(
+        False, "--claude", "-c", help="Use Claude to generate the commit message from staged changes"
+    ),
 ):
     """Create a stack with a new branch and commit.
 
@@ -77,13 +164,47 @@ def create(
 
     Use --gitmoji (or --gm) to select an emoji from the gitmoji list before
     entering your commit message.
+
+    Use --claude (or -c) to generate a commit message using Claude CLI.
+    The generated message will be pre-filled in your editor for review before committing.
+    This requires the 'claude' command to be installed and authenticated.
+    Can be combined with --gitmoji to include an emoji prefix.
     """
     # Get keep_emoji setting from config
     keep_emoji = config.get_keep_emoji()
 
-    # Handle gitmoji selection
+    try:
+        git = GitRepo()
+    except GitError as e:
+        print_error(str(e))
+        raise typer.Exit(1) from None
+
+    # Handle --claude flag: generate commit message from diff
+    generated_message = None
+    if claude:
+        # Check for staged changes
+        if not git.has_staged_changes():
+            print_error("No staged changes. Use 'git add' to stage files first.")
+            raise typer.Exit(1)
+
+        # Check if claude CLI is available
+        if not _is_claude_cli_available():
+            print_error("Claude CLI not found. Install it from: https://claude.ai/code")
+            raise typer.Exit(1)
+
+        typer.echo("Generating commit message with Claude...")
+        diff = git.get_staged_diff()
+        generated_message = _generate_commit_message_with_claude(diff, use_gitmoji=gitmoji)
+
+        if not generated_message:
+            print_error("Failed to generate commit message with Claude")
+            raise typer.Exit(1)
+
+        typer.echo(f"Generated: {generated_message}")
+
+    # Handle manual gitmoji selection (only if not using --claude)
     selected_emoji = None
-    if gitmoji:
+    if gitmoji and not claude:
         from shortcake.gitmoji import pick_gitmoji
 
         selected_gitmoji = pick_gitmoji()
@@ -91,12 +212,6 @@ def create(
             print_error("Gitmoji selection cancelled")
             raise typer.Exit(1)
         selected_emoji = selected_gitmoji.emoji
-
-    try:
-        git = GitRepo()
-    except GitError as e:
-        print_error(str(e))
-        raise typer.Exit(1) from None
 
     # Get the original branch to restore on error
     try:
@@ -113,10 +228,14 @@ def create(
         # Create and switch to temporary branch (quiet mode)
         git.create_branch(temp_branch_name, checkout=True)
 
-        # Create commit using git's normal flow (opens editor)
-        # If gitmoji was selected, pass it as a prefix for the commit message
+        # Create commit
+        # If --claude was used, pre-fill editor with generated message for review
+        # Otherwise, open editor (with optional gitmoji prefix)
         try:
-            git.commit(no_verify=no_verify, message_prefix=selected_emoji)
+            if generated_message:
+                git.commit(no_verify=no_verify, message_prefix=generated_message)
+            else:
+                git.commit(no_verify=no_verify, message_prefix=selected_emoji)
         except GitError as e:
             # Clean up temp branch before showing error
             if original_branch:
