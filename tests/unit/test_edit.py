@@ -577,3 +577,85 @@ def test_command_preserves_shortcake_metadata(
     notes_after = get_notes(isolated_git_repo, "initial-feature")
     assert notes_after is not None
     assert notes_after == notes_before
+
+
+@pytest.mark.parametrize("command", ["edit", "modify"])
+def test_command_reword_flag_in_help(command: str):
+    result = runner.invoke(app, [command, "--help"])
+    assert result.exit_code == 0
+    assert "--reword" in result.stdout
+    assert "-r" in result.stdout
+
+
+@pytest.mark.parametrize("command", ["edit", "modify"])
+def test_command_reword_edits_message(
+    command: str,
+    isolated_git_repo: Path,
+    isolated_config: Path,
+    git_editor_script: GitEditorScript,
+):
+    """Test that --reword allows editing commit message without staged changes."""
+    # Create initial commit
+    test_file = isolated_git_repo / "test.txt"
+    test_file.write_text("initial content")
+    stage_all(isolated_git_repo)
+
+    git_editor_script("Original message")
+    result = runner.invoke(app, ["create"])
+    assert result.exit_code == 0
+
+    # Verify original message
+    message_before = subprocess.run(
+        ["git", "log", "-1", "--pretty=%s"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+    assert message_before.stdout.strip() == "Original message"
+
+    # Use --reword to edit the message (without staging any changes)
+    git_editor_script("Updated message")
+    result = runner.invoke(app, [command, "--reword"])
+    assert result.exit_code == 0
+    assert "Updated commit message" in result.stdout
+
+    # Verify message was updated
+    message_after = subprocess.run(
+        ["git", "log", "-1", "--pretty=%s"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+    assert message_after.stdout.strip() == "Updated message"
+
+
+@pytest.mark.parametrize("command", ["edit", "modify"])
+def test_command_reword_short_flag(
+    command: str,
+    isolated_git_repo: Path,
+    isolated_config: Path,
+    git_editor_script: GitEditorScript,
+):
+    """Test that -r short flag works for reword."""
+    # Create initial commit
+    test_file = isolated_git_repo / "test.txt"
+    test_file.write_text("initial content")
+    stage_all(isolated_git_repo)
+
+    git_editor_script("Original message")
+    result = runner.invoke(app, ["create"])
+    assert result.exit_code == 0
+
+    # Use -r to edit the message
+    git_editor_script("New message via short flag")
+    result = runner.invoke(app, [command, "-r"])
+    assert result.exit_code == 0
+
+    # Verify message was updated
+    message_after = subprocess.run(
+        ["git", "log", "-1", "--pretty=%s"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+    assert message_after.stdout.strip() == "New message via short flag"
