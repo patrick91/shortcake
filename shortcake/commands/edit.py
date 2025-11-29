@@ -7,7 +7,9 @@ app = typer.Typer()
 console = Console(stderr=True)
 
 
-def _do_edit(no_verify: bool = False, message: str | None = None) -> None:
+def _do_edit(
+    no_verify: bool = False, message: str | None = None, reword: bool = False
+) -> None:
     """Internal implementation for edit/modify commands."""
     try:
         git = GitRepo()
@@ -16,12 +18,20 @@ def _do_edit(no_verify: bool = False, message: str | None = None) -> None:
         raise typer.Exit(1) from None
 
     try:
+        # Reword mode: edit just the commit message
+        if reword:
+            git.commit(amend=True, no_verify=no_verify, edit_message=True)
+            new_message = git.get_last_commit_message()
+            typer.echo(f"Updated commit message: {new_message}")
+            return
+
         # Check if there are staged changes
         if not git.has_staged_changes():
             action = "commit" if message else "amend"
             console.print(
                 f"[bold red]Error:[/] No staged changes to {action}. Use 'git add' first."
             )
+            console.print("Hint: Use --reword to edit just the commit message.")
             raise typer.Exit(1)
 
         if message:
@@ -57,14 +67,18 @@ def edit(
     message: str | None = typer.Option(
         None, "--message", "-m", help="Create a new commit with this message instead of amending"
     ),
+    reword: bool = typer.Option(
+        False, "--reword", "-r", help="Edit only the commit message (no staged changes required)"
+    ),
 ):
     """Edit the current stack by amending or adding a commit.
 
     Stage your changes first with 'git add', then run this command.
     Without --message: amends the previous commit.
     With --message: creates a new commit with the given message.
+    With --reword: edit just the commit message (opens editor).
     """
-    _do_edit(no_verify=no_verify, message=message)
+    _do_edit(no_verify=no_verify, message=message, reword=reword)
 
 
 @app.command(name="modify")
@@ -75,11 +89,15 @@ def modify(
     message: str | None = typer.Option(
         None, "--message", "-m", help="Create a new commit with this message instead of amending"
     ),
+    reword: bool = typer.Option(
+        False, "--reword", "-r", help="Edit only the commit message (no staged changes required)"
+    ),
 ):
     """Alias for edit - Edit the current stack by amending or adding a commit.
 
     Stage your changes first with 'git add', then run this command.
     Without --message: amends the previous commit.
     With --message: creates a new commit with the given message.
+    With --reword: edit just the commit message (opens editor).
     """
-    _do_edit(no_verify=no_verify, message=message)
+    _do_edit(no_verify=no_verify, message=message, reword=reword)
