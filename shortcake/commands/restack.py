@@ -251,6 +251,20 @@ def restack(
             typer.echo("Fetching from origin...")
             try:
                 git.fetch("origin")
+
+                # Update local main to origin/main if behind
+                main_branch = git.get_main_branch()
+                remote_main = f"origin/{main_branch}"
+                local_main_sha = git.get_commit_sha(main_branch)
+                remote_main_sha = git.get_commit_sha(remote_main)
+
+                if local_main_sha != remote_main_sha:
+                    if git.is_ancestor(local_main_sha, remote_main_sha):
+                        if current_branch == main_branch:
+                            git.merge_ff_only(remote_main)
+                        else:
+                            git.update_ref(f"refs/heads/{main_branch}", remote_main_sha)
+                        typer.echo(f"Updated {main_branch} to latest")
             except GitError as e:
                 print_warning(f"Failed to fetch: {e}")
 

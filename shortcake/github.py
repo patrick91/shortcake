@@ -42,6 +42,7 @@ class PullRequest:
     head_ref: str
     base_ref: str
     state: str
+    author: str | None = None
 
 
 class GitHubClient:
@@ -256,6 +257,48 @@ class GitHubClient:
             )
             for pr in response
         ]
+
+    def list_pull_requests(
+        self, owner: str, repo: str, state: str = "open", per_page: int = 30
+    ) -> list[PullRequest]:
+        """List pull requests for a repository.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            state: PR state filter ('open', 'closed', 'all')
+            per_page: Number of results per page (max 100)
+
+        Returns:
+            List of PullRequest objects
+        """
+        response = self._request(
+            "GET",
+            f"/repos/{owner}/{repo}/pulls",
+            params={"state": state, "per_page": per_page, "sort": "updated", "direction": "desc"},
+        )
+        return [
+            PullRequest(
+                number=pr["number"],
+                title=pr["title"],
+                body=pr.get("body") or "",
+                html_url=pr["html_url"],
+                head_ref=pr["head"]["ref"],
+                base_ref=pr["base"]["ref"],
+                state=pr["state"],
+                author=pr["user"]["login"],
+            )
+            for pr in response
+        ]
+
+    def get_current_user(self) -> str:
+        """Get the login of the currently authenticated user.
+
+        Returns:
+            The username of the authenticated user
+        """
+        response = self._request("GET", "/user")
+        return response["login"]
 
 
 def parse_github_remote(remote_url: str) -> tuple[str, str]:
