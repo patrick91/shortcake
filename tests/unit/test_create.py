@@ -681,3 +681,167 @@ def test_create_with_no_verify_short_flag(
 
     assert result.exit_code == 0
     assert "Created and switched to branch: add-feature-with-short-flag" in result.stdout
+
+
+def test_create_with_claude_flag_in_help():
+    result = runner.invoke(app, ["create", "--help"])
+
+    assert result.exit_code == 0
+    assert "--claude" in result.stdout
+    assert "-c" in result.stdout
+    assert "Claude" in result.stdout
+
+
+def test_create_with_claude_no_staged_changes(isolated_git_repo: Path, isolated_config: Path):
+    result = runner.invoke(app, ["create", "--claude"])
+
+    assert result.exit_code == 1
+    # Error messages go to stderr via rich console
+    assert "No staged changes" in result.output
+
+
+def test_create_with_claude_cli_not_found(
+    isolated_git_repo: Path, isolated_config: Path, monkeypatch: pytest.MonkeyPatch
+):
+    test_file = isolated_git_repo / "test.txt"
+    test_file.write_text("test content")
+    stage_all(isolated_git_repo)
+
+    # Mock the _is_claude_cli_available function directly
+    from shortcake.commands import create
+
+    monkeypatch.setattr(create, "_is_claude_cli_available", lambda: False)
+
+    result = runner.invoke(app, ["create", "--claude"])
+
+    assert result.exit_code == 1
+    # Error messages go to stderr via rich console
+    assert "Claude CLI not found" in result.output
+
+
+def test_create_with_claude_success(
+    isolated_git_repo: Path,
+    isolated_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    git_editor_script: GitEditorScript,
+):
+    test_file = isolated_git_repo / "test.txt"
+    test_file.write_text("test content")
+    stage_all(isolated_git_repo)
+
+    # Mock _is_claude_cli_available and _get_claude_command
+    from shortcake.commands import create
+
+    monkeypatch.setattr(create, "_is_claude_cli_available", lambda: True)
+    monkeypatch.setattr(create, "_get_claude_command", lambda: ["claude"])
+
+    # Mock subprocess.run for the claude call
+    original_run = subprocess.run
+
+    def mock_run(cmd, *args, **kwargs):
+        if cmd and cmd[0] == "claude":
+            # Return a mock result
+            class MockResult:
+                returncode = 0
+                stdout = "Add test file for feature"
+                stderr = ""
+
+            return MockResult()
+        return original_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    # Set up editor to accept the pre-filled message
+    git_editor_script("Add test file for feature")
+
+    result = runner.invoke(app, ["create", "--claude"])
+
+    assert result.exit_code == 0
+    assert "Generating commit message with Claude" in result.stdout
+    assert "Generated: Add test file for feature" in result.stdout
+    assert "Created and switched to branch: add-test-file-for-feature" in result.stdout
+
+
+def test_create_with_claude_and_gitmoji(
+    isolated_git_repo: Path,
+    isolated_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    git_editor_script: GitEditorScript,
+):
+    test_file = isolated_git_repo / "test.txt"
+    test_file.write_text("test content")
+    stage_all(isolated_git_repo)
+
+    # Mock _is_claude_cli_available and _get_claude_command
+    from shortcake.commands import create
+
+    monkeypatch.setattr(create, "_is_claude_cli_available", lambda: True)
+    monkeypatch.setattr(create, "_get_claude_command", lambda: ["claude"])
+
+    # Mock subprocess.run for the claude call
+    original_run = subprocess.run
+
+    def mock_run(cmd, *args, **kwargs):
+        if cmd and cmd[0] == "claude":
+            # Check that gitmoji instruction is in the prompt
+            prompt = cmd[3] if len(cmd) > 3 else ""
+            if "gitmoji" in prompt.lower():
+                class MockResult:
+                    returncode = 0
+                    stdout = "✨ Add new feature"
+                    stderr = ""
+
+                return MockResult()
+
+            class MockResult:
+                returncode = 0
+                stdout = "Add new feature"
+                stderr = ""
+
+            return MockResult()
+        return original_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    # Set up editor to accept the pre-filled message
+    git_editor_script("✨ Add new feature")
+
+    result = runner.invoke(app, ["create", "--claude", "--gitmoji"])
+
+    assert result.exit_code == 0
+    assert "Generating commit message with Claude" in result.stdout
+
+
+def test_create_with_claude_generation_fails(
+    isolated_git_repo: Path, isolated_config: Path, monkeypatch: pytest.MonkeyPatch
+):
+    test_file = isolated_git_repo / "test.txt"
+    test_file.write_text("test content")
+    stage_all(isolated_git_repo)
+
+    # Mock _is_claude_cli_available and _get_claude_command
+    from shortcake.commands import create
+
+    monkeypatch.setattr(create, "_is_claude_cli_available", lambda: True)
+    monkeypatch.setattr(create, "_get_claude_command", lambda: ["claude"])
+
+    # Mock subprocess.run for the claude call to fail
+    original_run = subprocess.run
+
+    def mock_run(cmd, *args, **kwargs):
+        if cmd and cmd[0] == "claude":
+            class MockResult:
+                returncode = 1
+                stdout = ""
+                stderr = "Error"
+
+            return MockResult()
+        return original_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    result = runner.invoke(app, ["create", "--claude"])
+
+    assert result.exit_code == 1
+    # Error messages go to stderr via rich console
+    assert "Failed to generate commit message with Claude" in result.output
