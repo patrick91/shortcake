@@ -301,6 +301,15 @@ def submit(
                 typer.echo(f"    Existing PR: #{branch.pr_number}")
         return
 
+    # Check for uncommitted changes before restacking
+    if git.has_uncommitted_changes():
+        print_error(
+            "You have uncommitted changes. Please commit or stash them before submitting.\n"
+            "  To stash: git stash\n"
+            "  To discard: git checkout -- <file>"
+        )
+        raise typer.Exit(1)
+
     # Restack branches that need it before pushing
     restacked_branches: list[str] = []
     for branch in branches:

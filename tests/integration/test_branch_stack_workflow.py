@@ -95,11 +95,19 @@ Created commit: Add user authentication
     # Use snapshot to verify the exact tree structure output
     assert result.stdout == snapshot(
         """\
-◉ add-password-validation  ← you are here
-│
-◯ add-login-form
-│
-◯ add-user-authentication
+│ ◉ add-password-validation (current)
+│ │  just now
+│ │  04158ff - Add password validation
+│ │
+│ ◯ add-login-form
+│ │  just now
+│ │  b6ba2f0 - Add login form
+│ │
+│ ◯ add-user-authentication
+│ │  just now
+│ │  a9a51d8 - Add user authentication
+│ │
+├─┘
 │
 ◯ main
 """
@@ -162,9 +170,15 @@ def test_adopt_existing_branch_and_stack(
     assert result.exit_code == 0
     assert result.stdout == snapshot(
         """\
-◉ extend-feature  ← you are here
-│
-◯ feature-base
+│ ◉ extend-feature (current)
+│ │  just now
+│ │  1482e30 - Extend feature
+│ │
+│ ◯ feature-base
+│ │  just now
+│ │  2be4ce9 - Add feature base
+│ │
+├─┘
 │
 ◯ main
 """
@@ -217,9 +231,15 @@ def test_multiple_parallel_stacks(
     assert result.stdout == snapshot(
         """\
 │ ◯ feature-one
+│ │  just now
+│ │  683561c - Feature one
 │ │
 ├─┘
-◉ feature-two  ← you are here
+│ ◉ feature-two (current)
+│ │  just now
+│ │  bd1f183 - Feature two
+│ │
+├─┘
 │
 ◯ main
 """
@@ -240,11 +260,19 @@ def test_multiple_parallel_stacks(
     assert result.stdout == snapshot(
         """\
 │ ◯ feature-one
+│ │  just now
+│ │  683561c - Feature one
 │ │
 ├─┘
-◉ extend-feature-two  ← you are here
-│
-◯ feature-two
+│ ◉ extend-feature-two (current)
+│ │  just now
+│ │  3d0f615 - Extend feature two
+│ │
+│ ◯ feature-two
+│ │  just now
+│ │  bd1f183 - Feature two
+│ │
+├─┘
 │
 ◯ main
 """
