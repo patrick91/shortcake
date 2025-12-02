@@ -358,6 +358,15 @@ def sync(
             typer.echo(f"  • {name}")
         return
 
+    # Check for uncommitted changes before rebasing
+    if git.has_uncommitted_changes():
+        print_error(
+            "You have uncommitted changes. Please commit or stash them before syncing.\n"
+            "  To stash: git stash\n"
+            "  To discard: git checkout -- <file>"
+        )
+        raise typer.Exit(1)
+
     # Save current branch to return to later
     original_branch = git.get_current_branch()
 

@@ -433,6 +433,16 @@ class GitRepo:
             # If HEAD doesn't exist (no commits yet), check if index has entries
             return len(self.repo.index.entries) > 0
 
+    def has_uncommitted_changes(self) -> bool:
+        """Check if the working tree is dirty (has uncommitted changes).
+
+        This includes both staged and unstaged changes.
+
+        Returns:
+            True if there are uncommitted changes, False otherwise.
+        """
+        return self.repo.is_dirty(untracked_files=False)
+
     def get_staged_diff(self) -> str:
         """Get the diff of staged changes.
 

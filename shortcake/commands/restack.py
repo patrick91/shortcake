@@ -303,6 +303,15 @@ def restack(
             typer.echo(f"  {branch.name} → {branch.parent} ({status})")
         return
 
+    # Check for uncommitted changes before rebasing
+    if git.has_uncommitted_changes():
+        print_error(
+            "You have uncommitted changes. Please commit or stash them before restacking.\n"
+            "  To stash: git stash\n"
+            "  To discard: git checkout -- <file>"
+        )
+        raise typer.Exit(1)
+
     typer.echo(f"\nChecking {len(all_branches)} branch(es)...")
 
     # Rebase each branch in order, but only if needed
