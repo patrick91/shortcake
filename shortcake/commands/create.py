@@ -53,7 +53,9 @@ def _get_claude_command() -> list[str]:
     return ["claude"]  # Fallback
 
 
-def _generate_commit_message_with_claude(diff: str, use_gitmoji: bool = False) -> str | None:
+def _generate_commit_message_with_claude(
+    diff: str, use_gitmoji: bool = False
+) -> tuple[str | None, str | None]:
     """Generate a commit message using Claude CLI.
 
     Args:
@@ -61,7 +63,7 @@ def _generate_commit_message_with_claude(diff: str, use_gitmoji: bool = False) -
         use_gitmoji: If True, include a gitmoji prefix
 
     Returns:
-        The generated commit message, or None if generation failed
+        Tuple of (message, error): message if successful, error string if failed
     """
     gitmoji_instruction = ""
     if use_gitmoji:
@@ -89,10 +91,14 @@ Diff:
             timeout=60,
         )
         if result.returncode == 0:
-            return result.stdout.strip()
-        return None
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return None
+            return result.stdout.strip(), None
+        # Return stderr or a generic error message
+        error_msg = result.stderr.strip() if result.stderr else "Claude CLI returned an error"
+        return None, error_msg
+    except subprocess.TimeoutExpired:
+        return None, "Claude CLI timed out (60s limit)"
+    except FileNotFoundError:
+        return None, "Claude CLI not found"
 
 
 def _generate_branch_name(commit_message: str, keep_emoji: bool = False) -> str:
@@ -150,7 +156,10 @@ def create(
         False, "--gitmoji", "--gm", help="Select a gitmoji to prefix the commit message"
     ),
     claude: bool = typer.Option(
-        False, "--claude", "-c", help="Use Claude to generate the commit message from staged changes"
+        False,
+        "--claude",
+        "-c",
+        help="Use Claude to generate the commit message from staged changes",
     ),
 ):
     """Create a stack with a new branch and commit.
@@ -194,10 +203,10 @@ def create(
 
         typer.echo("Generating commit message with Claude...")
         diff = git.get_staged_diff()
-        generated_message = _generate_commit_message_with_claude(diff, use_gitmoji=gitmoji)
+        generated_message, error = _generate_commit_message_with_claude(diff, use_gitmoji=gitmoji)
 
         if not generated_message:
-            print_error("Failed to generate commit message with Claude")
+            print_error(f"Failed to generate commit message with Claude: {error}")
             raise typer.Exit(1)
 
         typer.echo(f"Generated: {generated_message}")
