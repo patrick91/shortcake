@@ -92,8 +92,10 @@ Diff:
         )
         if result.returncode == 0:
             return result.stdout.strip(), None
-        # Return stderr or a generic error message
-        error_msg = result.stderr.strip() if result.stderr else "Claude CLI returned an error"
+        # Return stderr, stdout, or include return code for debugging
+        error_msg = result.stderr.strip() or result.stdout.strip()
+        if not error_msg:
+            error_msg = f"Claude CLI exited with code {result.returncode}"
         return None, error_msg
     except subprocess.TimeoutExpired:
         return None, "Claude CLI timed out (60s limit)"
