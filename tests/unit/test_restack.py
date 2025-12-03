@@ -252,3 +252,67 @@ def test_restack_after_main_updated(
     )
     assert "Update main" in log.stdout
     assert "Add feature" in log.stdout
+
+
+def test_restack_fast_forwards_branch_behind_remote(
+    isolated_git_repo: Path, isolated_config: Path, remote_repo: Path
+):
+    """Test that restack fast-forwards local branches that are behind their remote counterpart."""
+    git = GitRepo()
+
+    # Set up remote
+    git.add_remote("origin", str(remote_repo))
+    subprocess.run(["git", "push", "-u", "origin", "main"], cwd=isolated_git_repo, check=True)
+
+    # Create a tracked branch and push it
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature content")
+    git.add_files("feature.txt")
+    git.commit("Add feature")
+
+    main_sha = git.get_commit_sha("main")
+    add_notes(
+        isolated_git_repo,
+        json.dumps({"parent": "main", "parent_revision": main_sha}),
+        git.get_current_branch(),
+    )
+    subprocess.run(["git", "push", "-u", "origin", "feature"], cwd=isolated_git_repo, check=True)
+
+    local_sha_before = git.get_commit_sha("feature")
+
+    # Simulate a commit added to the remote branch (e.g., via GitHub UI "Update branch")
+    # We do this by adding a commit directly to origin/feature in the bare repo
+    # Create a temporary clone to add the commit
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        clone_path = Path(tmpdir) / "clone"
+        subprocess.run(["git", "clone", str(remote_repo), str(clone_path)], check=True)
+        subprocess.run(["git", "checkout", "feature"], cwd=clone_path, check=True)
+        (clone_path / "remote-update.txt").write_text("remote update")
+        subprocess.run(["git", "add", "remote-update.txt"], cwd=clone_path, check=True)
+        subprocess.run(["git", "commit", "-m", "Remote update"], cwd=clone_path, check=True)
+        subprocess.run(["git", "push", "origin", "feature"], cwd=clone_path, check=True)
+
+    # Verify local is now behind remote
+    subprocess.run(["git", "fetch", "origin"], cwd=isolated_git_repo, check=True)
+    remote_sha = git.get_commit_sha("origin/feature")
+    assert local_sha_before != remote_sha
+
+    # Run restack - should fast-forward the branch
+    result = runner.invoke(app, ["restack"])
+    assert result.exit_code == 0
+    assert "Fast-forwarded feature to match remote" in result.output
+
+    # Verify local branch now matches remote
+    local_sha_after = git.get_commit_sha("feature")
+    assert local_sha_after == remote_sha
+
+    # Verify the remote commit is in history
+    log = subprocess.run(
+        ["git", "log", "--oneline"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+    assert "Remote update" in log.stdout

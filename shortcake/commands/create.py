@@ -7,7 +7,7 @@ import typer
 
 from shortcake import config
 from shortcake.git import GitError, GitRepo
-from shortcake.metadata import update_branch_metadata
+from shortcake.metadata import get_children, update_branch_metadata
 from shortcake.output import print_error
 
 app = typer.Typer()
@@ -163,6 +163,12 @@ def create(
         "-c",
         help="Use Claude to generate the commit message from staged changes",
     ),
+    insert: bool = typer.Option(
+        False,
+        "--insert",
+        "-i",
+        help="Insert the new branch in the middle of the stack, updating children to point to it",
+    ),
 ):
     """Create a stack with a new branch and commit.
 
@@ -180,6 +186,10 @@ def create(
     The generated message will be pre-filled in your editor for review before committing.
     This requires the 'claude' command to be installed and authenticated.
     Can be combined with --gitmoji to include an emoji prefix.
+
+    Use --insert (or -i) to insert the new branch in the middle of the stack.
+    Any branches that were children of the current branch will be updated to
+    have the new branch as their parent. Use 'restack' afterwards to rebase them.
     """
     # Get keep_emoji setting from config
     keep_emoji = config.get_keep_emoji()
@@ -303,6 +313,20 @@ def create(
 
         typer.echo(f"Created and switched to branch: {branch_name}")
         typer.echo(f"Created commit: {commit_message}")
+
+        # Handle --insert: update children of original branch to point to new branch
+        if insert and original_branch:
+            children = get_children(original_branch)
+            # Filter out the newly created branch (it was just added as a child)
+            children = [c for c in children if c != branch_name]
+            if children:
+                typer.echo(
+                    f"\nUpdating {len(children)} child branch(es) to point to '{branch_name}':"
+                )
+                for child in children:
+                    update_branch_metadata(child, parent=branch_name)
+                    typer.echo(f"  • {child}: parent → {branch_name}")
+                typer.echo("\nRun 'restack' to rebase the child branches onto the new branch.")
 
     except GitError as e:
         # Clean up: switch back to original branch and delete temp branch if it was created

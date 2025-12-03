@@ -97,15 +97,15 @@ Created commit: Add user authentication
         """\
 │ ◉ add-password-validation (current)
 │ │  just now
-│ │  04158ff - Add password validation
+│ │  3bc47f5 - Add password validation
 │ │
 │ ◯ add-login-form
 │ │  just now
-│ │  b6ba2f0 - Add login form
+│ │  cc3f641 - Add login form
 │ │
 │ ◯ add-user-authentication
 │ │  just now
-│ │  a9a51d8 - Add user authentication
+│ │  669315a - Add user authentication
 │ │
 ├─┘
 │
@@ -172,11 +172,11 @@ def test_adopt_existing_branch_and_stack(
         """\
 │ ◉ extend-feature (current)
 │ │  just now
-│ │  1482e30 - Extend feature
+│ │  523d894 - Extend feature
 │ │
 │ ◯ feature-base
 │ │  just now
-│ │  2be4ce9 - Add feature base
+│ │  b91ed3c - Add feature base
 │ │
 ├─┘
 │
@@ -232,12 +232,12 @@ def test_multiple_parallel_stacks(
         """\
 │ ◯ feature-one
 │ │  just now
-│ │  683561c - Feature one
+│ │  18ef8b0 - Feature one
 │ │
 ├─┘
 │ ◉ feature-two (current)
 │ │  just now
-│ │  bd1f183 - Feature two
+│ │  5937f74 - Feature two
 │ │
 ├─┘
 │
@@ -261,16 +261,16 @@ def test_multiple_parallel_stacks(
         """\
 │ ◯ feature-one
 │ │  just now
-│ │  683561c - Feature one
+│ │  18ef8b0 - Feature one
 │ │
 ├─┘
 │ ◉ extend-feature-two (current)
 │ │  just now
-│ │  3d0f615 - Extend feature two
+│ │  c329d50 - Extend feature two
 │ │
 │ ◯ feature-two
 │ │  just now
-│ │  bd1f183 - Feature two
+│ │  5937f74 - Feature two
 │ │
 ├─┘
 │
