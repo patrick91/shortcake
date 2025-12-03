@@ -25,11 +25,7 @@ def _pick_pr_interactive(prs: list[PullRequest]) -> PullRequest | None:
         return None
 
     options = [
-        Option({
-            "value": pr,
-            "name": f"#{pr.number} {pr.title} ({pr.head_ref})"
-        })
-        for pr in prs
+        Option({"value": pr, "name": f"#{pr.number} {pr.title} ({pr.head_ref})"}) for pr in prs
     ]
 
     result = Menu(
@@ -172,20 +168,16 @@ def _create_or_update_local_branch(git: GitRepo, branch: str) -> bool:
 @app.command()
 def get(
     target: str | None = typer.Argument(
-        None,
-        help="Branch name or PR number to fetch (interactive if omitted)"
+        None, help="Branch name or PR number to fetch (interactive if omitted)"
     ),
     mine: bool = typer.Option(
-        False, "--mine", "-m",
-        help="Only show PRs authored by you (interactive mode)"
+        False, "--mine", "-m", help="Only show PRs authored by you (interactive mode)"
     ),
     downstack_only: bool = typer.Option(
-        False, "--downstack", "-d",
-        help="Only fetch downstack branches (don't sync upstack)"
+        False, "--downstack", "-d", help="Only fetch downstack branches (don't sync upstack)"
     ),
     force: bool = typer.Option(
-        False, "--force", "-f",
-        help="Overwrite local branches with remote versions"
+        False, "--force", "-f", help="Overwrite local branches with remote versions"
     ),
 ):
     """Fetch a branch and its stack from remote and adopt them.
@@ -350,19 +342,19 @@ def get(
                 continue
 
         # Create or update local branch
-        created = _create_or_update_local_branch(git, branch)
+        _create_or_update_local_branch(git, branch)
 
-        # Get parent revision for metadata - use the actual merge-base
-        # This is the commit where the branch diverged from parent, not parent's current HEAD
-        # This allows restack to detect when parent has moved forward
+        # Get parent revision for metadata
+        # Use merge-base between origin/branch (not local) and parent_ref
+        # This ensures we get the correct divergence point from freshly fetched data
         if parent == main_branch:
             parent_ref = f"origin/{main_branch}" if git.has_remote("origin") else main_branch
         else:
-            parent_ref = parent
+            parent_ref = f"origin/{parent}" if git.has_remote("origin") else parent
 
         try:
-            # Use merge-base to find where the branch actually diverged from parent
-            parent_revision = git.get_merge_base(branch, parent_ref)
+            # Use origin/branch to ensure we're using freshly fetched data
+            parent_revision = git.get_merge_base(f"origin/{branch}", parent_ref)
         except GitError:
             parent_revision = None
 
