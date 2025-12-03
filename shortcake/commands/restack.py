@@ -216,6 +216,20 @@ def restack(
         try:
             git.rebase_continue()
             typer.echo("Rebase continued successfully")
+
+            # Update parent_revision now that rebase is complete
+            current_branch = git.get_current_branch()
+            metadata = get_branch_metadata(current_branch)
+            parent = metadata.get("parent")
+            if parent:
+                # Use remote ref for trunk branches
+                parent_ref = _get_remote_ref(git, parent)
+                try:
+                    parent_sha = git.get_commit_sha(parent_ref)
+                    update_branch_metadata(current_branch, parent_revision=parent_sha)
+                except GitError:
+                    pass  # Parent ref doesn't exist, skip update
+
             return
         except GitError as e:
             print_error(str(e))
