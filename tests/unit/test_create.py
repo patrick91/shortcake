@@ -786,6 +786,7 @@ def test_create_with_claude_and_gitmoji(
             # Check that gitmoji instruction is in the prompt
             prompt = cmd[3] if len(cmd) > 3 else ""
             if "gitmoji" in prompt.lower():
+
                 class MockResult:
                     returncode = 0
                     stdout = "✨ Add new feature"
@@ -830,6 +831,7 @@ def test_create_with_claude_generation_fails(
 
     def mock_run(cmd, *args, **kwargs):
         if cmd and cmd[0] == "claude":
+
             class MockResult:
                 returncode = 1
                 stdout = ""
@@ -845,3 +847,75 @@ def test_create_with_claude_generation_fails(
     assert result.exit_code == 1
     # Error messages go to stderr via rich console
     assert "Failed to generate commit message with Claude" in result.output
+
+
+def test_create_insert_updates_children(
+    isolated_git_repo: Path, isolated_config: Path, git_editor_script: GitEditorScript
+):
+    """Test that --insert updates children of the current branch to point to the new branch."""
+    import json
+
+    from shortcake.git import GitRepo
+    from tests.helpers.git_helpers import get_notes
+
+    git = GitRepo()
+
+    # Create first branch (parent)
+    (isolated_git_repo / "parent.txt").write_text("parent")
+    git_editor_script("Add parent feature")
+    stage_all(isolated_git_repo)
+    result = runner.invoke(app, ["create"])
+    assert result.exit_code == 0
+    parent_branch = "add-parent-feature"
+
+    # Create child branch
+    (isolated_git_repo / "child.txt").write_text("child")
+    git_editor_script("Add child feature")
+    stage_all(isolated_git_repo)
+    result = runner.invoke(app, ["create"])
+    assert result.exit_code == 0
+    child_branch = "add-child-feature"
+
+    # Go back to parent branch
+    git.checkout_branch(parent_branch)
+
+    # Now insert a new branch between parent and child
+    (isolated_git_repo / "middle.txt").write_text("middle")
+    git_editor_script("Add middle feature")
+    stage_all(isolated_git_repo)
+    result = runner.invoke(app, ["create", "--insert"])
+    assert result.exit_code == 0
+    middle_branch = "add-middle-feature"
+
+    assert f"Created and switched to branch: {middle_branch}" in result.stdout
+    assert f"Updating 1 child branch(es) to point to '{middle_branch}'" in result.stdout
+    assert f"{child_branch}: parent → {middle_branch}" in result.stdout
+
+    # Verify the child branch now points to the middle branch
+    notes = get_notes(isolated_git_repo, child_branch)
+    assert notes is not None
+    metadata = json.loads(notes)
+    assert metadata.get("parent") == middle_branch
+
+
+def test_create_insert_no_children(
+    isolated_git_repo: Path, isolated_config: Path, git_editor_script: GitEditorScript
+):
+    """Test that --insert works even when there are no children (just creates normally)."""
+    # Create first branch
+    (isolated_git_repo / "feature.txt").write_text("feature")
+    git_editor_script("Add feature")
+    stage_all(isolated_git_repo)
+    result = runner.invoke(app, ["create"])
+    assert result.exit_code == 0
+
+    # Insert another branch (no children to update)
+    (isolated_git_repo / "another.txt").write_text("another")
+    git_editor_script("Add another feature")
+    stage_all(isolated_git_repo)
+    result = runner.invoke(app, ["create", "--insert"])
+    assert result.exit_code == 0
+
+    # Should succeed without any child update messages
+    assert "Created and switched to branch: add-another-feature" in result.stdout
+    assert "child branch" not in result.stdout

@@ -282,6 +282,54 @@ def restack(
             except GitError as e:
                 print_warning(f"Failed to fetch: {e}")
 
+    # Fast-forward branches that are behind their remote counterparts
+    # This handles cases where the branch was updated via GitHub UI or another machine
+    if git.has_remote("origin"):
+        all_metadata = get_all_branch_metadata()
+        branches_to_check = [current_branch]
+        # Also check parent branches in the stack
+        branch = current_branch
+        while branch:
+            meta = all_metadata.get(branch, {})
+            parent = meta.get("parent")
+            if parent and not git.is_trunk_branch(parent) and git.branch_exists(parent):
+                branches_to_check.append(parent)
+                branch = parent
+            else:
+                break
+
+        for branch_name in branches_to_check:
+            remote_ref = f"origin/{branch_name}"
+            try:
+                remote_sha = git.get_commit_sha(remote_ref)
+                local_sha = git.get_commit_sha(branch_name)
+
+                if remote_sha != local_sha and git.is_ancestor(local_sha, remote_sha):
+                    if dry_run:
+                        typer.echo(f"Would fast-forward {branch_name} to {remote_ref}")
+                    else:
+                        if branch_name == current_branch:
+                            git.merge_ff_only(remote_ref)
+                        else:
+                            git.update_ref(f"refs/heads/{branch_name}", remote_sha)
+                        typer.echo(f"Fast-forwarded {branch_name} to match remote")
+
+                        # Update metadata to reflect the new parent_revision from remote
+                        branch_meta = all_metadata.get(branch_name, {})
+                        parent = branch_meta.get("parent")
+                        if parent:
+                            parent_ref = _get_remote_ref(git, parent)
+                            try:
+                                new_parent_rev = git.get_merge_base(remote_sha, parent_ref)
+                                if new_parent_rev:
+                                    update_branch_metadata(
+                                        branch_name, parent_revision=new_parent_rev
+                                    )
+                            except GitError:
+                                pass
+            except GitError:
+                continue  # Remote branch doesn't exist
+
     # Check if parent branch exists - if not, suggest running sync
     parent = metadata.get("parent")
     if parent and not git.is_trunk_branch(parent):

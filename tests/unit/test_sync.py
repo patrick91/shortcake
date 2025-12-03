@@ -1,6 +1,7 @@
 """Tests for the sync command."""
 
 import json
+import subprocess
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -372,3 +373,60 @@ def test_sync_handles_stale_metadata(isolated_git_repo: Path, isolated_config: P
     assert result.exit_code == 0
     # Should report no branches since the only tracked one doesn't exist locally
     assert "No shortcake-managed branches found" in result.stdout
+
+
+def test_sync_fast_forwards_and_updates_metadata(
+    isolated_git_repo: Path, isolated_config: Path, remote_repo: Path
+):
+    """Test that sync fast-forwards branches and updates their metadata."""
+    import tempfile
+
+    git = GitRepo()
+
+    # Set up remote
+    git.add_remote("origin", str(remote_repo))
+    subprocess.run(["git", "push", "-u", "origin", "main"], cwd=isolated_git_repo, check=True)
+
+    # Create a tracked branch and push it
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature content")
+    git.add_files("feature.txt")
+    git.commit("Add feature")
+
+    main_sha = git.get_commit_sha("main")
+    add_notes(
+        isolated_git_repo,
+        json.dumps({"parent": "main", "parent_revision": main_sha}),
+        "feature",
+    )
+    subprocess.run(["git", "push", "-u", "origin", "feature"], cwd=isolated_git_repo, check=True)
+
+    local_sha_before = git.get_commit_sha("feature")
+
+    # Simulate a commit added to the remote branch via another clone
+    with tempfile.TemporaryDirectory() as tmpdir:
+        clone_path = Path(tmpdir) / "clone"
+        subprocess.run(["git", "clone", str(remote_repo), str(clone_path)], check=True)
+        subprocess.run(["git", "checkout", "feature"], cwd=clone_path, check=True)
+        (clone_path / "remote-update.txt").write_text("remote update")
+        subprocess.run(["git", "add", "remote-update.txt"], cwd=clone_path, check=True)
+        subprocess.run(["git", "commit", "-m", "Remote update"], cwd=clone_path, check=True)
+        subprocess.run(["git", "push", "origin", "feature"], cwd=clone_path, check=True)
+
+    # Run sync - should fast-forward the branch
+    result = runner.invoke(app, ["sync"])
+    assert result.exit_code == 0
+    assert "Fast-forwarded 1 branch(es)" in result.output
+
+    # Verify local branch now matches remote
+    subprocess.run(["git", "fetch", "origin"], cwd=isolated_git_repo, check=True)
+    remote_sha = git.get_commit_sha("origin/feature")
+    local_sha_after = git.get_commit_sha("feature")
+    assert local_sha_after == remote_sha
+    assert local_sha_after != local_sha_before
+
+    # Verify metadata was updated
+    notes = get_notes(isolated_git_repo, "feature")
+    assert notes is not None
+    metadata = json.loads(notes)
+    assert metadata.get("parent_revision") == main_sha  # Should still point to main

@@ -272,6 +272,22 @@ def sync(
                     else:
                         git.update_ref(f"refs/heads/{name}", remote_sha)
                     branches_updated.append(name)
+
+                    # Update metadata to reflect the new parent_revision from remote
+                    branch_meta = branches[name]
+                    parent = branch_meta.parent
+                    if parent:
+                        parent_ref = (
+                            f"origin/{parent}"
+                            if git.is_trunk_branch(parent) and git.has_remote("origin")
+                            else parent
+                        )
+                        try:
+                            new_parent_rev = git.get_merge_base(remote_sha, parent_ref)
+                            if new_parent_rev:
+                                update_branch_metadata(name, parent_revision=new_parent_rev)
+                        except GitError:
+                            pass
         except GitError:
             continue  # Remote branch doesn't exist
 
