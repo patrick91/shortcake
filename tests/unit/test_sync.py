@@ -350,3 +350,25 @@ def test_sync_multiple_consecutive_branches_merged(isolated_git_repo: Path, isol
     notes = get_notes(isolated_git_repo, "branch-c")
     assert notes is not None
     assert json.loads(notes).get("parent") == "main"
+
+
+def test_sync_handles_stale_metadata(isolated_git_repo: Path, isolated_config: Path):
+    """Test sync gracefully handles metadata for branches that no longer exist locally."""
+    git = GitRepo()
+
+    # Create and track a branch
+    git.create_branch("feature-1", checkout=True)
+    (isolated_git_repo / "f1.txt").write_text("f1")
+    git.add_files("f1.txt")
+    git.commit("Add f1")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature-1")
+
+    # Delete the branch manually (simulating external deletion)
+    git.checkout_branch("main")
+    git.delete_branch("feature-1", force=True)
+
+    # Metadata still exists but branch is gone - sync should not crash
+    result = runner.invoke(app, ["sync"])
+    assert result.exit_code == 0
+    # Should report no branches since the only tracked one doesn't exist locally
+    assert "No shortcake-managed branches found" in result.stdout

@@ -29,6 +29,8 @@ class SyncBranchInfo:
 def _get_tracked_branches(git: GitRepo) -> dict[str, SyncBranchInfo]:
     """Get all shortcake-tracked branches with their metadata.
 
+    Only includes branches that exist locally.
+
     Returns:
         Dict mapping branch name to SyncBranchInfo.
     """
@@ -36,6 +38,9 @@ def _get_tracked_branches(git: GitRepo) -> dict[str, SyncBranchInfo]:
     all_metadata = get_all_branch_metadata()
 
     for branch_name, metadata in all_metadata.items():
+        # Skip branches that don't exist locally (may have been manually deleted)
+        if not git.branch_exists(branch_name):
+            continue
         branches[branch_name] = SyncBranchInfo(
             name=branch_name,
             parent=metadata.get("parent"),
