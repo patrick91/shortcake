@@ -592,3 +592,89 @@ def test_is_tree_subset_partial_merge(isolated_git_repo: Path):
 
     # feature is NOT fully merged (missing file2.txt)
     assert not git.is_tree_subset("feature", "main")
+
+
+def test_is_squash_merged_detects_squash_merge(isolated_git_repo: Path):
+    """Test is_squash_merged detects squash-merged branches using git cherry."""
+    git = GitRepo(isolated_git_repo)
+
+    # Create a feature branch with a commit
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature content")
+    git.add_files("feature.txt")
+    git.commit("Add feature")
+
+    # Squash merge to main (same content, different commit)
+    git.checkout_branch("main")
+    (isolated_git_repo / "feature.txt").write_text("feature content")
+    git.add_files("feature.txt")
+    git.commit("Squashed feature")
+
+    # feature should be detected as squash-merged
+    assert git.is_squash_merged("feature", "main")
+
+
+def test_is_squash_merged_returns_false_when_not_merged(isolated_git_repo: Path):
+    """Test is_squash_merged returns False when branch is not merged."""
+    git = GitRepo(isolated_git_repo)
+
+    # Create a feature branch with a commit
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature content")
+    git.add_files("feature.txt")
+    git.commit("Add feature")
+
+    # Main doesn't have this change
+    git.checkout_branch("main")
+
+    # feature is NOT merged
+    assert not git.is_squash_merged("feature", "main")
+
+
+def test_is_squash_merged_with_multiple_commits(isolated_git_repo: Path):
+    """Test is_squash_merged works with multiple commits on feature branch."""
+    git = GitRepo(isolated_git_repo)
+
+    # Create a feature branch with multiple commits
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "file1.txt").write_text("content 1")
+    git.add_files("file1.txt")
+    git.commit("Add file1")
+
+    (isolated_git_repo / "file2.txt").write_text("content 2")
+    git.add_files("file2.txt")
+    git.commit("Add file2")
+
+    # Squash merge both files to main in one commit
+    git.checkout_branch("main")
+    (isolated_git_repo / "file1.txt").write_text("content 1")
+    (isolated_git_repo / "file2.txt").write_text("content 2")
+    git.add_files(["file1.txt", "file2.txt"])
+    git.commit("Squash merge feature")
+
+    # feature should be detected as squash-merged
+    assert git.is_squash_merged("feature", "main")
+
+
+def test_is_squash_merged_partial_merge(isolated_git_repo: Path):
+    """Test is_squash_merged returns False when only partially merged."""
+    git = GitRepo(isolated_git_repo)
+
+    # Create a feature branch with two commits
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "file1.txt").write_text("content 1")
+    git.add_files("file1.txt")
+    git.commit("Add file1")
+
+    (isolated_git_repo / "file2.txt").write_text("content 2")
+    git.add_files("file2.txt")
+    git.commit("Add file2")
+
+    # Only merge the first commit's changes to main
+    git.checkout_branch("main")
+    (isolated_git_repo / "file1.txt").write_text("content 1")
+    git.add_files("file1.txt")
+    git.commit("Partial squash")
+
+    # feature is NOT fully merged (missing file2 changes)
+    assert not git.is_squash_merged("feature", "main")

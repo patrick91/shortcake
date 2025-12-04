@@ -795,3 +795,109 @@ class GitRepo:
             return True
         except Exception:
             return False
+
+    def get_commit_range(self, base: str, head: str) -> list[str]:
+        """Get list of commit SHAs from base to head (exclusive of base).
+
+        Args:
+            base: The base commit/branch (exclusive).
+            head: The head commit/branch (inclusive).
+
+        Returns:
+            List of commit SHAs from base to head, oldest first.
+        """
+        try:
+            result = self.repo.git.rev_list(f"{base}..{head}", reverse=True)
+            if not result:
+                return []
+            return result.strip().split("\n")
+        except Exception:
+            return []
+
+    def commit_tree(self, tree: str, parent: str, message: str) -> str | None:
+        """Create a commit object from a tree with a given parent.
+
+        This is used for merge detection - it creates a synthetic commit
+        that can be compared against another branch.
+
+        Args:
+            tree: The tree object (e.g., "commit^{tree}").
+            parent: The parent commit SHA.
+            message: The commit message.
+
+        Returns:
+            The SHA of the new commit, or None on failure.
+        """
+        try:
+            result = self.repo.git.commit_tree(tree, "-p", parent, "-m", message)
+            return result.strip() if result else None
+        except Exception:
+            return None
+
+    def cherry(self, upstream: str, head: str, base: str) -> str | None:
+        """Run git cherry to check if commits are already in upstream.
+
+        git cherry outputs lines starting with:
+        - '-' if the commit is already in upstream (equivalent patch exists)
+        - '+' if the commit is NOT in upstream
+
+        Args:
+            upstream: The upstream branch to check against.
+            head: The head commit to check.
+            base: The base commit (limit).
+
+        Returns:
+            The output of git cherry, or None on failure.
+        """
+        try:
+            result = self.repo.git.cherry(upstream, head, base)
+            return result if result else None
+        except Exception:
+            return None
+
+    def is_squash_merged(self, branch: str, target: str) -> bool:
+        """Check if branch has been squash-merged into target using git cherry.
+
+        This algorithm (from Graphite/Charcoal) works by:
+        1. Getting all commits from branch (relative to merge-base)
+        2. For each commit, creating a test commit with cumulative changes
+        3. Using git cherry to check if equivalent changes exist in target
+        4. If ALL commits are detected as merged, the branch is squash-merged
+
+        Args:
+            branch: The branch to check.
+            target: The target branch (e.g., main/origin/main).
+
+        Returns:
+            True if branch is squash-merged into target.
+        """
+        try:
+            merge_base = self.get_merge_base(branch, target)
+            if not merge_base:
+                return False
+
+            # Get commits from merge-base to branch tip (oldest first)
+            branch_commits = self.get_commit_range(merge_base, branch)
+            if not branch_commits:
+                return False
+
+            # Walk through commits, checking if each is merged
+            current_base = merge_base
+            for commit in branch_commits:
+                # Create a test commit with the tree at this point
+                test_commit = self.commit_tree(f"{commit}^{{tree}}", current_base, "_")
+                if not test_commit:
+                    return False
+
+                # Check if equivalent changes exist in target
+                cherry_output = self.cherry(target, test_commit, current_base)
+                if cherry_output is not None and cherry_output.startswith("-"):
+                    # This commit's changes are in target, advance base
+                    current_base = commit
+                # else: changes not in target, keep current_base
+
+            # Branch is fully merged if we advanced through all commits
+            branch_sha = self.get_commit_sha(branch)
+            return current_base == branch_sha
+        except Exception:
+            return False

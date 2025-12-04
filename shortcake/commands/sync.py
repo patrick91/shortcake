@@ -55,7 +55,8 @@ def _is_branch_merged(git: GitRepo, branch: str, into: str = "main") -> bool:
 
     Handles both regular merges and squash merges:
     1. Regular/rebase merge: branch is an ancestor of target
-    2. Squash merge: branch's file changes are all present in target
+    2. Squash merge via tree comparison: branch's file state matches target
+    3. Squash merge via cherry: uses git cherry to detect equivalent patches
 
     Args:
         git: GitRepo instance.
@@ -72,8 +73,12 @@ def _is_branch_merged(git: GitRepo, branch: str, into: str = "main") -> bool:
     if git.is_ancestor(branch, into):
         return True
 
-    # Check for squash merge (branch's changes are in target)
-    return git.is_tree_subset(branch, into)
+    # Check for squash merge (branch's tree state matches target)
+    if git.is_tree_subset(branch, into):
+        return True
+
+    # Check for squash merge using git cherry (most reliable)
+    return git.is_squash_merged(branch, into)
 
 
 def _topological_sort(branches: dict[str, SyncBranchInfo]) -> list[str]:
