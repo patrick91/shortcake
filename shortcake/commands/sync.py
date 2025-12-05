@@ -245,11 +245,36 @@ def sync(
             except GitError as e:
                 print_warning(f"Failed to fetch: {e}")
 
+    # Fast-forward main branch if it's behind remote
+    main_updated = False
+    if git.has_remote("origin"):
+        remote_main = f"origin/{main_branch}"
+        try:
+            remote_sha = git.get_commit_sha(remote_main)
+            local_sha = git.get_commit_sha(main_branch)
+
+            if remote_sha != local_sha and git.is_ancestor(local_sha, remote_sha):
+                if dry_run:
+                    typer.echo(f"Would fast-forward {main_branch} to {remote_main}")
+                else:
+                    current_branch = git.get_current_branch()
+                    if current_branch == main_branch:
+                        git.merge_ff_only(remote_main)
+                    else:
+                        git.update_ref(f"refs/heads/{main_branch}", remote_sha)
+                    typer.echo(f"Fast-forwarded {main_branch} to {remote_main}")
+                    main_updated = True
+        except GitError:
+            pass  # Remote main doesn't exist or other issue
+
     # Get all tracked branches
     branches = _get_tracked_branches(git)
 
     if not branches:
-        typer.echo("No shortcake-managed branches found")
+        if main_updated:
+            typer.echo("Sync complete!")
+        else:
+            typer.echo("All branches are up to date - nothing to sync")
         return
 
     # Check for branches that are behind their remote and fast-forward them
@@ -322,7 +347,10 @@ def sync(
             merged_branches.append(name)
 
     if not merged_branches:
-        typer.echo("All branches are up to date - nothing to sync")
+        if main_updated or branches_updated:
+            typer.echo("Sync complete!")
+        else:
+            typer.echo("All branches are up to date - nothing to sync")
         return
 
     if dry_run:
