@@ -23,7 +23,7 @@ def test_sync_no_branches(isolated_git_repo: Path, isolated_config: Path):
     """Test sync when there are no tracked branches."""
     result = runner.invoke(app, ["sync"])
     assert result.exit_code == 0
-    assert "No shortcake-managed branches found" in result.stdout
+    assert "All branches are up to date - nothing to sync" in result.stdout
 
 
 def test_sync_all_up_to_date(isolated_git_repo: Path, isolated_config: Path):
@@ -371,8 +371,45 @@ def test_sync_handles_stale_metadata(isolated_git_repo: Path, isolated_config: P
     # Metadata still exists but branch is gone - sync should not crash
     result = runner.invoke(app, ["sync"])
     assert result.exit_code == 0
-    # Should report no branches since the only tracked one doesn't exist locally
-    assert "No shortcake-managed branches found" in result.stdout
+    # Should report all up to date since the only tracked branch doesn't exist locally
+    assert "All branches are up to date - nothing to sync" in result.stdout
+
+
+def test_sync_fast_forwards_main_branch(
+    isolated_git_repo: Path, isolated_config: Path, remote_repo: Path
+):
+    """Test that sync fast-forwards the main branch when it's behind origin."""
+    import tempfile
+
+    git = GitRepo()
+
+    # Set up remote and push main
+    git.add_remote("origin", str(remote_repo))
+    subprocess.run(["git", "push", "-u", "origin", "main"], cwd=isolated_git_repo, check=True)
+
+    local_sha_before = git.get_commit_sha("main")
+
+    # Simulate a commit added to main on the remote via another clone
+    with tempfile.TemporaryDirectory() as tmpdir:
+        clone_path = Path(tmpdir) / "clone"
+        subprocess.run(["git", "clone", str(remote_repo), str(clone_path)], check=True)
+        (clone_path / "remote-main-update.txt").write_text("remote main update")
+        subprocess.run(["git", "add", "remote-main-update.txt"], cwd=clone_path, check=True)
+        subprocess.run(["git", "commit", "-m", "Remote main update"], cwd=clone_path, check=True)
+        subprocess.run(["git", "push", "origin", "main"], cwd=clone_path, check=True)
+
+    # Run sync - should fast-forward the main branch
+    result = runner.invoke(app, ["sync"])
+    assert result.exit_code == 0
+    assert "Fast-forwarded main to origin/main" in result.output
+    assert "Sync complete" in result.output
+
+    # Verify local main now matches remote
+    subprocess.run(["git", "fetch", "origin"], cwd=isolated_git_repo, check=True)
+    remote_sha = git.get_commit_sha("origin/main")
+    local_sha_after = git.get_commit_sha("main")
+    assert local_sha_after == remote_sha
+    assert local_sha_after != local_sha_before
 
 
 def test_sync_fast_forwards_and_updates_metadata(
