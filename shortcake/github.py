@@ -43,6 +43,7 @@ class PullRequest:
     base_ref: str
     state: str
     author: str | None = None
+    merged: bool = False
 
 
 class GitHubClient:
@@ -220,7 +221,25 @@ class GitHubClient:
             head_ref=response["head"]["ref"],
             base_ref=response["base"]["ref"],
             state=response["state"],
+            merged=response.get("merged", False),
         )
+
+    def is_pr_merged(self, owner: str, repo: str, pr_number: int) -> bool:
+        """Check if a pull request has been merged.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            pr_number: PR number
+
+        Returns:
+            True if the PR has been merged
+        """
+        try:
+            pr = self.get_pull_request(owner, repo, pr_number)
+            return pr.merged
+        except GitHubError:
+            return False
 
     def get_pull_requests_for_branch(
         self, owner: str, repo: str, head: str, state: str = "open"
