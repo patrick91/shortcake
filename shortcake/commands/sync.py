@@ -6,6 +6,7 @@ import typer
 
 from shortcake import get_cli_name
 from shortcake.git import GitError, GitRepo
+from shortcake.github import GitHubClient, GitHubError, get_github_repo_info
 from shortcake.metadata import (
     delete_branch_metadata,
     get_all_branch_metadata,
@@ -50,10 +51,19 @@ def _get_tracked_branches(git: GitRepo) -> dict[str, SyncBranchInfo]:
     return branches
 
 
-def _is_branch_merged(git: GitRepo, branch: str, into: str = "main") -> bool:
+def _is_branch_merged(
+    git: GitRepo,
+    branch: str,
+    into: str = "main",
+    pr_number: int | None = None,
+    github_client: GitHubClient | None = None,
+    github_owner: str | None = None,
+    github_repo: str | None = None,
+) -> bool:
     """Check if a branch has been merged into another branch.
 
     Handles both regular merges and squash merges:
+    0. GitHub API check: if PR number is available, query GitHub directly
     1. Regular/rebase merge: branch is an ancestor of target
     2. Squash merge via tree comparison: branch's file state matches target
     3. Squash merge via cherry: uses git cherry to detect equivalent patches
@@ -62,12 +72,24 @@ def _is_branch_merged(git: GitRepo, branch: str, into: str = "main") -> bool:
         git: GitRepo instance.
         branch: The branch to check.
         into: The branch to check if merged into (default: main).
+        pr_number: Optional PR number associated with this branch.
+        github_client: Optional GitHubClient instance.
+        github_owner: Optional GitHub repo owner.
+        github_repo: Optional GitHub repo name.
 
     Returns:
         True if branch is merged into target.
     """
     if not git.branch_exists(branch):
         return True  # Branch was deleted, consider it merged
+
+    # Check GitHub API first if we have PR info (most reliable for squash merges)
+    if pr_number and github_client and github_owner and github_repo:
+        try:
+            if github_client.is_pr_merged(github_owner, github_repo, pr_number):
+                return True
+        except Exception:
+            pass  # Fall through to git-based detection
 
     # Check for regular merge (branch is ancestor of target)
     if git.is_ancestor(branch, into):
@@ -340,10 +362,24 @@ def sync(
         except GitError:
             pass  # Remote ref doesn't exist, use local
 
+    # Initialize GitHub client for PR-based merge detection
+    github_client: GitHubClient | None = None
+    github_owner: str | None = None
+    github_repo: str | None = None
+    try:
+        github_owner, github_repo = get_github_repo_info(git)
+        github_client = GitHubClient()
+    except (GitHubError, Exception):
+        pass  # GitHub not available, fall back to git-based detection
+
     # Find merged branches
+    all_metadata = get_all_branch_metadata()
     merged_branches: list[str] = []
     for name in branches:
-        if _is_branch_merged(git, name, merge_target):
+        pr_number = all_metadata.get(name, {}).get("pr_number")
+        if _is_branch_merged(
+            git, name, merge_target, pr_number, github_client, github_owner, github_repo
+        ):
             merged_branches.append(name)
 
     if not merged_branches:
