@@ -5,8 +5,10 @@ from dataclasses import dataclass
 import typer
 
 from shortcake import get_cli_name
+from shortcake.commands.sync import _is_branch_merged
 from shortcake.git import GitError, GitRepo
 from shortcake.metadata import (
+    delete_branch_metadata,
     get_all_branch_metadata,
     get_branch_metadata,
     get_children,
@@ -160,6 +162,44 @@ def _get_descendant_branches(branch: str) -> list[RestackBranchInfo]:
             queue.extend(get_children(child))
 
     return result
+
+
+def _cleanup_merged_branch(git: GitRepo, branch: str, main_branch: str) -> bool:
+    """Clean up a merged branch by updating children and deleting it.
+
+    Args:
+        git: GitRepo instance
+        branch: The merged branch to clean up
+        main_branch: The main/trunk branch name
+
+    Returns:
+        True if cleanup was successful, False otherwise
+    """
+    metadata = get_branch_metadata(branch)
+    parent = metadata.get("parent", main_branch)
+
+    # Update children to point to the merged branch's parent
+    children = get_children(branch)
+    for child in children:
+        # Get current parent revision from the parent (not the merged branch)
+        try:
+            parent_ref = f"origin/{parent}" if git.is_trunk_branch(parent) else parent
+            parent_sha = git.get_commit_sha(parent_ref)
+        except GitError:
+            parent_sha = None
+
+        update_branch_metadata(child, parent=parent, parent_revision=parent_sha)
+        typer.echo(f"  Updated {child}'s parent: {branch} → {parent}")
+
+    # Delete the branch
+    try:
+        git.delete_branch(branch)
+        delete_branch_metadata(branch)
+        typer.echo(f"  Deleted merged branch: {branch}")
+        return True
+    except GitError as e:
+        print_warning(f"Could not delete {branch}: {e}")
+        return False
 
 
 @app.command()
@@ -329,6 +369,32 @@ def restack(
                                 pass
             except GitError:
                 continue  # Remote branch doesn't exist
+
+    # Check for merged branches in the stack and prompt for cleanup
+    main_branch = git.get_main_branch()
+    merge_target = f"origin/{main_branch}" if git.has_remote("origin") else main_branch
+
+    # Check current branch first
+    if _is_branch_merged(git, current_branch, merge_target):
+        typer.echo(f"\nBranch '{current_branch}' appears to have been merged.")
+        if typer.confirm("Delete it and update children?", default=False):
+            _cleanup_merged_branch(git, current_branch, main_branch)
+            # Switch to main since current branch was deleted
+            git.checkout_branch(main_branch)
+            typer.echo(f"\nSwitched to {main_branch}")
+            return
+        else:
+            typer.echo("Skipping cleanup. You can run 'sc sync' later to clean up.")
+
+    # Check parent branches in the stack for merged status
+    parent = metadata.get("parent")
+    if parent and not git.is_trunk_branch(parent) and git.branch_exists(parent):
+        if _is_branch_merged(git, parent, merge_target):
+            typer.echo(f"\nParent branch '{parent}' appears to have been merged.")
+            if typer.confirm("Delete it and update children?", default=False):
+                _cleanup_merged_branch(git, parent, main_branch)
+                # Refresh metadata since parent changed
+                metadata = get_branch_metadata(current_branch)
 
     # Check if parent branch exists - if not, suggest running sync
     parent = metadata.get("parent")

@@ -5,7 +5,12 @@ from dataclasses import dataclass
 import typer
 
 from shortcake import get_cli_name
-from shortcake.commands.restack import _get_remote_ref, _needs_restack
+from shortcake.commands.restack import (
+    _cleanup_merged_branch,
+    _get_remote_ref,
+    _needs_restack,
+)
+from shortcake.commands.sync import _is_branch_merged
 from shortcake.git import GitError, GitRepo
 from shortcake.github import GitHubClient, GitHubError, get_github_repo_info
 from shortcake.metadata import (
@@ -290,6 +295,34 @@ def submit(
 
     if not branches:
         typer.echo("No branches to submit")
+        return
+
+    # Check for merged branches and prompt for cleanup
+    merge_target = f"origin/{main_branch}" if git.has_remote("origin") else main_branch
+    branches_to_remove: list[str] = []
+
+    for branch in branches:
+        if _is_branch_merged(git, branch.name, merge_target):
+            typer.echo(f"\nBranch '{branch.name}' appears to have been merged.")
+            if typer.confirm("Delete it and update children?", default=False):
+                if branch.name == current_branch:
+                    # Current branch is merged - clean up and switch to main
+                    _cleanup_merged_branch(git, branch.name, main_branch)
+                    git.checkout_branch(main_branch)
+                    typer.echo(f"\nSwitched to {main_branch}")
+                    return
+                else:
+                    _cleanup_merged_branch(git, branch.name, main_branch)
+                    branches_to_remove.append(branch.name)
+            else:
+                typer.echo("Skipping cleanup. You can run 'sc sync' later to clean up.")
+                branches_to_remove.append(branch.name)  # Still skip submitting it
+
+    # Remove merged branches from the list
+    branches = [b for b in branches if b.name not in branches_to_remove]
+
+    if not branches:
+        typer.echo("\nNo branches left to submit after cleanup.")
         return
 
     if dry_run:
