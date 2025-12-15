@@ -241,6 +241,23 @@ class GitHubClient:
         except GitHubError:
             return False
 
+    def is_pr_closed_unmerged(self, owner: str, repo: str, pr_number: int) -> bool:
+        """Check if a pull request was closed without being merged.
+
+        Args:
+            owner: Repository owner
+            repo: Repository name
+            pr_number: PR number
+
+        Returns:
+            True if the PR was closed without being merged
+        """
+        try:
+            pr = self.get_pull_request(owner, repo, pr_number)
+            return pr.state == "closed" and not pr.merged
+        except GitHubError:
+            return False
+
     def get_pull_requests_for_branch(
         self, owner: str, repo: str, head: str, state: str = "open"
     ) -> list[PullRequest]:

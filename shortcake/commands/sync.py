@@ -11,6 +11,7 @@ from shortcake.metadata import (
     delete_branch_metadata,
     get_all_branch_metadata,
     get_branch_metadata,
+    get_children,
     update_branch_metadata,
 )
 from shortcake.output import print_error, print_warning
@@ -134,6 +135,32 @@ def _is_branch_merged(
 
     # Check for squash merge using git cherry (most reliable)
     return git.is_squash_merged(branch, into)
+
+
+def _is_pr_closed_unmerged(
+    pr_number: int | None,
+    github_client: GitHubClient | None,
+    github_owner: str | None,
+    github_repo: str | None,
+) -> bool:
+    """Check if a branch's PR was closed without being merged.
+
+    Args:
+        pr_number: PR number associated with this branch.
+        github_client: GitHubClient instance.
+        github_owner: GitHub repo owner.
+        github_repo: GitHub repo name.
+
+    Returns:
+        True if the PR was closed without being merged.
+    """
+    if not pr_number or not github_client or not github_owner or not github_repo:
+        return False
+
+    try:
+        return github_client.is_pr_closed_unmerged(github_owner, github_repo, pr_number)
+    except Exception:
+        return False
 
 
 def _topological_sort(branches: dict[str, SyncBranchInfo]) -> list[str]:
@@ -405,17 +432,22 @@ def sync(
     except (GitHubError, Exception):
         pass  # GitHub not available, fall back to git-based detection
 
-    # Find merged branches
+    # Find merged branches and closed (unmerged) PRs
     all_metadata = get_all_branch_metadata()
     merged_branches: list[str] = []
+    closed_branches: list[str] = []  # PRs closed without merging
     for name in branches:
         pr_number = all_metadata.get(name, {}).get("pr_number")
         if _is_branch_merged(
             git, name, merge_target, pr_number, github_client, github_owner, github_repo
         ):
             merged_branches.append(name)
+        elif _is_pr_closed_unmerged(pr_number, github_client, github_owner, github_repo):
+            # Only clean up closed branches that have no children
+            if not get_children(name):
+                closed_branches.append(name)
 
-    if not merged_branches:
+    if not merged_branches and not closed_branches:
         if main_updated or branches_updated:
             typer.echo("Sync complete!")
         else:
@@ -423,10 +455,16 @@ def sync(
         return
 
     if dry_run:
-        typer.echo("Detected merged branches:")
-        for name in merged_branches:
-            typer.echo(f"  ✓ {name}")
-        typer.echo()
+        if merged_branches:
+            typer.echo("Detected merged branches:")
+            for name in merged_branches:
+                typer.echo(f"  ✓ {name}")
+            typer.echo()
+        if closed_branches:
+            typer.echo("Detected closed (unmerged) PRs:")
+            for name in closed_branches:
+                typer.echo(f"  ✗ {name}")
+            typer.echo()
 
     # Find branches that need rebasing (their parent was merged or deleted)
     # rebase_target is origin/main if available, otherwise main
@@ -461,7 +499,7 @@ def sync(
         if dry_run:
             typer.echo("No branches need rebasing")
         else:
-            typer.echo("No branches need rebasing - cleaning up merged branches...")
+            typer.echo("No branches need rebasing - cleaning up branches...")
 
         # Clean up merged branches
         for name in merged_branches:
@@ -470,6 +508,14 @@ def sync(
             else:
                 if _delete_merged_branch(git, name, main_branch):
                     typer.echo(f"Deleted merged branch: {name}")
+
+        # Clean up closed (unmerged) branches
+        for name in closed_branches:
+            if dry_run:
+                typer.echo(f"Would delete closed branch: {name}")
+            else:
+                if _delete_merged_branch(git, name, main_branch):
+                    typer.echo(f"Deleted closed branch: {name}")
         return
 
     # Sort branches to rebase in topological order
@@ -490,9 +536,14 @@ def sync(
         for branch, old_parent, new_parent in branches_to_rebase_sorted:
             typer.echo(f"  • {branch}: {old_parent} → {new_parent}")
         typer.echo()
-        typer.echo("Would delete merged branches:")
-        for name in merged_branches:
-            typer.echo(f"  • {name}")
+        if merged_branches:
+            typer.echo("Would delete merged branches:")
+            for name in merged_branches:
+                typer.echo(f"  • {name}")
+        if closed_branches:
+            typer.echo("Would delete closed branches:")
+            for name in closed_branches:
+                typer.echo(f"  • {name}")
         return
 
     # Check for uncommitted changes before rebasing
@@ -558,17 +609,25 @@ def sync(
         typer.echo(f"  • {branch}: parent → {parent_name}")
 
     # Delete merged branches
-    typer.echo("\nCleaning up merged branches:")
-    for name in merged_branches:
-        if _delete_merged_branch(git, name, main_branch):
-            typer.echo(f"  • Deleted: {name}")
+    if merged_branches:
+        typer.echo("\nCleaning up merged branches:")
+        for name in merged_branches:
+            if _delete_merged_branch(git, name, main_branch):
+                typer.echo(f"  • Deleted: {name}")
+
+    # Delete closed (unmerged) branches
+    if closed_branches:
+        typer.echo("\nCleaning up closed branches:")
+        for name in closed_branches:
+            if _delete_merged_branch(git, name, main_branch):
+                typer.echo(f"  • Deleted: {name}")
 
     # Return to original branch if it still exists
     try:
-        if original_branch in merged_branches:
-            # Original branch was merged, switch to main
+        if original_branch in merged_branches or original_branch in closed_branches:
+            # Original branch was deleted, switch to main
             git.checkout_branch(main_branch)
-            typer.echo(f"\nSwitched to {main_branch} (original branch was merged)")
+            typer.echo(f"\nSwitched to {main_branch} (original branch was deleted)")
         elif git.branch_exists(original_branch):
             git.checkout_branch(original_branch)
     except GitError:
