@@ -125,6 +125,78 @@ class GitRepo:
         except Exception as e:
             raise GitError(f"Failed to delete branch '{name}': {e}") from e
 
+    def get_worktree_for_branch(self, branch: str) -> Path | None:
+        """Get the worktree path where a branch is checked out.
+
+        Args:
+            branch: The branch name to check.
+
+        Returns:
+            The worktree path if the branch is checked out in a worktree, None otherwise.
+        """
+        try:
+            result = subprocess.run(
+                ["git", "worktree", "list", "--porcelain"],
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=self.working_dir,
+            )
+
+            worktree_path = None
+            for line in result.stdout.splitlines():
+                if line.startswith("worktree "):
+                    worktree_path = Path(line[9:])
+                elif line.startswith("branch refs/heads/"):
+                    worktree_branch = line[18:]
+                    if worktree_branch == branch:
+                        return worktree_path
+
+            return None
+        except subprocess.CalledProcessError:
+            return None
+
+    def checkout_in_worktree(self, worktree_path: Path, branch: str) -> None:
+        """Checkout a branch in a specific worktree.
+
+        If the branch is already checked out elsewhere, detaches HEAD at the
+        branch's commit instead.
+
+        Args:
+            worktree_path: The path to the worktree.
+            branch: The branch to checkout.
+
+        Raises:
+            GitError: If checkout fails.
+        """
+        try:
+            subprocess.run(
+                ["git", "checkout", branch],
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=worktree_path,
+            )
+        except subprocess.CalledProcessError as e:
+            # If branch is already checked out elsewhere, detach HEAD instead
+            if "already used by worktree" in e.stderr or "already checked out" in e.stderr:
+                try:
+                    subprocess.run(
+                        ["git", "checkout", "--detach", branch],
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                        cwd=worktree_path,
+                    )
+                    return
+                except subprocess.CalledProcessError as e2:
+                    raise GitError(
+                        f"Failed to detach HEAD at '{branch}' in worktree '{worktree_path}': {e2.stderr}"
+                    ) from e2
+            raise GitError(
+                f"Failed to checkout '{branch}' in worktree '{worktree_path}': {e.stderr}"
+            ) from e
+
     def add_files(self, paths: list[str] | str) -> None:
         """Stage files to the index.
 

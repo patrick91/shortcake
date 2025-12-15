@@ -18,6 +18,39 @@ from shortcake.output import print_error, print_warning
 app = typer.Typer()
 
 
+def _delete_merged_branch(git: GitRepo, branch: str, main_branch: str) -> bool:
+    """Delete a merged branch, handling worktree checkouts.
+
+    If the branch is checked out in a worktree, switches that worktree
+    to the main branch first.
+
+    Args:
+        git: GitRepo instance.
+        branch: The branch to delete.
+        main_branch: The main branch to switch worktrees to.
+
+    Returns:
+        True if branch was deleted successfully, False otherwise.
+    """
+    # Check if branch is checked out in a worktree
+    worktree_path = git.get_worktree_for_branch(branch)
+    if worktree_path:
+        try:
+            git.checkout_in_worktree(worktree_path, main_branch)
+            typer.echo(f"  Switched worktree at {worktree_path} to {main_branch}")
+        except GitError as e:
+            print_warning(f"Could not switch worktree at {worktree_path}: {e}")
+            return False
+
+    try:
+        git.delete_branch(branch)
+        delete_branch_metadata(branch)
+        return True
+    except GitError as e:
+        print_warning(f"Could not delete {branch}: {e}")
+        return False
+
+
 @dataclass
 class SyncBranchInfo:
     """Information about a branch for syncing."""
@@ -435,12 +468,8 @@ def sync(
             if dry_run:
                 typer.echo(f"Would delete merged branch: {name}")
             else:
-                try:
-                    git.delete_branch(name)
-                    delete_branch_metadata(name)
+                if _delete_merged_branch(git, name, main_branch):
                     typer.echo(f"Deleted merged branch: {name}")
-                except GitError as e:
-                    print_warning(f"Could not delete {name}: {e}")
         return
 
     # Sort branches to rebase in topological order
@@ -531,12 +560,8 @@ def sync(
     # Delete merged branches
     typer.echo("\nCleaning up merged branches:")
     for name in merged_branches:
-        try:
-            git.delete_branch(name)
-            delete_branch_metadata(name)
+        if _delete_merged_branch(git, name, main_branch):
             typer.echo(f"  • Deleted: {name}")
-        except GitError as e:
-            print_warning(f"Could not delete {name}: {e}")
 
     # Return to original branch if it still exists
     try:

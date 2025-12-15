@@ -678,3 +678,117 @@ def test_is_squash_merged_partial_merge(isolated_git_repo: Path):
 
     # feature is NOT fully merged (missing file2 changes)
     assert not git.is_squash_merged("feature", "main")
+
+
+def test_get_worktree_for_branch_no_worktrees(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    # No worktrees besides the main one
+    result = git.get_worktree_for_branch("main")
+    # Main working dir is technically a worktree, but the branch being checked out
+    # in the main worktree should still be found
+    assert result == isolated_git_repo or result is None
+
+
+def test_get_worktree_for_branch_nonexistent_branch(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    result = git.get_worktree_for_branch("nonexistent")
+    assert result is None
+
+
+def test_get_worktree_for_branch_finds_worktree(isolated_git_repo: Path, tmp_path: Path):
+    import subprocess
+
+    git = GitRepo(isolated_git_repo)
+
+    # Create a branch
+    git.create_branch("feature", checkout=False)
+
+    # Create a worktree for that branch
+    worktree_path = tmp_path / "feature-worktree"
+    subprocess.run(
+        ["git", "worktree", "add", str(worktree_path), "feature"],
+        cwd=isolated_git_repo,
+        check=True,
+        capture_output=True,
+    )
+
+    # Should find the worktree
+    result = git.get_worktree_for_branch("feature")
+    assert result == worktree_path
+
+    # Clean up
+    subprocess.run(
+        ["git", "worktree", "remove", str(worktree_path)],
+        cwd=isolated_git_repo,
+        check=True,
+        capture_output=True,
+    )
+
+
+def test_checkout_in_worktree(isolated_git_repo: Path, tmp_path: Path):
+    import subprocess
+
+    git = GitRepo(isolated_git_repo)
+
+    # Create two branches
+    git.create_branch("feature1", checkout=False)
+    git.create_branch("feature2", checkout=False)
+
+    # Create a worktree for feature1
+    worktree_path = tmp_path / "feature-worktree"
+    subprocess.run(
+        ["git", "worktree", "add", str(worktree_path), "feature1"],
+        cwd=isolated_git_repo,
+        check=True,
+        capture_output=True,
+    )
+
+    # Verify feature1 is checked out
+    assert git.get_worktree_for_branch("feature1") == worktree_path
+
+    # Switch worktree to feature2
+    git.checkout_in_worktree(worktree_path, "feature2")
+
+    # Verify feature2 is now checked out and feature1 is no longer in a worktree
+    assert git.get_worktree_for_branch("feature2") == worktree_path
+    assert git.get_worktree_for_branch("feature1") is None
+
+    # Clean up
+    subprocess.run(
+        ["git", "worktree", "remove", str(worktree_path)],
+        cwd=isolated_git_repo,
+        check=True,
+        capture_output=True,
+    )
+
+
+def test_checkout_in_worktree_error(isolated_git_repo: Path, tmp_path: Path):
+    import subprocess
+
+    git = GitRepo(isolated_git_repo)
+
+    # Create a branch and worktree
+    git.create_branch("feature", checkout=False)
+    worktree_path = tmp_path / "feature-worktree"
+    subprocess.run(
+        ["git", "worktree", "add", str(worktree_path), "feature"],
+        cwd=isolated_git_repo,
+        check=True,
+        capture_output=True,
+    )
+
+    # Try to checkout a nonexistent branch
+    with pytest.raises(GitError) as exc_info:
+        git.checkout_in_worktree(worktree_path, "nonexistent")
+
+    assert "Failed to checkout" in str(exc_info.value)
+
+    # Clean up
+    subprocess.run(
+        ["git", "worktree", "remove", str(worktree_path)],
+        cwd=isolated_git_repo,
+        check=True,
+        capture_output=True,
+    )

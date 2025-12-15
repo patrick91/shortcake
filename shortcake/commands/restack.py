@@ -191,6 +191,16 @@ def _cleanup_merged_branch(git: GitRepo, branch: str, main_branch: str) -> bool:
         update_branch_metadata(child, parent=parent, parent_revision=parent_sha)
         typer.echo(f"  Updated {child}'s parent: {branch} → {parent}")
 
+    # Check if branch is checked out in a worktree
+    worktree_path = git.get_worktree_for_branch(branch)
+    if worktree_path:
+        try:
+            git.checkout_in_worktree(worktree_path, main_branch)
+            typer.echo(f"  Switched worktree at {worktree_path} to {main_branch}")
+        except GitError as e:
+            print_warning(f"Could not switch worktree at {worktree_path}: {e}")
+            return False
+
     # Delete the branch
     try:
         git.delete_branch(branch)

@@ -467,3 +467,65 @@ def test_sync_fast_forwards_and_updates_metadata(
     assert notes is not None
     metadata = json.loads(notes)
     assert metadata.get("parent_revision") == main_sha  # Should still point to main
+
+
+def test_sync_deletes_branch_checked_out_in_worktree(
+    isolated_git_repo: Path, isolated_config: Path, tmp_path: Path
+):
+    git = GitRepo(isolated_git_repo)
+
+    # Create a feature branch
+    git.create_branch("feature-parent", checkout=True)
+    (isolated_git_repo / "parent.txt").write_text("parent")
+    git.add_files("parent.txt")
+    git.commit("Add parent")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature-parent")
+
+    # Switch back to main so we can create a worktree for feature-parent
+    git.checkout_branch("main")
+
+    # Create a worktree with the feature branch checked out
+    worktree_path = tmp_path / "worktree"
+    subprocess.run(
+        ["git", "worktree", "add", str(worktree_path), "feature-parent"],
+        cwd=isolated_git_repo,
+        check=True,
+        capture_output=True,
+    )
+
+    # Verify branch is in worktree
+    assert git.get_worktree_for_branch("feature-parent") == worktree_path
+
+    # Simulate merge: copy content to main
+    git.checkout_branch("main")
+    (isolated_git_repo / "parent.txt").write_text("parent")
+    git.add_files("parent.txt")
+    git.commit("Merge feature-parent")
+
+    # Run sync - should switch worktree to main (or detach at main) and delete branch
+    result = runner.invoke(app, ["sync"])
+    assert result.exit_code == 0
+    assert "Switched worktree at" in result.output
+    assert "Deleted merged branch: feature-parent" in result.output
+
+    # Verify branch was deleted
+    assert not git.branch_exists("feature-parent")
+
+    # Verify worktree is now detached (since main was already checked out)
+    rev_result = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    # HEAD should be detached (returns "HEAD") or on main
+    assert rev_result.stdout.strip() in ["HEAD", "main"]
+
+    # Clean up
+    subprocess.run(
+        ["git", "worktree", "remove", "--force", str(worktree_path)],
+        cwd=isolated_git_repo,
+        check=True,
+        capture_output=True,
+    )
