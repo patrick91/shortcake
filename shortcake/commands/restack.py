@@ -51,8 +51,13 @@ def _needs_restack(
 ) -> bool:
     """Check if a branch needs to be restacked onto its parent.
 
-    A branch needs restacking if the stored parent_revision doesn't match
-    the parent's current HEAD. This is the same approach as Graphite/Charcoal.
+    A branch needs restacking if:
+    1. The stored parent_revision doesn't match the parent's current HEAD, OR
+    2. The branch has commits that are already in the parent (would be skipped during rebase)
+
+    The second case handles scenarios where a commit from the branch was merged
+    into the parent via a separate PR. Even if the merge-base matches the parent
+    HEAD, the branch needs rebasing to remove the now-redundant commits.
 
     Args:
         git: GitRepo instance
@@ -75,18 +80,40 @@ def _needs_restack(
             typer.echo(f"    DEBUG: branch={branch}, parent={parent}")
             typer.echo(f"    DEBUG: stored_parent_rev={stored_parent_rev}")
             typer.echo(f"    DEBUG: parent_commit={parent_commit}")
-            typer.echo(f"    DEBUG: needs_restack={stored_parent_rev != parent_commit}")
 
         # If we have a stored parent revision, compare it
         if stored_parent_rev:
-            return stored_parent_rev != parent_commit
+            needs_restack = stored_parent_rev != parent_commit
+            if debug:
+                typer.echo(f"    DEBUG: needs_restack (from stored_parent_rev)={needs_restack}")
+            if needs_restack:
+                return True
+            # Even if stored_parent_rev matches, check for redundant commits
+            # This catches cases where a commit was cherry-picked or merged separately
+            has_redundant = git.has_commits_already_in_upstream(branch, parent)
+            if debug:
+                typer.echo(f"    DEBUG: has_redundant_commits={has_redundant}")
+            return has_redundant
 
         # Fallback: use merge-base if no stored revision (legacy branches)
         merge_base = git.get_merge_base(branch, parent)
         if not merge_base:
             return True  # Can't determine, assume needs restack
 
-        return merge_base != parent_commit
+        if debug:
+            typer.echo(f"    DEBUG: merge_base={merge_base}")
+            typer.echo(f"    DEBUG: merge_base != parent_commit={merge_base != parent_commit}")
+
+        if merge_base != parent_commit:
+            return True
+
+        # Even if merge-base matches parent, check for redundant commits
+        # This is critical for detecting when commits on the branch were merged
+        # into the parent via a separate PR (fast-forward or squash merge)
+        has_redundant = git.has_commits_already_in_upstream(branch, parent)
+        if debug:
+            typer.echo(f"    DEBUG: has_redundant_commits={has_redundant}")
+        return has_redundant
     except GitError:
         return True  # On error, assume needs restack
 

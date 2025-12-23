@@ -927,6 +927,35 @@ class GitRepo:
         except Exception:
             return None
 
+    def has_commits_already_in_upstream(self, branch: str, upstream: str) -> bool:
+        """Check if any commits on branch have equivalent patches already in upstream.
+
+        This detects when commits on a branch have been merged into upstream
+        via a separate PR (regular merge, fast-forward, or squash), making them
+        redundant and needing cleanup via rebase.
+
+        Uses git cherry which compares patches by content, not commit SHAs.
+
+        Args:
+            branch: The branch to check.
+            upstream: The upstream branch (e.g., origin/main).
+
+        Returns:
+            True if any commits on branch are already in upstream.
+        """
+        try:
+            # git cherry <upstream> <branch> lists commits in branch not in upstream
+            # Lines starting with '-' indicate the commit IS in upstream (equivalent patch)
+            # Lines starting with '+' indicate the commit is NOT in upstream
+            result = self.repo.git.cherry(upstream, branch)
+            if result:
+                for line in result.strip().split("\n"):
+                    if line.startswith("-"):
+                        return True
+            return False
+        except Exception:
+            return False
+
     def is_squash_merged(self, branch: str, target: str) -> bool:
         """Check if branch has been squash-merged into target using git cherry.
 
