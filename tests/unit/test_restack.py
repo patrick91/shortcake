@@ -316,3 +316,250 @@ def test_restack_fast_forwards_branch_behind_remote(
         text=True,
     )
     assert "Remote update" in log.stdout
+
+
+def test_restack_detects_commits_merged_via_separate_pr(
+    isolated_git_repo: Path, isolated_config: Path, remote_repo: Path
+):
+    """Test restack detects when commits on branch were merged via a separate PR.
+
+    This tests the scenario where:
+    1. Branch A has commits X and Y (created from main at commit M)
+    2. Commit X is merged into main via a separate PR (fast-forward)
+    3. Branch A's stored parent_revision (M) differs from current main (X)
+    4. Restack should detect this and rebase, removing the now-redundant X
+    """
+    git = GitRepo()
+
+    # Set up remote
+    git.add_remote("origin", str(remote_repo))
+    subprocess.run(["git", "push", "-u", "origin", "main"], cwd=isolated_git_repo, check=True)
+
+    # Record main SHA before any branches
+    original_main_sha = git.get_commit_sha("main")
+
+    # Create first feature branch with a commit
+    git.create_branch("feature-python38", checkout=True)
+    (isolated_git_repo / "python38.txt").write_text("drop python 3.8")
+    git.add_files("python38.txt")
+    git.commit("Drop support for Python 3.8")
+    python38_sha = git.get_current_commit()
+    add_notes(
+        isolated_git_repo,
+        json.dumps({"parent": "main", "parent_revision": original_main_sha}),
+        "feature-python38",
+    )
+
+    # Create second feature branch stacked on top with another commit
+    git.create_branch("feature-pydantic", checkout=True)
+    (isolated_git_repo / "pydantic.txt").write_text("drop pydantic v1")
+    git.add_files("pydantic.txt")
+    git.commit("Drop support for Pydantic v1")
+    # Note: This branch tracks main as parent (not feature-python38)
+    # The stored parent_revision is the original main SHA (before python38 was added)
+    add_notes(
+        isolated_git_repo,
+        json.dumps({"parent": "main", "parent_revision": original_main_sha}),
+        "feature-pydantic",
+    )
+
+    # Simulate merging feature-python38 into main (fast-forward merge)
+    git.checkout_branch("main")
+    git.merge_ff_only("feature-python38")
+    subprocess.run(["git", "push", "origin", "main"], cwd=isolated_git_repo, check=True)
+
+    # Verify main is now at python38 commit
+    assert git.get_commit_sha("main") == python38_sha
+
+    # Go back to feature-pydantic
+    git.checkout_branch("feature-pydantic")
+
+    # The branch history shows 2 commits since original main
+    log_from_original = subprocess.run(
+        ["git", "log", "--oneline", f"{original_main_sha}..feature-pydantic"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+    commits_from_original = [line for line in log_from_original.stdout.strip().split("\n") if line]
+    assert (
+        len(commits_from_original) == 2
+    ), f"Expected 2 commits from original, got: {commits_from_original}"
+
+    # But git log main..branch shows only 1 (since main moved to include python38)
+    log_from_main = subprocess.run(
+        ["git", "log", "--oneline", "main..feature-pydantic"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+    commits_from_main = [line for line in log_from_main.stdout.strip().split("\n") if line]
+    assert len(commits_from_main) == 1, f"Expected 1 commit from main, got: {commits_from_main}"
+
+    # Restack should detect the mismatch between stored parent_revision and current main
+    result = runner.invoke(app, ["restack"])
+    assert result.exit_code == 0
+    assert "Rebasing feature-pydantic" in result.output
+
+    # After restack: branch is based on current main, still 1 commit ahead
+    log_after = subprocess.run(
+        ["git", "log", "--oneline", "main..feature-pydantic"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+    commits_after = [line for line in log_after.stdout.strip().split("\n") if line]
+    assert len(commits_after) == 1, f"Expected 1 commit after rebase, got: {commits_after}"
+    assert "Pydantic" in commits_after[0]
+
+
+def test_restack_detects_squash_merged_commits(
+    isolated_git_repo: Path, isolated_config: Path, remote_repo: Path
+):
+    """Test restack detects when commits on branch were squash-merged into main.
+
+    This tests the scenario where:
+    1. Branch A has commits X and Y
+    2. Commit X is squash-merged into main (different SHA but same changes)
+    3. Branch A should detect X is redundant and rebase to remove it
+    """
+    git = GitRepo()
+
+    # Set up remote
+    git.add_remote("origin", str(remote_repo))
+    subprocess.run(["git", "push", "-u", "origin", "main"], cwd=isolated_git_repo, check=True)
+
+    # Record main SHA
+    original_main_sha = git.get_commit_sha("main")
+
+    # Create branch with two commits
+    git.create_branch("feature", checkout=True)
+
+    # First commit
+    (isolated_git_repo / "first.txt").write_text("first change")
+    git.add_files("first.txt")
+    git.commit("First change")
+
+    # Second commit
+    (isolated_git_repo / "second.txt").write_text("second change")
+    git.add_files("second.txt")
+    git.commit("Second change")
+
+    add_notes(
+        isolated_git_repo,
+        json.dumps({"parent": "main", "parent_revision": original_main_sha}),
+        "feature",
+    )
+
+    # Simulate squash-merging the first commit into main
+    # We do this by cherry-picking with a different message
+    git.checkout_branch("main")
+    first_commit = subprocess.run(
+        ["git", "log", "--format=%H", "-1", "feature~1"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "cherry-pick", first_commit],
+        cwd=isolated_git_repo,
+        check=True,
+    )
+    # Amend with different message to simulate squash
+    subprocess.run(
+        ["git", "commit", "--amend", "-m", "First change (squashed)"],
+        cwd=isolated_git_repo,
+        check=True,
+    )
+    subprocess.run(["git", "push", "origin", "main"], cwd=isolated_git_repo, check=True)
+
+    # Go back to feature
+    git.checkout_branch("feature")
+
+    # Restack should detect the redundant commit (by patch equivalence)
+    result = runner.invoke(app, ["restack"])
+    assert result.exit_code == 0
+    assert "Rebasing feature" in result.output
+
+    # After restack: first commit should be skipped, only second remains
+    log_after = subprocess.run(
+        ["git", "log", "--oneline", "main..feature"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+    commits_after = [line for line in log_after.stdout.strip().split("\n") if line]
+    assert len(commits_after) == 1, f"Expected 1 commit after rebase, got: {commits_after}"
+    assert "Second change" in commits_after[0]
+
+
+def test_restack_detects_redundant_commits_without_parent_revision(
+    isolated_git_repo: Path, isolated_config: Path, remote_repo: Path
+):
+    """Test restack detects redundant commits even without stored parent_revision.
+
+    This tests the legacy/fallback case where:
+    1. Branch has no stored parent_revision (legacy branch)
+    2. Commits on the branch have been cherry-picked/squash-merged into main
+    3. The cherry detection should catch this and trigger a restack
+    """
+    git = GitRepo()
+
+    # Set up remote
+    git.add_remote("origin", str(remote_repo))
+    subprocess.run(["git", "push", "-u", "origin", "main"], cwd=isolated_git_repo, check=True)
+
+    # Create branch with two commits
+    git.create_branch("feature", checkout=True)
+
+    # First commit
+    (isolated_git_repo / "first.txt").write_text("first change")
+    git.add_files("first.txt")
+    git.commit("First change")
+
+    # Second commit
+    (isolated_git_repo / "second.txt").write_text("second change")
+    git.add_files("second.txt")
+    git.commit("Second change")
+
+    # Set metadata WITHOUT parent_revision (simulating legacy branch)
+    add_notes(
+        isolated_git_repo,
+        json.dumps({"parent": "main"}),  # No parent_revision!
+        "feature",
+    )
+
+    # Simulate cherry-picking the first commit into main
+    git.checkout_branch("main")
+    first_commit = subprocess.run(
+        ["git", "log", "--format=%H", "-1", "feature~1"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    subprocess.run(
+        ["git", "cherry-pick", first_commit],
+        cwd=isolated_git_repo,
+        check=True,
+    )
+    subprocess.run(["git", "push", "origin", "main"], cwd=isolated_git_repo, check=True)
+
+    # Go back to feature
+    git.checkout_branch("feature")
+
+    # Restack should detect the redundant commit via cherry detection
+    result = runner.invoke(app, ["restack"])
+    assert result.exit_code == 0
+    # Should detect and rebase (the cherry detection catches this)
+    assert "Rebasing feature" in result.output
+
+    # After restack: first commit should be skipped, only second remains
+    log_after = subprocess.run(
+        ["git", "log", "--oneline", "main..feature"],
+        cwd=isolated_git_repo,
+        capture_output=True,
+        text=True,
+    )
+    commits_after = [line for line in log_after.stdout.strip().split("\n") if line]
+    assert len(commits_after) == 1, f"Expected 1 commit after rebase, got: {commits_after}"
+    assert "Second change" in commits_after[0]
