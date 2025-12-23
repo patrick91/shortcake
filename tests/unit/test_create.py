@@ -826,7 +826,7 @@ def test_create_with_claude_generation_fails(
     monkeypatch.setattr(create, "_is_claude_cli_available", lambda: True)
     monkeypatch.setattr(create, "_get_claude_command", lambda: ["claude"])
 
-    # Mock subprocess.run for the claude call to fail
+    # Mock subprocess.run for the claude call
     original_run = subprocess.run
 
     def mock_run(cmd, *args, **kwargs):
@@ -919,3 +919,188 @@ def test_create_insert_no_children(
     # Should succeed without any child update messages
     assert "Created and switched to branch: add-another-feature" in result.stdout
     assert "child branch" not in result.stdout
+
+
+def test_create_with_claude_runs_precommit_hooks(
+    isolated_git_repo: Path,
+    isolated_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    git_editor_script: GitEditorScript,
+):
+    """Test that pre-commit hooks run before generating the commit message with Claude."""
+    test_file = isolated_git_repo / "test.txt"
+    test_file.write_text("test content")
+    stage_all(isolated_git_repo)
+
+    # Create a pre-commit hook that creates a marker file
+    hooks_dir = isolated_git_repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    hook_marker = isolated_git_repo / "hook_ran.marker"
+    hook_script = hooks_dir / "pre-commit"
+    hook_script.write_text(f'#!/bin/sh\ntouch "{hook_marker}"\nexit 0\n')
+    hook_script.chmod(0o755)
+
+    from shortcake.commands import create
+
+    monkeypatch.setattr(create, "_is_claude_cli_available", lambda: True)
+    monkeypatch.setattr(create, "_get_claude_command", lambda: ["claude"])
+
+    original_run = subprocess.run
+
+    def mock_run(cmd, *args, **kwargs):
+        if cmd and cmd[0] == "claude":
+            # Verify hook ran before Claude was called
+            assert hook_marker.exists(), "Pre-commit hook should run before Claude"
+
+            class MockResult:
+                returncode = 0
+                stdout = "Add test file"
+                stderr = ""
+
+            return MockResult()
+        return original_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    git_editor_script("Add test file")
+
+    result = runner.invoke(app, ["create", "--claude"])
+
+    assert result.exit_code == 0
+    assert "Running pre-commit hooks" in result.stdout
+    assert "Generating commit message with Claude" in result.stdout
+
+
+def test_create_with_claude_precommit_hook_fails(
+    isolated_git_repo: Path,
+    isolated_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test that pre-commit hook failures are properly reported."""
+    test_file = isolated_git_repo / "test.txt"
+    test_file.write_text("test content")
+    stage_all(isolated_git_repo)
+
+    # Create a pre-commit hook that fails
+    hooks_dir = isolated_git_repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    hook_script = hooks_dir / "pre-commit"
+    hook_script.write_text('#!/bin/sh\necho "Linting failed: style errors found"\nexit 1\n')
+    hook_script.chmod(0o755)
+
+    from shortcake.commands import create
+
+    monkeypatch.setattr(create, "_is_claude_cli_available", lambda: True)
+
+    result = runner.invoke(app, ["create", "--claude"])
+
+    assert result.exit_code == 1
+    assert "Pre-commit hooks failed" in result.output
+
+
+def test_create_with_claude_no_verify_skips_precommit(
+    isolated_git_repo: Path,
+    isolated_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    git_editor_script: GitEditorScript,
+):
+    """Test that --no-verify skips pre-commit hooks when using --claude."""
+    test_file = isolated_git_repo / "test.txt"
+    test_file.write_text("test content")
+    stage_all(isolated_git_repo)
+
+    # Create a pre-commit hook that creates a marker file
+    hooks_dir = isolated_git_repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    hook_marker = isolated_git_repo / "hook_ran.marker"
+    hook_script = hooks_dir / "pre-commit"
+    hook_script.write_text(f'#!/bin/sh\ntouch "{hook_marker}"\nexit 0\n')
+    hook_script.chmod(0o755)
+
+    from shortcake.commands import create
+
+    monkeypatch.setattr(create, "_is_claude_cli_available", lambda: True)
+    monkeypatch.setattr(create, "_get_claude_command", lambda: ["claude"])
+
+    original_run = subprocess.run
+
+    def mock_run(cmd, *args, **kwargs):
+        if cmd and cmd[0] == "claude":
+
+            class MockResult:
+                returncode = 0
+                stdout = "Add test file"
+                stderr = ""
+
+            return MockResult()
+        return original_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+    git_editor_script("Add test file")
+
+    result = runner.invoke(app, ["create", "--claude", "--no-verify"])
+
+    assert result.exit_code == 0
+    assert not hook_marker.exists(), "Pre-commit hooks should not run with --no-verify"
+    assert "Running pre-commit hooks" not in result.stdout
+
+
+def test_create_with_claude_restages_modified_files(
+    isolated_git_repo: Path,
+    isolated_config: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    git_editor_script: GitEditorScript,
+):
+    """Test that files modified by pre-commit hooks are re-staged."""
+    test_file = isolated_git_repo / "test.txt"
+    test_file.write_text("test content")
+    stage_all(isolated_git_repo)
+
+    # Create a pre-commit hook that modifies the file
+    hooks_dir = isolated_git_repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    hook_script = hooks_dir / "pre-commit"
+    hook_script.write_text(f'#!/bin/sh\necho "formatted test content" > "{test_file}"\nexit 0\n')
+    hook_script.chmod(0o755)
+
+    from shortcake.commands import create
+
+    monkeypatch.setattr(create, "_is_claude_cli_available", lambda: True)
+    monkeypatch.setattr(create, "_get_claude_command", lambda: ["claude"])
+
+    original_run = subprocess.run
+    files_added = []
+
+    def mock_run(cmd, *args, **kwargs):
+        if cmd and cmd[0] == "claude":
+
+            class MockResult:
+                returncode = 0
+                stdout = "Add formatted test file"
+                stderr = ""
+
+            return MockResult()
+        return original_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    # Track calls to add_files
+    from shortcake.git import GitRepo
+
+    original_add_files = GitRepo.add_files
+
+    def mock_add_files(self, paths):
+        if isinstance(paths, list):
+            files_added.extend(paths)
+        else:
+            files_added.append(paths)
+        return original_add_files(self, paths)
+
+    monkeypatch.setattr(GitRepo, "add_files", mock_add_files)
+
+    git_editor_script("Add formatted test file")
+
+    result = runner.invoke(app, ["create", "--claude"])
+
+    assert result.exit_code == 0
+    # Verify files were re-staged after hooks ran
+    assert "test.txt" in files_added

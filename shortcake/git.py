@@ -505,6 +505,26 @@ class GitRepo:
             # If HEAD doesn't exist (no commits yet), check if index has entries
             return len(self.repo.index.entries) > 0
 
+    def get_staged_files(self) -> list[str]:
+        """Get list of staged file paths.
+
+        Returns:
+            List of file paths that are currently staged.
+        """
+        try:
+            # Get staged files by comparing index to HEAD
+            staged_diffs = self.repo.index.diff("HEAD")
+            files = set()
+            for diff in staged_diffs:
+                if diff.a_path:
+                    files.add(diff.a_path)
+                if diff.b_path:
+                    files.add(diff.b_path)
+            return list(files)
+        except Exception:
+            # If HEAD doesn't exist (no commits yet), get all files in index
+            return list(self.repo.index.entries.keys())
+
     def has_uncommitted_changes(self) -> bool:
         """Check if the working tree is dirty (has uncommitted changes).
 
@@ -528,6 +548,50 @@ class GitRepo:
             return self.repo.git.diff("--cached")
         except Exception as e:
             raise GitError(f"Failed to get staged diff: {e}") from e
+
+    def has_precommit_hook(self) -> bool:
+        """Check if a pre-commit hook exists."""
+        hook_path = self.working_dir / ".git" / "hooks" / "pre-commit"
+        return hook_path.exists() and hook_path.is_file()
+
+    def run_precommit_hook(self, staged_files: list[str] | None = None) -> tuple[bool, str | None]:
+        """Run the git pre-commit hook on staged changes.
+
+        Runs the hook at .git/hooks/pre-commit if it exists.
+        After the hook runs, re-stages any files that were originally staged
+        to capture modifications made by the hook (e.g., formatters).
+
+        Args:
+            staged_files: List of files that were staged. If None, will be retrieved.
+
+        Returns:
+            Tuple of (success, error_message). success is True if hook passed
+            or no hook exists. error_message is set on failure.
+        """
+        if staged_files is None:
+            staged_files = self.get_staged_files()
+
+        hook_path = self.working_dir / ".git" / "hooks" / "pre-commit"
+        if not hook_path.exists() or not hook_path.is_file():
+            # No hook found, success
+            return True, None
+
+        try:
+            result = subprocess.run(
+                [str(hook_path)],
+                capture_output=True,
+                text=True,
+                cwd=self.working_dir,
+            )
+            # Re-stage files that may have been modified by hooks
+            if staged_files:
+                self.add_files(staged_files)
+
+            if result.returncode != 0:
+                return False, result.stdout or result.stderr
+            return True, None
+        except Exception as e:
+            return False, str(e)
 
     def get_merge_base(self, branch1: str, branch2: str) -> str | None:
         """Get the merge-base (common ancestor) commit of two branches.

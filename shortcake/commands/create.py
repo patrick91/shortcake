@@ -213,6 +213,16 @@ def create(
             print_error("Claude CLI not found. Install it from: https://claude.ai/code")
             raise typer.Exit(1)
 
+        # Run pre-commit hooks first (unless --no-verify is set)
+        # This allows hooks to modify files before we generate the commit message
+        if not no_verify and git.has_precommit_hook():
+            staged_files = git.get_staged_files()
+            typer.echo("Running pre-commit hooks...")
+            hook_success, hook_error = git.run_precommit_hook(staged_files)
+            if not hook_success:
+                print_error(f"Pre-commit hooks failed:\n{hook_error}")
+                raise typer.Exit(1)
+
         typer.echo("Generating commit message with Claude...")
         diff = git.get_staged_diff()
         generated_message, error = _generate_commit_message_with_claude(diff, use_gitmoji=gitmoji)
