@@ -7,9 +7,7 @@ app = typer.Typer()
 console = Console(stderr=True)
 
 
-def _do_edit(
-    no_verify: bool = False, message: str | None = None, reword: bool = False
-) -> None:
+def _do_edit(no_verify: bool = False, message: str | None = None, reword: bool = False) -> None:
     """Internal implementation for edit/modify commands."""
     try:
         git = GitRepo()

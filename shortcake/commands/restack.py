@@ -330,7 +330,7 @@ def restack(
     metadata = get_branch_metadata(current_branch)
     if not metadata.get("parent"):
         print_error(
-            f"Branch '{current_branch}' is not managed by shortcake. " f"Use '{cli} adopt' first."
+            f"Branch '{current_branch}' is not managed by shortcake. Use '{cli} adopt' first."
         )
         raise typer.Exit(1)
 
