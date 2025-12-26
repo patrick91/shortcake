@@ -792,3 +792,322 @@ def test_checkout_in_worktree_error(isolated_git_repo: Path, tmp_path: Path):
         check=True,
         capture_output=True,
     )
+
+
+def test_get_staged_files(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    # Initially no staged files
+    assert git.get_staged_files() == []
+
+    # Stage a file
+    test_file = isolated_git_repo / "staged.txt"
+    test_file.write_text("content")
+    git.add_files("staged.txt")
+
+    # Should find the staged file
+    staged = git.get_staged_files()
+    assert "staged.txt" in staged
+
+
+def test_has_uncommitted_changes(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    # Initially no uncommitted changes
+    assert not git.has_uncommitted_changes()
+
+    # Create uncommitted change
+    test_file = isolated_git_repo / "uncommitted.txt"
+    test_file.write_text("content")
+    git.add_files("uncommitted.txt")
+
+    # Should detect uncommitted changes
+    assert git.has_uncommitted_changes()
+
+
+def test_get_staged_diff(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    # Stage a file
+    test_file = isolated_git_repo / "diff_test.txt"
+    test_file.write_text("diff content")
+    git.add_files("diff_test.txt")
+
+    # Get staged diff
+    diff = git.get_staged_diff()
+    assert "diff_test.txt" in diff
+    assert "diff content" in diff
+
+
+def test_has_precommit_hook_false(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    # No pre-commit hook initially
+    assert not git.has_precommit_hook()
+
+
+def test_has_precommit_hook_true(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    # Create a pre-commit hook
+    hooks_dir = isolated_git_repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    hook = hooks_dir / "pre-commit"
+    hook.write_text("#!/bin/bash\nexit 0")
+    hook.chmod(0o755)
+
+    assert git.has_precommit_hook()
+
+
+def test_run_precommit_hook_no_hook(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    # No hook should return success
+    success, error = git.run_precommit_hook([])
+    assert success is True
+    assert error is None
+
+
+def test_run_precommit_hook_success(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    # Create a successful pre-commit hook
+    hooks_dir = isolated_git_repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    hook = hooks_dir / "pre-commit"
+    hook.write_text("#!/bin/bash\nexit 0")
+    hook.chmod(0o755)
+
+    # Stage a file
+    test_file = isolated_git_repo / "hook_test.txt"
+    test_file.write_text("content")
+    git.add_files("hook_test.txt")
+
+    success, error = git.run_precommit_hook(["hook_test.txt"])
+    assert success is True
+    assert error is None
+
+
+def test_run_precommit_hook_failure(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    # Create a failing pre-commit hook
+    hooks_dir = isolated_git_repo / ".git" / "hooks"
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+    hook = hooks_dir / "pre-commit"
+    hook.write_text("#!/bin/bash\necho 'Hook failed'\nexit 1")
+    hook.chmod(0o755)
+
+    success, error = git.run_precommit_hook([])
+    assert success is False
+    assert error is not None
+
+
+def test_is_trunk_branch(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    assert git.is_trunk_branch("main")
+    assert git.is_trunk_branch("master")
+    assert not git.is_trunk_branch("feature")
+
+
+def test_rebase_error(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    # Try to rebase onto nonexistent branch
+    with pytest.raises(GitError) as exc_info:
+        git.rebase("nonexistent")
+
+    assert "Failed to rebase" in str(exc_info.value)
+
+
+def test_rebase_onto(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    # Create commits on main
+    main_sha = git.get_current_commit()
+
+    (isolated_git_repo / "main1.txt").write_text("main1")
+    git.add_files("main1.txt")
+    git.commit("Main commit 1")
+
+    (isolated_git_repo / "main2.txt").write_text("main2")
+    git.add_files("main2.txt")
+    git.commit("Main commit 2")
+
+    # Create feature branch from initial commit
+    git.repo.git.checkout(main_sha)
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature")
+    git.add_files("feature.txt")
+    git.commit("Feature commit")
+
+    # Rebase onto main
+    git.rebase_onto("main", main_sha, "feature")
+
+    # Feature should now be on top of main
+    assert git.is_ancestor("main", "feature")
+
+
+def test_merge_ff_only(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    # Create feature branch
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature")
+    git.add_files("feature.txt")
+    git.commit("Feature commit")
+    feature_sha = git.get_current_commit()
+
+    # Go back to main and fast-forward merge
+    git.checkout_branch("main")
+    git.merge_ff_only("feature")
+
+    # Main should now be at feature commit
+    assert git.get_current_commit() == feature_sha
+
+
+def test_merge_ff_only_error(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    # Create divergent branches
+    (isolated_git_repo / "main_change.txt").write_text("main")
+    git.add_files("main_change.txt")
+    git.commit("Main change")
+
+    git.create_branch("feature", checkout=False)
+    git.repo.git.checkout("HEAD~1")
+    git.create_branch("divergent", checkout=True)
+    (isolated_git_repo / "divergent.txt").write_text("divergent")
+    git.add_files("divergent.txt")
+    git.commit("Divergent commit")
+
+    # Go to main and try ff-only merge (should fail)
+    git.checkout_branch("main")
+    with pytest.raises(GitError) as exc_info:
+        git.merge_ff_only("divergent")
+
+    assert "Failed to fast-forward merge" in str(exc_info.value)
+
+
+def test_rebase_abort(isolated_git_repo: Path):
+    import subprocess
+
+    git = GitRepo(isolated_git_repo)
+
+    # Create divergent branches that will conflict
+    (isolated_git_repo / "conflict.txt").write_text("main content")
+    git.add_files("conflict.txt")
+    git.commit("Main change")
+
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "conflict.txt").write_text("feature content")
+    git.add_files("conflict.txt")
+    git.commit("Feature change")
+
+    # Create another commit on main
+    git.checkout_branch("main")
+    (isolated_git_repo / "conflict.txt").write_text("updated main content")
+    git.add_files("conflict.txt")
+    git.commit("Another main change")
+
+    git.checkout_branch("feature")
+
+    # Start rebase that will conflict
+    try:
+        subprocess.run(
+            ["git", "rebase", "main"],
+            cwd=isolated_git_repo,
+            capture_output=True,
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        # Expected conflict
+        pass
+
+    # Verify rebase is in progress
+    assert git.is_rebase_in_progress()
+
+    # Abort the rebase
+    git.rebase_abort()
+
+    # Rebase should no longer be in progress
+    assert not git.is_rebase_in_progress()
+
+
+def test_is_ancestor_self(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    # A commit is its own ancestor
+    assert git.is_ancestor("HEAD", "HEAD")
+
+
+def test_remove_notes_success(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    # Add notes then remove them
+    git.add_notes("test content", "HEAD", "test-notes")
+    assert git.get_notes("HEAD", "test-notes") is not None
+
+    git.remove_notes("HEAD", "test-notes")
+    assert git.get_notes("HEAD", "test-notes") is None
+
+
+def test_get_commit_sha_error(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    with pytest.raises(GitError) as exc_info:
+        git.get_commit_sha("nonexistent-ref")
+
+    assert "Failed to get commit SHA" in str(exc_info.value)
+
+
+def test_push_with_force(isolated_git_repo: Path, bare_repo: Path):
+    git = GitRepo(isolated_git_repo)
+    git.add_remote("origin", str(bare_repo))
+    git.push("origin", git.get_current_branch())
+
+    # Make a change
+    (isolated_git_repo / "force.txt").write_text("force")
+    git.add_files("force.txt")
+    git.commit(amend=True)
+
+    # Normal push should fail since history diverged
+    # Force push should succeed
+    git.push("origin", git.get_current_branch(), force=True)
+
+
+def test_get_branches_includes_current(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    git.create_branch("branch-a", checkout=False)
+    git.create_branch("branch-b", checkout=False)
+
+    branches = git.get_branches()
+    assert "main" in branches
+    assert "branch-a" in branches
+    assert "branch-b" in branches
+
+
+def test_delete_branch_force(isolated_git_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    # Create branch with uncommitted work relative to main
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature")
+    git.add_files("feature.txt")
+    git.commit("Feature commit")
+
+    git.checkout_branch("main")
+
+    # Force delete should work even though not merged
+    git.delete_branch("feature", force=True)
+    assert not git.branch_exists("feature")
+
+
+def test_add_remote_and_get_remote_url(isolated_git_repo: Path, bare_repo: Path):
+    git = GitRepo(isolated_git_repo)
+
+    git.add_remote("origin", str(bare_repo))
+    url = git.get_remote_url("origin")
+    assert str(bare_repo) in url

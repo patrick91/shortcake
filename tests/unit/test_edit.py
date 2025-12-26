@@ -661,3 +661,14 @@ def test_command_reword_short_flag(
         text=True,
     )
     assert message_after.stdout.strip() == "New message via short flag"
+
+
+@pytest.mark.parametrize("command", ["edit", "modify"])
+def test_command_not_in_git_repo(command: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    not_a_repo = tmp_path / "not_a_repo"
+    not_a_repo.mkdir()
+    monkeypatch.chdir(not_a_repo)
+
+    result = runner.invoke(app, [command])
+    assert result.exit_code == 1
+    assert "Error" in result.output

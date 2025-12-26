@@ -55,3 +55,47 @@ def test_config_invalid_action():
 
     assert result.exit_code == 1
     assert "Unknown action" in result.stderr
+
+
+def test_config_get_without_key():
+    result = runner.invoke(app, ["config", "get"])
+
+    assert result.exit_code == 1
+    assert "Key is required" in result.stderr
+
+
+def test_config_get_unknown_key(isolated_config: Path):
+    result = runner.invoke(app, ["config", "get", "unknown_key"])
+
+    assert result.exit_code == 0
+    assert "not found" in result.stdout
+    assert "Available keys" in result.stdout
+
+
+def test_config_set_without_key():
+    result = runner.invoke(app, ["config", "set"])
+
+    assert result.exit_code == 1
+    assert "Both key and value are required" in result.stderr
+
+
+def test_config_set_without_value():
+    result = runner.invoke(app, ["config", "set", "keep_emoji"])
+
+    assert result.exit_code == 1
+    assert "Both key and value are required" in result.stderr
+
+
+def test_config_set_invalid_value(isolated_config: Path):
+    result = runner.invoke(app, ["config", "set", "keep_emoji", "invalid"])
+
+    assert result.exit_code == 1
+    assert "Invalid value" in result.stderr
+
+
+def test_config_set_unknown_key(isolated_config: Path):
+    result = runner.invoke(app, ["config", "set", "unknown_key", "value"])
+
+    assert result.exit_code == 1
+    assert "Unknown configuration key" in result.stderr
+    assert "Available keys" in result.stdout

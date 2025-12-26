@@ -3,6 +3,7 @@
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from shortcake.cli import app
@@ -380,3 +381,56 @@ def test_adopt_fallback_to_main_when_no_other_parent(
     assert notes is not None
     notes_data = json.loads(notes)
     assert notes_data.get("parent") == "main"
+
+
+def test_adopt_force_update_parent(isolated_git_repo: Path, isolated_config: Path):
+    git = GitRepo()
+
+    # Create branches
+    git.create_branch("feature-1", checkout=True)
+    (isolated_git_repo / "f1.txt").write_text("f1")
+    git.add_files("f1.txt")
+    git.commit("Feature 1")
+
+    git.create_branch("feature-2", checkout=True)
+    (isolated_git_repo / "f2.txt").write_text("f2")
+    git.add_files("f2.txt")
+    git.commit("Feature 2")
+
+    # Adopt feature-2 with parent main
+    result = runner.invoke(app, ["adopt", "--parent", "main"])
+    assert result.exit_code == 0
+
+    notes = get_notes(isolated_git_repo, "feature-2")
+    notes_data = json.loads(notes)
+    assert notes_data.get("parent") == "main"
+
+    # Force update parent to feature-1
+    result = runner.invoke(app, ["adopt", "--parent", "feature-1", "--force"])
+    assert result.exit_code == 0
+    assert "Updated" in result.stdout
+
+    notes = get_notes(isolated_git_repo, "feature-2")
+    notes_data = json.loads(notes)
+    assert notes_data.get("parent") == "feature-1"
+
+
+def test_adopt_invalid_parent_branch(isolated_git_repo: Path, isolated_config: Path):
+    git = GitRepo()
+
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "f.txt").write_text("f")
+    git.add_files("f.txt")
+    git.commit("Feature")
+
+    result = runner.invoke(app, ["adopt", "--parent", "nonexistent"])
+    assert result.exit_code == 1
+    assert "Parent branch 'nonexistent' does not exist" in result.output
+
+
+def test_adopt_not_in_git_repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["adopt"])
+    assert result.exit_code == 1
+    assert "Error" in result.output

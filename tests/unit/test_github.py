@@ -278,3 +278,205 @@ def test_pull_request_dataclass():
     assert pr.number == 1
     assert pr.title == "Test"
     assert pr.state == "open"
+
+
+def test_pull_request_with_author():
+    pr = PullRequest(
+        number=1,
+        title="Test",
+        body="Body",
+        html_url="https://example.com",
+        head_ref="feature",
+        base_ref="main",
+        state="open",
+        author="testuser",
+    )
+
+    assert pr.author == "testuser"
+
+
+@respx.mock
+def test_is_pr_merged_true(github_client: GitHubClient):
+    respx.get("https://api.github.com/repos/owner/repo/pulls/1").mock(
+        return_value=Response(
+            200,
+            json={
+                "number": 1,
+                "title": "Merged PR",
+                "body": "",
+                "html_url": "https://github.com/owner/repo/pull/1",
+                "head": {"ref": "feature", "sha": "abc123"},
+                "base": {"ref": "main", "sha": "def456"},
+                "state": "closed",
+                "merged": True,
+            },
+        )
+    )
+
+    result = github_client.is_pr_merged("owner", "repo", 1)
+    assert result is True
+
+
+@respx.mock
+def test_is_pr_merged_false(github_client: GitHubClient):
+    respx.get("https://api.github.com/repos/owner/repo/pulls/1").mock(
+        return_value=Response(
+            200,
+            json={
+                "number": 1,
+                "title": "Open PR",
+                "body": "",
+                "html_url": "https://github.com/owner/repo/pull/1",
+                "head": {"ref": "feature", "sha": "abc123"},
+                "base": {"ref": "main", "sha": "def456"},
+                "state": "open",
+                "merged": False,
+            },
+        )
+    )
+
+    result = github_client.is_pr_merged("owner", "repo", 1)
+    assert result is False
+
+
+@respx.mock
+def test_is_pr_merged_error(github_client: GitHubClient):
+    respx.get("https://api.github.com/repos/owner/repo/pulls/999").mock(
+        return_value=Response(404, json={"message": "Not Found"})
+    )
+
+    result = github_client.is_pr_merged("owner", "repo", 999)
+    assert result is False
+
+
+@respx.mock
+def test_is_pr_closed_unmerged_true(github_client: GitHubClient):
+    respx.get("https://api.github.com/repos/owner/repo/pulls/1").mock(
+        return_value=Response(
+            200,
+            json={
+                "number": 1,
+                "title": "Closed PR",
+                "body": "",
+                "html_url": "https://github.com/owner/repo/pull/1",
+                "head": {"ref": "feature", "sha": "abc123"},
+                "base": {"ref": "main", "sha": "def456"},
+                "state": "closed",
+                "merged": False,
+            },
+        )
+    )
+
+    result = github_client.is_pr_closed_unmerged("owner", "repo", 1)
+    assert result is True
+
+
+@respx.mock
+def test_is_pr_closed_unmerged_false_merged(github_client: GitHubClient):
+    respx.get("https://api.github.com/repos/owner/repo/pulls/1").mock(
+        return_value=Response(
+            200,
+            json={
+                "number": 1,
+                "title": "Merged PR",
+                "body": "",
+                "html_url": "https://github.com/owner/repo/pull/1",
+                "head": {"ref": "feature", "sha": "abc123"},
+                "base": {"ref": "main", "sha": "def456"},
+                "state": "closed",
+                "merged": True,
+            },
+        )
+    )
+
+    result = github_client.is_pr_closed_unmerged("owner", "repo", 1)
+    assert result is False
+
+
+@respx.mock
+def test_is_pr_closed_unmerged_false_open(github_client: GitHubClient):
+    respx.get("https://api.github.com/repos/owner/repo/pulls/1").mock(
+        return_value=Response(
+            200,
+            json={
+                "number": 1,
+                "title": "Open PR",
+                "body": "",
+                "html_url": "https://github.com/owner/repo/pull/1",
+                "head": {"ref": "feature", "sha": "abc123"},
+                "base": {"ref": "main", "sha": "def456"},
+                "state": "open",
+                "merged": False,
+            },
+        )
+    )
+
+    result = github_client.is_pr_closed_unmerged("owner", "repo", 1)
+    assert result is False
+
+
+@respx.mock
+def test_is_pr_closed_unmerged_error(github_client: GitHubClient):
+    respx.get("https://api.github.com/repos/owner/repo/pulls/999").mock(
+        return_value=Response(404, json={"message": "Not Found"})
+    )
+
+    result = github_client.is_pr_closed_unmerged("owner", "repo", 999)
+    assert result is False
+
+
+@respx.mock
+def test_get_current_user(github_client: GitHubClient):
+    respx.get("https://api.github.com/user").mock(
+        return_value=Response(200, json={"login": "testuser"})
+    )
+
+    username = github_client.get_current_user()
+    assert username == "testuser"
+
+
+@respx.mock
+def test_update_pull_request_body_only(github_client: GitHubClient):
+    respx.patch("https://api.github.com/repos/owner/repo/pulls/1").mock(
+        return_value=Response(
+            200,
+            json={
+                "number": 1,
+                "title": "Test PR",
+                "body": "New body only",
+                "html_url": "https://github.com/owner/repo/pull/1",
+                "head": {"ref": "feature", "sha": "abc123"},
+                "base": {"ref": "main", "sha": "def456"},
+                "state": "open",
+            },
+        )
+    )
+
+    pr = github_client.update_pull_request(
+        owner="owner",
+        repo="repo",
+        pr_number=1,
+        body="New body only",
+    )
+
+    assert pr.body == "New body only"
+
+
+@respx.mock
+def test_update_pull_request_error(github_client: GitHubClient):
+    respx.patch("https://api.github.com/repos/owner/repo/pulls/1").mock(
+        return_value=Response(
+            404,
+            json={"message": "Not Found"},
+        )
+    )
+
+    with pytest.raises(GitHubError) as exc_info:
+        github_client.update_pull_request(
+            owner="owner",
+            repo="repo",
+            pr_number=1,
+            title="Updated",
+        )
+
+    assert "404" in str(exc_info.value)
