@@ -479,31 +479,16 @@ wheels = [
 [[package]]
 name = "rich-toolkit"
 version = "0.17.0"
-source = { editable = "../rich-toolkit" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "rich" },
     { name = "typing-extensions" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "click", specifier = ">=8.1.7" },
-    { name = "rich", specifier = ">=13.7.1" },
-    { name = "typing-extensions", specifier = ">=4.12.2" },
+sdist = { url = "https://files.pythonhosted.org/packages/ad/d0/8f8de36e1abf8339b497ce700dd7251ca465ffca4a1976969b0eaeb596fb/rich_toolkit-0.17.0.tar.gz", hash = "sha256:17ca7a32e613001aa0945ddea27a246f6de01dfc4c12403254c057a8ee542977", size = 187955, upload-time = "2025-11-27T11:10:24.863Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b2/42/ef2ed40699567661d03b0b511ac46cf6cee736de8f3666819c12d6d20696/rich_toolkit-0.17.0-py3-none-any.whl", hash = "sha256:06fb47a5c5259d6b480287cd38aff5f551b6e1a307f90ed592453dd360e4e71e", size = 31412, upload-time = "2025-11-27T11:10:23.847Z" },
 ]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "fastapi", extras = ["standard"], specifier = ">=0.112.2" },
-    { name = "httpx", specifier = ">=0.28.1" },
-    { name = "inline-snapshot", specifier = ">=0.12.1" },
-    { name = "pdbpp", specifier = ">=0.10.3" },
-    { name = "pydantic", specifier = ">=2.10.6" },
-    { name = "pytest", specifier = ">=8.3.2" },
-    { name = "uvicorn", specifier = ">=0.30.6" },
-]
-lint = [{ name = "mypy", specifier = ">=1.11.2" }]
 
 [[package]]
 name = "rtoml"
@@ -592,7 +577,7 @@ requires-dist = [
     { name = "gitpython", specifier = ">=3.1.45" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "rich-toolkit", editable = "../rich-toolkit" },
+    { name = "rich-toolkit", specifier = ">=0.17.0" },
     { name = "rtoml", specifier = ">=0.11.0" },
     { name = "typer", specifier = ">=0.9.0" },
     { name = "wcwidth", specifier = ">=0.2.14" },
