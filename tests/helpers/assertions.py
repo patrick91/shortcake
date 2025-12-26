@@ -1,8 +1,17 @@
 """Custom assertions for testing."""
 
+import re
 from pathlib import Path
 
 from tests.helpers.git_helpers import get_branches, get_current_branch, get_notes
+
+
+def normalize_commit_shas(output: str) -> str:
+    """Replace commit SHAs with a placeholder for deterministic comparison.
+
+    Replaces patterns like "abc1234 - Commit message" with "SHA - Commit message".
+    """
+    return re.sub(r"\b[0-9a-f]{7}\b(?= - )", "SHA", output)
 
 
 def assert_branch_exists(repo_path: Path, branch_name: str) -> None:
