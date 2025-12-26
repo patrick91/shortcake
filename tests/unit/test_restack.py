@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -288,6 +289,8 @@ def test_restack_fast_forwards_branch_behind_remote(
     with tempfile.TemporaryDirectory() as tmpdir:
         clone_path = Path(tmpdir) / "clone"
         subprocess.run(["git", "clone", str(remote_repo), str(clone_path)], check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=clone_path, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=clone_path, check=True)
         subprocess.run(["git", "checkout", "feature"], cwd=clone_path, check=True)
         (clone_path / "remote-update.txt").write_text("remote update")
         subprocess.run(["git", "add", "remote-update.txt"], cwd=clone_path, check=True)
@@ -537,6 +540,11 @@ def test_restack_detects_redundant_commits_without_parent_revision(
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+    # Sleep to ensure the cherry-picked commit has a different timestamp
+    # This prevents git from creating identical commit hashes in fast CI environments
+    time.sleep(1.1)
+
     subprocess.run(
         ["git", "cherry-pick", first_commit],
         cwd=isolated_git_repo,
@@ -548,7 +556,7 @@ def test_restack_detects_redundant_commits_without_parent_revision(
     git.checkout_branch("feature")
 
     # Restack should detect the redundant commit via cherry detection
-    result = runner.invoke(app, ["restack", "--debug"])
+    result = runner.invoke(app, ["restack"])
     assert result.exit_code == 0, f"Restack failed: {result.output}"
     # Should detect and rebase (the cherry detection catches this)
     assert (
