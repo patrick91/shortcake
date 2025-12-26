@@ -6,6 +6,7 @@ import pytest
 from typer.testing import CliRunner
 
 from shortcake.cli import app
+from tests.helpers.assertions import strip_ansi
 
 type GitEditorScript = Callable[[str], None]
 
@@ -22,11 +23,12 @@ def test_create_help():
 
     assert result.exit_code == 0
 
-    assert "Create a stack with a new branch and commit" in result.stdout
-    assert "keep" in result.stdout.lower()
-    assert "emoji" in result.stdout.lower()
-    assert "--no-verify" in result.stdout
-    assert "-n" in result.stdout
+    output = strip_ansi(result.stdout)
+    assert "Create a stack with a new branch and commit" in output
+    assert "keep" in output.lower()
+    assert "emoji" in output.lower()
+    assert "--no-verify" in output
+    assert "-n" in output
 
 
 def test_create_basic_success(
@@ -687,9 +689,10 @@ def test_create_with_claude_flag_in_help():
     result = runner.invoke(app, ["create", "--help"])
 
     assert result.exit_code == 0
-    assert "--claude" in result.stdout
-    assert "-c" in result.stdout
-    assert "Claude" in result.stdout
+    output = strip_ansi(result.stdout)
+    assert "--claude" in output
+    assert "-c" in output
+    assert "Claude" in output
 
 
 def test_create_with_claude_no_staged_changes(isolated_git_repo: Path, isolated_config: Path):

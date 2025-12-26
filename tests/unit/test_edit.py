@@ -8,6 +8,7 @@ import pytest
 from typer.testing import CliRunner
 
 from shortcake.cli import app
+from tests.helpers.assertions import strip_ansi
 from tests.helpers.git_helpers import get_notes
 
 type GitEditorScript = Callable[[str], None]
@@ -583,8 +584,9 @@ def test_command_preserves_shortcake_metadata(
 def test_command_reword_flag_in_help(command: str):
     result = runner.invoke(app, [command, "--help"])
     assert result.exit_code == 0
-    assert "--reword" in result.stdout
-    assert "-r" in result.stdout
+    output = strip_ansi(result.stdout)
+    assert "--reword" in output
+    assert "-r" in output
 
 
 @pytest.mark.parametrize("command", ["edit", "modify"])
