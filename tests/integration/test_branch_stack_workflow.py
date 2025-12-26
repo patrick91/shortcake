@@ -9,7 +9,11 @@ from inline_snapshot import snapshot
 from typer.testing import CliRunner
 
 from shortcake.cli import app
-from tests.helpers.assertions import assert_branch_exists, assert_current_branch
+from tests.helpers.assertions import (
+    assert_branch_exists,
+    assert_current_branch,
+    normalize_commit_shas,
+)
 from tests.helpers.git_helpers import get_notes
 
 type GitEditorScript = Callable[[str], None]
@@ -92,20 +96,20 @@ Created commit: Add user authentication
     result = runner.invoke(app, ["ls"])
     assert result.exit_code == 0
 
-    # Use snapshot to verify the exact tree structure output
-    assert result.stdout == snapshot(
+    # Use snapshot to verify the tree structure output (SHAs normalized for determinism)
+    assert normalize_commit_shas(result.stdout) == snapshot(
         """\
 │ ◉ add-password-validation (current)
 │ │  just now
-│ │  3bc47f5 - Add password validation
+│ │  SHA - Add password validation
 │ │
 │ ◯ add-login-form
 │ │  just now
-│ │  cc3f641 - Add login form
+│ │  SHA - Add login form
 │ │
 │ ◯ add-user-authentication
 │ │  just now
-│ │  669315a - Add user authentication
+│ │  SHA - Add user authentication
 │ │
 ├─┘
 │
@@ -168,15 +172,15 @@ def test_adopt_existing_branch_and_stack(
     # List should show both branches in a tree structure
     result = runner.invoke(app, ["ls"])
     assert result.exit_code == 0
-    assert result.stdout == snapshot(
+    assert normalize_commit_shas(result.stdout) == snapshot(
         """\
 │ ◉ extend-feature (current)
 │ │  just now
-│ │  523d894 - Extend feature
+│ │  SHA - Extend feature
 │ │
 │ ◯ feature-base
 │ │  just now
-│ │  b91ed3c - Add feature base
+│ │  SHA - Add feature base
 │ │
 ├─┘
 │
@@ -228,16 +232,16 @@ def test_multiple_parallel_stacks(
     # Both stacks should appear in ls
     result = runner.invoke(app, ["ls"])
     assert result.exit_code == 0
-    assert result.stdout == snapshot(
+    assert normalize_commit_shas(result.stdout) == snapshot(
         """\
 │ ◯ feature-one
 │ │  just now
-│ │  18ef8b0 - Feature one
+│ │  SHA - Feature one
 │ │
 ├─┘
 │ ◉ feature-two (current)
 │ │  just now
-│ │  5937f74 - Feature two
+│ │  SHA - Feature two
 │ │
 ├─┘
 │
@@ -257,20 +261,20 @@ def test_multiple_parallel_stacks(
     # All three branches should appear in ls with proper tree structure
     result = runner.invoke(app, ["ls"])
     assert result.exit_code == 0
-    assert result.stdout == snapshot(
+    assert normalize_commit_shas(result.stdout) == snapshot(
         """\
 │ ◯ feature-one
 │ │  just now
-│ │  18ef8b0 - Feature one
+│ │  SHA - Feature one
 │ │
 ├─┘
 │ ◉ extend-feature-two (current)
 │ │  just now
-│ │  c329d50 - Extend feature two
+│ │  SHA - Extend feature two
 │ │
 │ ◯ feature-two
 │ │  just now
-│ │  5937f74 - Feature two
+│ │  SHA - Feature two
 │ │
 ├─┘
 │
