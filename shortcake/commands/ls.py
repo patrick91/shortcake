@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import typer
 from rich.console import Console
@@ -33,9 +33,9 @@ def _get_relative_time(dt: datetime | None) -> str:
     if dt is None:
         return ""
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
 
     diff = now - dt
     seconds = diff.total_seconds()
@@ -93,9 +93,7 @@ def _get_shortcake_branches(git: GitRepo) -> list[BranchDisplayInfo]:
     return branches
 
 
-def _build_tree_lines(
-    branches: list[BranchDisplayInfo], git: GitRepo
-) -> list[str]:
+def _build_tree_lines(branches: list[BranchDisplayInfo], git: GitRepo) -> list[str]:
     """Build a vertical stack visualization with connecting lines.
 
     Shows the stack with trunk at bottom and tips at top.

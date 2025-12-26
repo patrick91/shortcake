@@ -8,7 +8,6 @@ from httpx import Response
 from typer.testing import CliRunner
 
 from shortcake.cli import app
-from shortcake.commands.get import _pick_pr_interactive
 from shortcake.git import GitRepo
 from shortcake.github import PullRequest
 from tests.helpers.git_helpers import (
@@ -17,7 +16,6 @@ from tests.helpers.git_helpers import (
     create_commit,
     get_metadata,
     push_branch,
-    setup_remote,
 )
 
 runner = CliRunner()
@@ -98,8 +96,7 @@ def test_get_stack_of_branches(repo_with_remote: tuple[Path, Path], isolated_con
 def test_get_branch_already_exists_and_up_to_date(
     repo_with_remote: tuple[Path, Path], isolated_config: Path
 ):
-    local_repo, remote_repo = repo_with_remote
-    git = GitRepo(local_repo)
+    local_repo, _ = repo_with_remote
 
     # Create and push a branch
     create_branch(local_repo, "feature-1")
@@ -132,8 +129,9 @@ def test_get_by_pr_number(
     mock_github_token: str,
     build_pr_response,
 ):
-    from unittest.mock import patch
     import subprocess
+    from unittest.mock import patch
+
     import respx
 
     local_repo, remote_repo = repo_with_remote
@@ -158,12 +156,15 @@ def test_get_by_pr_number(
     # Mock GitHub API and git fetch
     with respx.mock:
         respx.get("https://api.github.com/repos/testuser/testrepo/pulls/42").mock(
-            return_value=Response(200, json=build_pr_response(
-                number=42,
-                title="My PR",
-                head_ref="feature-from-pr",
-                base_ref="main",
-            ))
+            return_value=Response(
+                200,
+                json=build_pr_response(
+                    number=42,
+                    title="My PR",
+                    head_ref="feature-from-pr",
+                    base_ref="main",
+                ),
+            )
         )
 
         # Mock fetch to use the local bare repo
@@ -221,9 +222,7 @@ def test_get_force_overwrites_local_changes(
     assert result.exit_code == 0
 
 
-def test_get_switches_to_target_branch(
-    repo_with_remote: tuple[Path, Path], isolated_config: Path
-):
+def test_get_switches_to_target_branch(repo_with_remote: tuple[Path, Path], isolated_config: Path):
     local_repo, _ = repo_with_remote
     git = GitRepo(local_repo)
 
@@ -247,6 +246,7 @@ def test_get_switches_to_target_branch(
 
 
 # Interactive mode tests
+
 
 def test_get_interactive_no_prs(
     repo_with_remote: tuple[Path, Path],
@@ -295,18 +295,21 @@ def test_get_interactive_with_mine_no_prs(
     with respx.mock:
         # Mock PR list with PRs from other users
         respx.get("https://api.github.com/repos/testuser/testrepo/pulls").mock(
-            return_value=Response(200, json=[
-                {
-                    "number": 1,
-                    "title": "Someone else's PR",
-                    "body": "",
-                    "html_url": "https://github.com/testuser/testrepo/pull/1",
-                    "head": {"ref": "other-feature", "sha": "a" * 40},
-                    "base": {"ref": "main", "sha": "b" * 40},
-                    "state": "open",
-                    "user": {"login": "otheruser"},
-                }
-            ])
+            return_value=Response(
+                200,
+                json=[
+                    {
+                        "number": 1,
+                        "title": "Someone else's PR",
+                        "body": "",
+                        "html_url": "https://github.com/testuser/testrepo/pull/1",
+                        "head": {"ref": "other-feature", "sha": "a" * 40},
+                        "base": {"ref": "main", "sha": "b" * 40},
+                        "state": "open",
+                        "user": {"login": "otheruser"},
+                    }
+                ],
+            )
         )
         # Mock current user
         respx.get("https://api.github.com/user").mock(
@@ -365,37 +368,40 @@ def test_get_interactive_selects_pr(
     with respx.mock:
         # Mock PR list
         respx.get("https://api.github.com/repos/testuser/testrepo/pulls").mock(
-            return_value=Response(200, json=[
-                {
-                    "number": 99,
-                    "title": "Interactive PR",
-                    "body": "",
-                    "html_url": "https://github.com/testuser/testrepo/pull/99",
-                    "head": {"ref": "feature-interactive", "sha": "a" * 40},
-                    "base": {"ref": "main", "sha": "b" * 40},
-                    "state": "open",
-                    "user": {"login": "testuser"},
-                }
-            ])
+            return_value=Response(
+                200,
+                json=[
+                    {
+                        "number": 99,
+                        "title": "Interactive PR",
+                        "body": "",
+                        "html_url": "https://github.com/testuser/testrepo/pull/99",
+                        "head": {"ref": "feature-interactive", "sha": "a" * 40},
+                        "base": {"ref": "main", "sha": "b" * 40},
+                        "state": "open",
+                        "user": {"login": "testuser"},
+                    }
+                ],
+            )
         )
 
         # Mock the interactive picker to return our PR
         with patch.object(
-            GitRepo, "fetch",
+            GitRepo,
+            "fetch",
             lambda self, remote: subprocess.run(
                 ["git", "remote", "set-url", "origin", str(remote_repo)],
                 cwd=local_repo,
                 check=True,
-            ) or git.repo.remote("origin").fetch() or subprocess.run(
+            )
+            or git.repo.remote("origin").fetch()
+            or subprocess.run(
                 ["git", "remote", "set-url", "origin", "git@github.com:testuser/testrepo.git"],
                 cwd=local_repo,
                 check=True,
-            )
+            ),
         ):
-            with patch(
-                "shortcake.commands.get._pick_pr_interactive",
-                return_value=mock_pr
-            ):
+            with patch("shortcake.commands.get._pick_pr_interactive", return_value=mock_pr):
                 result = runner.invoke(app, ["get"])
 
     assert result.exit_code == 0
