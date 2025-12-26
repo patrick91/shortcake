@@ -548,10 +548,12 @@ def test_restack_detects_redundant_commits_without_parent_revision(
     git.checkout_branch("feature")
 
     # Restack should detect the redundant commit via cherry detection
-    result = runner.invoke(app, ["restack"])
-    assert result.exit_code == 0
+    result = runner.invoke(app, ["restack", "--debug"])
+    assert result.exit_code == 0, f"Restack failed: {result.output}"
     # Should detect and rebase (the cherry detection catches this)
-    assert "Rebasing feature" in result.output
+    assert (
+        "Rebasing feature" in result.output
+    ), f"Expected 'Rebasing feature' in output:\n{result.output}"
 
     # After restack: first commit should be skipped, only second remains
     log_after = subprocess.run(
