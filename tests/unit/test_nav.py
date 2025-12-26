@@ -236,3 +236,128 @@ def test_checkout_nonexistent_pr(isolated_git_repo: Path, isolated_config: Path)
     result = runner.invoke(app, ["checkout", "999"])
     assert result.exit_code == 1
     assert "No branch found for PR #999" in result.output
+
+
+def test_up_with_multiple_children(isolated_git_repo: Path, isolated_config: Path):
+    git = GitRepo()
+
+    # Create parent branch
+    git.create_branch("parent-branch", checkout=True)
+    (isolated_git_repo / "parent.txt").write_text("parent")
+    git.add_files(["parent.txt"])
+    git.commit("Add parent")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "parent-branch")
+
+    # Create first child branch
+    git.create_branch("child-1", checkout=True)
+    (isolated_git_repo / "child1.txt").write_text("child1")
+    git.add_files(["child1.txt"])
+    git.commit("Add child1")
+    add_notes(isolated_git_repo, json.dumps({"parent": "parent-branch"}), "child-1")
+
+    # Go back to parent and create second child
+    git.checkout_branch("parent-branch")
+    git.create_branch("child-2", checkout=True)
+    (isolated_git_repo / "child2.txt").write_text("child2")
+    git.add_files(["child2.txt"])
+    git.commit("Add child2")
+    add_notes(isolated_git_repo, json.dumps({"parent": "parent-branch"}), "child-2")
+
+    # Go back to parent
+    git.checkout_branch("parent-branch")
+
+    # Up should show multiple children
+    result = runner.invoke(app, ["up"])
+    assert result.exit_code == 0
+    assert "Multiple child branches" in result.output
+    assert "child-1" in result.output
+    assert "child-2" in result.output
+
+
+def test_top_with_multiple_children(isolated_git_repo: Path, isolated_config: Path):
+    git = GitRepo()
+
+    # Create a stack: main -> branch1 -> branch2a, branch2b
+    git.create_branch("branch1", checkout=True)
+    (isolated_git_repo / "file1.txt").write_text("1")
+    git.add_files(["file1.txt"])
+    git.commit("Add file1")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "branch1")
+
+    git.create_branch("branch2a", checkout=True)
+    (isolated_git_repo / "file2a.txt").write_text("2a")
+    git.add_files(["file2a.txt"])
+    git.commit("Add file2a")
+    add_notes(isolated_git_repo, json.dumps({"parent": "branch1"}), "branch2a")
+
+    git.checkout_branch("branch1")
+    git.create_branch("branch2b", checkout=True)
+    (isolated_git_repo / "file2b.txt").write_text("2b")
+    git.add_files(["file2b.txt"])
+    git.commit("Add file2b")
+    add_notes(isolated_git_repo, json.dumps({"parent": "branch1"}), "branch2b")
+
+    # Go to main
+    git.checkout_branch("main")
+
+    # Go to top - should stop at branch1 due to multiple children
+    result = runner.invoke(app, ["top"])
+    assert result.exit_code == 0
+    assert "Multiple branches" in result.output
+
+    # Verify we're at branch1 (where the fork is)
+    assert git.get_current_branch() == "branch1"
+
+
+def test_bottom_already_at_bottom(isolated_git_repo: Path, isolated_config: Path):
+    git = GitRepo()
+
+    # Create a single branch
+    git.create_branch("only-branch", checkout=True)
+    (isolated_git_repo / "file.txt").write_text("content")
+    git.add_files(["file.txt"])
+    git.commit("Add file")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "only-branch")
+
+    # Bottom should say already at bottom
+    result = runner.invoke(app, ["bottom"])
+    assert result.exit_code == 0
+    assert "Already at bottom of stack" in result.output
+
+
+def test_top_already_at_top(isolated_git_repo: Path, isolated_config: Path):
+    git = GitRepo()
+
+    # Create a branch with no children
+    git.create_branch("leaf-branch", checkout=True)
+    (isolated_git_repo / "leaf.txt").write_text("leaf")
+    git.add_files(["leaf.txt"])
+    git.commit("Add leaf")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "leaf-branch")
+
+    # Going top from leaf should say already at top
+    result = runner.invoke(app, ["top"])
+    assert result.exit_code == 0
+    assert "Already at top of stack" in result.output
+
+
+def test_bottom_from_main(isolated_git_repo: Path, isolated_config: Path):
+    # We're on main, going bottom should say already at trunk
+    result = runner.invoke(app, ["bottom"])
+    assert result.exit_code == 0
+    assert "trunk" in result.output.lower()
+
+
+def test_down_untracked_branch(isolated_git_repo: Path, isolated_config: Path):
+    git = GitRepo()
+
+    # Create a branch without shortcake metadata
+    git.create_branch("untracked-branch", checkout=True)
+    (isolated_git_repo / "file.txt").write_text("content")
+    git.add_files(["file.txt"])
+    git.commit("Add file")
+
+    # Down should error because branch is not managed
+    result = runner.invoke(app, ["down"])
+    assert result.exit_code == 1
+    assert "no parent" in result.output.lower() or "not managed" in result.output.lower()

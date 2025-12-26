@@ -534,3 +534,78 @@ def test_sync_deletes_branch_checked_out_in_worktree(
         check=True,
         capture_output=True,
     )
+
+
+def test_sync_not_in_git_repo(tmp_path: Path, monkeypatch):
+    not_a_repo = tmp_path / "not_a_repo"
+    not_a_repo.mkdir()
+    monkeypatch.chdir(not_a_repo)
+
+    result = runner.invoke(app, ["sync"])
+    assert result.exit_code == 1
+    assert "Error" in result.output
+
+
+def test_sync_skip_branch_without_metadata(isolated_git_repo: Path, isolated_config: Path):
+    git = GitRepo()
+
+    # Create a branch with metadata
+    git.create_branch("feature-1", checkout=True)
+    (isolated_git_repo / "f1.txt").write_text("f1")
+    git.add_files("f1.txt")
+    git.commit("Add f1")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature-1")
+
+    # Create a branch WITHOUT metadata (e.g., regular git branch)
+    git.checkout_branch("main")
+    git.create_branch("untracked-branch", checkout=True)
+    (isolated_git_repo / "u.txt").write_text("u")
+    git.add_files("u.txt")
+    git.commit("Add u")
+
+    # Merge feature-1 into main
+    git.checkout_branch("main")
+    git.repo.git.merge("feature-1", "--no-ff", "-m", "Merge feature-1")
+
+    # Run sync - should work and ignore untracked branch
+    result = runner.invoke(app, ["sync"])
+    assert result.exit_code == 0
+
+    # feature-1 should be deleted (merged)
+    assert not git.branch_exists("feature-1")
+
+    # untracked-branch should still exist
+    assert git.branch_exists("untracked-branch")
+
+
+def test_sync_returns_to_original_branch(isolated_git_repo: Path, isolated_config: Path):
+    git = GitRepo()
+
+    # Create parent branch
+    git.create_branch("feature-parent", checkout=True)
+    (isolated_git_repo / "parent.txt").write_text("parent")
+    git.add_files("parent.txt")
+    git.commit("Add parent")
+    add_notes(isolated_git_repo, json.dumps({"parent": "main"}), "feature-parent")
+
+    # Create child branch
+    git.create_branch("feature-child", checkout=True)
+    (isolated_git_repo / "child.txt").write_text("child")
+    git.add_files("child.txt")
+    git.commit("Add child")
+    add_notes(isolated_git_repo, json.dumps({"parent": "feature-parent"}), "feature-child")
+
+    # Merge parent into main
+    git.checkout_branch("main")
+    git.repo.git.merge("feature-parent", "--no-ff", "-m", "Merge feature-parent")
+
+    # Stay on child branch before sync
+    git.checkout_branch("feature-child")
+    assert git.get_current_branch() == "feature-child"
+
+    # Run sync
+    result = runner.invoke(app, ["sync"])
+    assert result.exit_code == 0
+
+    # Should still be on feature-child
+    assert git.get_current_branch() == "feature-child"
