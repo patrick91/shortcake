@@ -393,6 +393,9 @@ def test_sync_fast_forwards_main_branch(
     with tempfile.TemporaryDirectory() as tmpdir:
         clone_path = Path(tmpdir) / "clone"
         subprocess.run(["git", "clone", str(remote_repo), str(clone_path)], check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=clone_path, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=clone_path, check=True)
+        subprocess.run(["git", "checkout", "main"], cwd=clone_path, check=True)
         (clone_path / "remote-main-update.txt").write_text("remote main update")
         subprocess.run(["git", "add", "remote-main-update.txt"], cwd=clone_path, check=True)
         subprocess.run(["git", "commit", "-m", "Remote main update"], cwd=clone_path, check=True)
@@ -444,6 +447,8 @@ def test_sync_fast_forwards_and_updates_metadata(
     with tempfile.TemporaryDirectory() as tmpdir:
         clone_path = Path(tmpdir) / "clone"
         subprocess.run(["git", "clone", str(remote_repo), str(clone_path)], check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=clone_path, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=clone_path, check=True)
         subprocess.run(["git", "checkout", "feature"], cwd=clone_path, check=True)
         (clone_path / "remote-update.txt").write_text("remote update")
         subprocess.run(["git", "add", "remote-update.txt"], cwd=clone_path, check=True)

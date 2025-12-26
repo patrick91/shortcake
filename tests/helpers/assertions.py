@@ -14,6 +14,11 @@ def normalize_commit_shas(output: str) -> str:
     return re.sub(r"\b[0-9a-f]{7}\b(?= - )", "SHA", output)
 
 
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
+
 def assert_branch_exists(repo_path: Path, branch_name: str) -> None:
     """Assert that a branch exists."""
     branches = get_branches(repo_path)
