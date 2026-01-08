@@ -1020,6 +1020,94 @@ class GitRepo:
         except Exception:
             return False
 
+    def hard_reset(self, ref: str) -> None:
+        """Hard reset the current branch to a ref.
+
+        Args:
+            ref: The ref to reset to (e.g., 'origin/branch-name').
+
+        Raises:
+            GitError: If reset fails.
+        """
+        try:
+            subprocess.run(
+                ["git", "reset", "--hard", ref],
+                capture_output=True,
+                text=True,
+                check=True,
+                cwd=self.working_dir,
+            )
+        except subprocess.CalledProcessError as e:
+            raise GitError(f"Failed to hard reset to '{ref}': {e.stderr or e.stdout}") from e
+
+    def are_commits_equivalent_to_remote(self, branch: str, remote_ref: str) -> bool:
+        """Check if all local commits on branch are equivalent to commits on remote.
+
+        This detects when a branch has been rebased on another machine - the local
+        commits have the same content as remote commits but different SHAs.
+
+        Uses git cherry which compares patches by content, not commit SHAs.
+
+        Args:
+            branch: The local branch to check.
+            remote_ref: The remote ref to compare against (e.g., 'origin/branch').
+
+        Returns:
+            True if all local commits have equivalent patches on remote.
+        """
+        try:
+            # git cherry <remote> <local> lists commits in local not in remote
+            # Lines starting with '-' indicate equivalent patch exists in remote
+            # Lines starting with '+' indicate no equivalent patch in remote
+            result = self.repo.git.cherry(remote_ref, branch)
+            if not result or not result.strip():
+                # No commits to compare, consider equivalent
+                return True
+
+            for line in result.strip().split("\n"):
+                if line.startswith("+"):
+                    # Found a commit that has no equivalent in remote
+                    return False
+            # All commits have equivalents in remote
+            return True
+        except Exception:
+            return False
+
+    def get_divergence_info(
+        self, branch: str, remote_ref: str
+    ) -> tuple[int, int, bool]:
+        """Get information about how a branch has diverged from its remote.
+
+        Args:
+            branch: The local branch.
+            remote_ref: The remote ref (e.g., 'origin/branch').
+
+        Returns:
+            Tuple of (local_ahead, remote_ahead, are_equivalent).
+            - local_ahead: Number of commits on local not on remote
+            - remote_ahead: Number of commits on remote not on local
+            - are_equivalent: True if local commits are rebased versions of remote
+        """
+        try:
+            local_sha = self.get_commit_sha(branch)
+            remote_sha = self.get_commit_sha(remote_ref)
+
+            if local_sha == remote_sha:
+                return (0, 0, True)
+
+            # Count commits ahead/behind
+            local_ahead = self.count_commits_between(remote_ref, branch)
+            remote_ahead = self.count_commits_between(branch, remote_ref)
+
+            # Check if local commits are equivalent to remote
+            are_equivalent = False
+            if local_ahead > 0 and remote_ahead > 0:
+                are_equivalent = self.are_commits_equivalent_to_remote(branch, remote_ref)
+
+            return (local_ahead, remote_ahead, are_equivalent)
+        except Exception:
+            return (0, 0, False)
+
     def is_squash_merged(self, branch: str, target: str) -> bool:
         """Check if branch has been squash-merged into target using git cherry.
 
