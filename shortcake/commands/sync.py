@@ -239,6 +239,12 @@ def sync(
         False, "--continue", help="Continue after resolving rebase conflicts"
     ),
     abort: bool = typer.Option(False, "--abort", help="Abort the current rebase operation"),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Force update diverged branches to match remote (discards local commits)",
+    ),
 ):
     """Sync branches after a parent branch has been merged.
 
@@ -316,16 +322,14 @@ def sync(
         print_error(str(e))
         raise typer.Exit(1) from None
 
-    # Fetch from remote if available
+    # Fetch from remote if available (always fetch, even in dry-run,
+    # since we need remote refs to detect divergence)
     if git.has_remote("origin"):
-        if dry_run:
-            typer.echo("Would fetch from origin...")
-        else:
-            typer.echo("Fetching from origin...")
-            try:
-                git.fetch("origin")
-            except GitError as e:
-                print_warning(f"Failed to fetch: {e}")
+        typer.echo("Fetching from origin...")
+        try:
+            git.fetch("origin")
+        except GitError as e:
+            print_warning(f"Failed to fetch: {e}")
 
     # Fast-forward main branch if it's behind remote
     main_updated = False
@@ -360,8 +364,11 @@ def sync(
         return
 
     # Check for branches that are behind their remote and fast-forward them
+    # Also detect diverged branches and handle them appropriately
     current_branch = git.get_current_branch()
     branches_updated: list[str] = []
+    branches_reset: list[str] = []  # Branches that were reset to remote
+    branches_diverged: list[tuple[str, int, int]] = []  # (name, local_ahead, remote_ahead)
 
     for name in branches:
         remote_ref = f"origin/{name}"
@@ -372,7 +379,7 @@ def sync(
             if remote_sha == local_sha:
                 continue  # Already up to date
 
-            # Check if local is behind remote (remote is ahead)
+            # Check if local is behind remote (remote is ahead) - simple fast-forward
             if git.is_ancestor(local_sha, remote_sha):
                 if dry_run:
                     typer.echo(f"Would fast-forward {name} to {remote_ref}")
@@ -400,6 +407,74 @@ def sync(
                                 update_branch_metadata(name, parent_revision=new_parent_rev)
                         except GitError:
                             pass
+            # Check if branches have diverged (both have unique commits)
+            elif not git.is_ancestor(remote_sha, local_sha):
+                # Branches have diverged - check if it's safe to reset
+                local_ahead, remote_ahead, are_equivalent = git.get_divergence_info(
+                    name, remote_ref
+                )
+
+                if are_equivalent:
+                    # Local commits are rebased versions of remote - safe to reset
+                    if dry_run:
+                        typer.echo(
+                            f"Would reset {name} to {remote_ref} "
+                            f"(local commits are rebased versions of remote)"
+                        )
+                    else:
+                        if name == current_branch:
+                            git.hard_reset(remote_ref)
+                        else:
+                            git.update_ref(f"refs/heads/{name}", remote_sha)
+                        branches_reset.append(name)
+
+                        # Update metadata
+                        branch_meta = branches[name]
+                        parent = branch_meta.parent
+                        if parent:
+                            parent_ref = (
+                                f"origin/{parent}"
+                                if git.is_trunk_branch(parent) and git.has_remote("origin")
+                                else parent
+                            )
+                            try:
+                                new_parent_rev = git.get_merge_base(remote_sha, parent_ref)
+                                if new_parent_rev:
+                                    update_branch_metadata(name, parent_revision=new_parent_rev)
+                            except GitError:
+                                pass
+                elif force:
+                    # Force flag provided - reset to remote even with unique local commits
+                    if dry_run:
+                        typer.echo(
+                            f"Would force reset {name} to {remote_ref} "
+                            f"(discarding {local_ahead} local commit(s))"
+                        )
+                    else:
+                        if name == current_branch:
+                            git.hard_reset(remote_ref)
+                        else:
+                            git.update_ref(f"refs/heads/{name}", remote_sha)
+                        branches_reset.append(name)
+
+                        # Update metadata
+                        branch_meta = branches[name]
+                        parent = branch_meta.parent
+                        if parent:
+                            parent_ref = (
+                                f"origin/{parent}"
+                                if git.is_trunk_branch(parent) and git.has_remote("origin")
+                                else parent
+                            )
+                            try:
+                                new_parent_rev = git.get_merge_base(remote_sha, parent_ref)
+                                if new_parent_rev:
+                                    update_branch_metadata(name, parent_revision=new_parent_rev)
+                            except GitError:
+                                pass
+                else:
+                    # Diverged with unique local commits - warn user
+                    branches_diverged.append((name, local_ahead, remote_ahead))
         except GitError:
             continue  # Remote branch doesn't exist
 
@@ -409,6 +484,24 @@ def sync(
             typer.echo(f"  • {name}")
         typer.echo()
 
+    if branches_reset:
+        typer.echo(f"Reset {len(branches_reset)} branch(es) to match remote:")
+        for name in branches_reset:
+            typer.echo(f"  • {name}")
+        typer.echo()
+
+    if branches_diverged:
+        print_warning(f"{len(branches_diverged)} branch(es) have diverged from remote:")
+        for name, local_ahead, remote_ahead in branches_diverged:
+            typer.echo(
+                f"  • {name}: {local_ahead} local commit(s), "
+                f"{remote_ahead} remote commit(s)"
+            )
+        typer.echo()
+        typer.echo(f"Use '{cli} sync --force' to discard local commits and update to remote.")
+        typer.echo()
+
+    if branches_updated or branches_reset:
         # Refresh branches dict after updates
         branches = _get_tracked_branches(git)
 

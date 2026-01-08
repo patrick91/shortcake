@@ -609,3 +609,238 @@ def test_sync_returns_to_original_branch(isolated_git_repo: Path, isolated_confi
 
     # Should still be on feature-child
     assert git.get_current_branch() == "feature-child"
+
+
+def test_sync_auto_resets_rebased_branch(
+    isolated_git_repo: Path, isolated_config: Path, remote_repo: Path
+):
+    """Test that sync auto-resets when local commits are rebased versions of remote."""
+    import tempfile
+
+    git = GitRepo()
+
+    # Set up remote
+    git.add_remote("origin", str(remote_repo))
+    subprocess.run(["git", "push", "-u", "origin", "main"], cwd=isolated_git_repo, check=True)
+
+    # Create a tracked branch and push it
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature content")
+    git.add_files("feature.txt")
+    git.commit("Add feature")
+
+    main_sha = git.get_commit_sha("main")
+    add_notes(
+        isolated_git_repo,
+        json.dumps({"parent": "main", "parent_revision": main_sha}),
+        "feature",
+    )
+    subprocess.run(["git", "push", "-u", "origin", "feature"], cwd=isolated_git_repo, check=True)
+
+    local_sha_before = git.get_commit_sha("feature")
+
+    # Simulate rebasing the branch on the remote (same changes, different SHA)
+    with tempfile.TemporaryDirectory() as tmpdir:
+        clone_path = Path(tmpdir) / "clone"
+        subprocess.run(["git", "clone", str(remote_repo), str(clone_path)], check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=clone_path, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=clone_path, check=True)
+
+        # First add a commit to main to create divergence
+        subprocess.run(["git", "checkout", "main"], cwd=clone_path, check=True)
+        (clone_path / "main-update.txt").write_text("main update")
+        subprocess.run(["git", "add", "main-update.txt"], cwd=clone_path, check=True)
+        subprocess.run(["git", "commit", "-m", "Main update"], cwd=clone_path, check=True)
+        subprocess.run(["git", "push", "origin", "main"], cwd=clone_path, check=True)
+
+        # Then rebase feature onto main (same content, new SHA)
+        subprocess.run(["git", "checkout", "feature"], cwd=clone_path, check=True)
+        subprocess.run(["git", "rebase", "main"], cwd=clone_path, check=True)
+        subprocess.run(["git", "push", "--force", "origin", "feature"], cwd=clone_path, check=True)
+
+    # Now local and remote have diverged, but local commits are rebased versions
+    # Run sync - should auto-reset since commits are equivalent
+    result = runner.invoke(app, ["sync"])
+    assert result.exit_code == 0
+    assert "Reset 1 branch(es) to match remote" in result.output
+
+    # Verify local branch now matches remote
+    subprocess.run(["git", "fetch", "origin"], cwd=isolated_git_repo, check=True)
+    remote_sha = git.get_commit_sha("origin/feature")
+    local_sha_after = git.get_commit_sha("feature")
+    assert local_sha_after == remote_sha
+    assert local_sha_after != local_sha_before
+
+
+def test_sync_warns_on_diverged_branch_with_unique_commits(
+    isolated_git_repo: Path, isolated_config: Path, remote_repo: Path
+):
+    """Test that sync warns when branches have diverged with unique local commits."""
+    import tempfile
+
+    git = GitRepo()
+
+    # Set up remote
+    git.add_remote("origin", str(remote_repo))
+    subprocess.run(["git", "push", "-u", "origin", "main"], cwd=isolated_git_repo, check=True)
+
+    # Create a tracked branch and push it
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature content")
+    git.add_files("feature.txt")
+    git.commit("Add feature")
+
+    main_sha = git.get_commit_sha("main")
+    add_notes(
+        isolated_git_repo,
+        json.dumps({"parent": "main", "parent_revision": main_sha}),
+        "feature",
+    )
+    subprocess.run(["git", "push", "-u", "origin", "feature"], cwd=isolated_git_repo, check=True)
+
+    # Add a unique local commit
+    (isolated_git_repo / "local-only.txt").write_text("local only content")
+    git.add_files("local-only.txt")
+    git.commit("Local only commit")
+
+    # Simulate a different commit on the remote
+    with tempfile.TemporaryDirectory() as tmpdir:
+        clone_path = Path(tmpdir) / "clone"
+        subprocess.run(["git", "clone", str(remote_repo), str(clone_path)], check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=clone_path, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=clone_path, check=True)
+        subprocess.run(["git", "checkout", "feature"], cwd=clone_path, check=True)
+        (clone_path / "remote-only.txt").write_text("remote only content")
+        subprocess.run(["git", "add", "remote-only.txt"], cwd=clone_path, check=True)
+        subprocess.run(["git", "commit", "-m", "Remote only commit"], cwd=clone_path, check=True)
+        subprocess.run(["git", "push", "--force", "origin", "feature"], cwd=clone_path, check=True)
+
+    # Run sync - should warn about diverged branch
+    result = runner.invoke(app, ["sync"])
+    assert result.exit_code == 0
+    assert "have diverged from remote" in result.output
+    assert "feature" in result.output
+    assert "--force" in result.output
+
+    # Verify local branch was NOT changed
+    assert (isolated_git_repo / "local-only.txt").exists()
+
+
+def test_sync_force_resets_diverged_branch(
+    isolated_git_repo: Path, isolated_config: Path, remote_repo: Path
+):
+    """Test that sync --force resets diverged branches even with unique local commits."""
+    import tempfile
+
+    git = GitRepo()
+
+    # Set up remote
+    git.add_remote("origin", str(remote_repo))
+    subprocess.run(["git", "push", "-u", "origin", "main"], cwd=isolated_git_repo, check=True)
+
+    # Create a tracked branch and push it
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature content")
+    git.add_files("feature.txt")
+    git.commit("Add feature")
+
+    main_sha = git.get_commit_sha("main")
+    add_notes(
+        isolated_git_repo,
+        json.dumps({"parent": "main", "parent_revision": main_sha}),
+        "feature",
+    )
+    subprocess.run(["git", "push", "-u", "origin", "feature"], cwd=isolated_git_repo, check=True)
+
+    # Add a unique local commit
+    (isolated_git_repo / "local-only.txt").write_text("local only content")
+    git.add_files("local-only.txt")
+    git.commit("Local only commit")
+
+    local_sha_before = git.get_commit_sha("feature")
+
+    # Simulate a different commit on the remote
+    with tempfile.TemporaryDirectory() as tmpdir:
+        clone_path = Path(tmpdir) / "clone"
+        subprocess.run(["git", "clone", str(remote_repo), str(clone_path)], check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=clone_path, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=clone_path, check=True)
+        subprocess.run(["git", "checkout", "feature"], cwd=clone_path, check=True)
+        (clone_path / "remote-only.txt").write_text("remote only content")
+        subprocess.run(["git", "add", "remote-only.txt"], cwd=clone_path, check=True)
+        subprocess.run(["git", "commit", "-m", "Remote only commit"], cwd=clone_path, check=True)
+        subprocess.run(["git", "push", "--force", "origin", "feature"], cwd=clone_path, check=True)
+
+    # Run sync with --force - should reset to remote
+    result = runner.invoke(app, ["sync", "--force"])
+    assert result.exit_code == 0
+    assert "Reset 1 branch(es) to match remote" in result.output
+
+    # Verify local branch now matches remote
+    subprocess.run(["git", "fetch", "origin"], cwd=isolated_git_repo, check=True)
+    remote_sha = git.get_commit_sha("origin/feature")
+    local_sha_after = git.get_commit_sha("feature")
+    assert local_sha_after == remote_sha
+    assert local_sha_after != local_sha_before
+
+    # Local-only file should be gone
+    assert not (isolated_git_repo / "local-only.txt").exists()
+    # Remote-only file should exist
+    assert (isolated_git_repo / "remote-only.txt").exists()
+
+
+def test_sync_force_dry_run_shows_plan(
+    isolated_git_repo: Path, isolated_config: Path, remote_repo: Path
+):
+    """Test that sync --force --dry-run shows what would happen without making changes."""
+    import tempfile
+
+    git = GitRepo()
+
+    # Set up remote
+    git.add_remote("origin", str(remote_repo))
+    subprocess.run(["git", "push", "-u", "origin", "main"], cwd=isolated_git_repo, check=True)
+
+    # Create a tracked branch and push it
+    git.create_branch("feature", checkout=True)
+    (isolated_git_repo / "feature.txt").write_text("feature content")
+    git.add_files("feature.txt")
+    git.commit("Add feature")
+
+    main_sha = git.get_commit_sha("main")
+    add_notes(
+        isolated_git_repo,
+        json.dumps({"parent": "main", "parent_revision": main_sha}),
+        "feature",
+    )
+    subprocess.run(["git", "push", "-u", "origin", "feature"], cwd=isolated_git_repo, check=True)
+
+    # Add a unique local commit
+    (isolated_git_repo / "local-only.txt").write_text("local only content")
+    git.add_files("local-only.txt")
+    git.commit("Local only commit")
+
+    local_sha_before = git.get_commit_sha("feature")
+
+    # Simulate a different commit on the remote
+    with tempfile.TemporaryDirectory() as tmpdir:
+        clone_path = Path(tmpdir) / "clone"
+        subprocess.run(["git", "clone", str(remote_repo), str(clone_path)], check=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=clone_path, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=clone_path, check=True)
+        subprocess.run(["git", "checkout", "feature"], cwd=clone_path, check=True)
+        (clone_path / "remote-only.txt").write_text("remote only content")
+        subprocess.run(["git", "add", "remote-only.txt"], cwd=clone_path, check=True)
+        subprocess.run(["git", "commit", "-m", "Remote only commit"], cwd=clone_path, check=True)
+        subprocess.run(["git", "push", "--force", "origin", "feature"], cwd=clone_path, check=True)
+
+    # Run sync with --force --dry-run
+    result = runner.invoke(app, ["sync", "--force", "--dry-run"])
+    assert result.exit_code == 0
+    assert "Would force reset feature to origin/feature" in result.output
+    assert "discarding" in result.output
+
+    # Verify local branch was NOT changed
+    local_sha_after = git.get_commit_sha("feature")
+    assert local_sha_after == local_sha_before
+    assert (isolated_git_repo / "local-only.txt").exists()
