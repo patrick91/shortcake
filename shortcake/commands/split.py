@@ -13,6 +13,7 @@ from shortcake.metadata import (
     update_branch_metadata,
 )
 from shortcake.output import print_error, print_warning
+from shortcake.trailers import SHORTCAKE_PARENT_TRAILER
 
 app = typer.Typer()
 
@@ -183,6 +184,13 @@ def split(
             parent=parent,
             parent_revision=git.get_commit_sha(parent),
         )
+        try:
+            git.update_commit_trailers(
+                {SHORTCAKE_PARENT_TRAILER: parent},
+                no_verify=True,
+            )
+        except GitError as e:
+            print_warning(f"Failed to add trailers to commit: {e}")
 
         # Track this branch
         created_branches.append(branch_name)

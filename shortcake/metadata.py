@@ -22,6 +22,9 @@ import tempfile
 from pathlib import Path
 from typing import TypedDict
 
+from shortcake.git import GitError, GitRepo
+from shortcake.trailers import SHORTCAKE_PARENT_TRAILER, get_trailer_value
+
 
 class BranchMetadata(TypedDict, total=False):
     """Type definition for branch metadata."""
@@ -220,6 +223,17 @@ class MetadataStore:
         return True
 
 
+def _get_trailer_parent(git: GitRepo, branch: str) -> str | None:
+    """Get the parent trailer value from the branch tip commit."""
+    try:
+        if not git.branch_exists(branch):
+            return None
+        message = git.get_commit_message(branch)
+    except GitError:
+        return None
+    return get_trailer_value(message, SHORTCAKE_PARENT_TRAILER)
+
+
 # Module-level convenience functions using a default store instance
 _default_store: MetadataStore | None = None
 
@@ -234,7 +248,20 @@ def _get_store() -> MetadataStore:
 
 def get_branch_metadata(branch: str) -> BranchMetadata:
     """Get metadata for a branch."""
-    return _get_store().get(branch)
+    metadata = _get_store().get(branch)
+    if metadata.get("parent"):
+        return metadata
+    try:
+        git = GitRepo()
+    except GitError:
+        return metadata
+
+    trailer_parent = _get_trailer_parent(git, branch)
+    if trailer_parent and not metadata.get("parent"):
+        merged = dict(metadata)
+        merged["parent"] = trailer_parent
+        return merged
+    return metadata
 
 
 def set_branch_metadata(branch: str, metadata: BranchMetadata) -> None:
@@ -254,7 +281,24 @@ def delete_branch_metadata(branch: str) -> bool:
 
 def get_all_branch_metadata() -> dict[str, BranchMetadata]:
     """Get metadata for all branches."""
-    return _get_store().get_all()
+    metadata = _get_store().get_all()
+    try:
+        git = GitRepo()
+    except GitError:
+        return metadata
+
+    merged = {name: dict(values) for name, values in metadata.items()}
+    for branch in git.get_branches():
+        branch_meta = merged.get(branch, {})
+        if branch_meta.get("parent"):
+            continue
+        trailer_parent = _get_trailer_parent(git, branch)
+        if not trailer_parent:
+            continue
+        branch_meta["parent"] = trailer_parent
+        merged[branch] = branch_meta
+
+    return merged
 
 
 def get_children(branch: str) -> list[str]:

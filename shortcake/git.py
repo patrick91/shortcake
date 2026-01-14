@@ -1,6 +1,7 @@
 """Git operations using GitPython."""
 
 import subprocess
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -272,6 +273,69 @@ class GitRepo:
             raise GitError(f"Failed to commit: {e.stderr if e.stderr else str(e)}") from e
         except Exception as e:
             raise GitError(f"Failed to commit: {e}") from e
+
+    def amend_commit_message(self, message: str, no_verify: bool = True) -> None:
+        """Amend the current commit message without opening an editor."""
+        temp_path: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                delete=False,
+            ) as temp_file:
+                temp_file.write(message)
+                temp_file.write("\n")
+                temp_path = temp_file.name
+
+            cmd = ["git", "commit", "--amend", "--file", temp_path]
+            if no_verify:
+                cmd.append("--no-verify")
+
+            subprocess.run(cmd, check=True, cwd=self.working_dir)
+        except subprocess.CalledProcessError as e:
+            raise GitError(f"Failed to amend commit message: {e.stderr or e.stdout}") from e
+        except Exception as e:
+            raise GitError(f"Failed to amend commit message: {e}") from e
+        finally:
+            if temp_path:
+                try:
+                    Path(temp_path).unlink()
+                except Exception:
+                    pass
+
+    def update_commit_trailers(
+        self,
+        trailers: dict[str, str | None],
+        ref: str = "HEAD",
+        no_verify: bool = True,
+    ) -> bool:
+        """Update trailer values on a commit.
+
+        Only supports updating the current HEAD commit.
+        """
+        from shortcake.trailers import update_trailers
+
+        try:
+            if ref != "HEAD":
+                ref_sha = self.get_commit_sha(ref)
+                head_sha = self.get_current_commit()
+                if ref_sha != head_sha:
+                    raise GitError("Can only update trailers on HEAD")
+
+            if self.has_staged_changes():
+                raise GitError("Refusing to amend commit message with staged changes present")
+
+            message = self.get_commit_message(ref)
+            updated_message = update_trailers(message, trailers)
+            if updated_message == message:
+                return False
+
+            self.amend_commit_message(updated_message, no_verify=no_verify)
+            return True
+        except GitError:
+            raise
+        except Exception as e:
+            raise GitError(f"Failed to update commit trailers: {e}") from e
 
     def get_last_commit_message(self) -> str:
         """Get the message of the last commit (subject line only).

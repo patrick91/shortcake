@@ -8,7 +8,8 @@ import typer
 from shortcake import config
 from shortcake.git import GitError, GitRepo
 from shortcake.metadata import get_children, update_branch_metadata
-from shortcake.output import print_error
+from shortcake.output import print_error, print_warning
+from shortcake.trailers import SHORTCAKE_PARENT_TRAILER
 
 app = typer.Typer()
 
@@ -320,6 +321,13 @@ def create(
                 parent=original_branch,
                 parent_revision=git.get_commit_sha(parent_ref),
             )
+            try:
+                git.update_commit_trailers(
+                    {SHORTCAKE_PARENT_TRAILER: original_branch},
+                    no_verify=True,
+                )
+            except GitError as e:
+                print_warning(f"Failed to add trailers to commit: {e}")
 
         typer.echo(f"Created and switched to branch: {branch_name}")
         typer.echo(f"Created commit: {commit_message}")

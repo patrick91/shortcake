@@ -2,7 +2,8 @@ import typer
 
 from shortcake.git import GitError, GitRepo
 from shortcake.metadata import get_branch_metadata, update_branch_metadata
-from shortcake.output import print_error
+from shortcake.output import print_error, print_warning
+from shortcake.trailers import SHORTCAKE_PARENT_TRAILER
 
 app = typer.Typer()
 
@@ -84,6 +85,7 @@ def adopt(
 
     try:
         branch_to_adopt = branch or git.get_current_branch()
+        current_branch = git.get_current_branch()
 
         if not git.branch_exists(branch_to_adopt):
             print_error(f"Branch '{branch_to_adopt}' does not exist")
@@ -138,6 +140,20 @@ def adopt(
                 parent=parent,
                 parent_revision=git.get_commit_sha(parent_ref) if parent_ref else None,
             )
+            if parent:
+                if branch_to_adopt == current_branch:
+                    try:
+                        git.update_commit_trailers(
+                            {SHORTCAKE_PARENT_TRAILER: parent},
+                            no_verify=True,
+                        )
+                    except GitError as e:
+                        print_warning(f"Failed to add trailers to commit: {e}")
+                else:
+                    print_warning(
+                        f"Trailers not updated for '{branch_to_adopt}' "
+                        "(branch is not checked out)."
+                    )
 
         parent_info = f" with parent '{parent}'" if parent else ""
         action = (
