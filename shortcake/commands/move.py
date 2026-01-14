@@ -7,6 +7,8 @@ from rich_toolkit.menu import Menu, Option
 from shortcake import get_cli_name
 from shortcake.git import GitError, GitRepo
 from shortcake.metadata import get_branch_metadata, update_branch_metadata
+from shortcake.output import print_warning
+from shortcake.trailers import SHORTCAKE_PARENT_TRAILER
 
 app = typer.Typer()
 console = Console(stderr=True)
@@ -116,6 +118,19 @@ def move(
                 parent_revision=git.get_commit_sha(onto),
             )
             typer.echo(f"Moved '{branch_to_move}' from '{old_parent}' to '{onto}' (metadata only)")
+            if branch_to_move == git.get_current_branch():
+                try:
+                    git.update_commit_trailers(
+                        {SHORTCAKE_PARENT_TRAILER: onto},
+                        no_verify=True,
+                    )
+                except GitError as e:
+                    print_warning(f"Failed to add trailers to commit: {e}")
+            else:
+                print_warning(
+                    f"Trailers not updated for '{branch_to_move}' "
+                    "(branch is not checked out)."
+                )
         else:
             # Get the old parent revision for rebasing
             old_parent_rev = metadata.get("parent_revision")
@@ -155,6 +170,13 @@ def move(
                 parent=onto,
                 parent_revision=git.get_commit_sha(onto),
             )
+            try:
+                git.update_commit_trailers(
+                    {SHORTCAKE_PARENT_TRAILER: onto},
+                    no_verify=True,
+                )
+            except GitError as e:
+                print_warning(f"Failed to add trailers to commit: {e}")
             typer.echo(f"Moved '{branch_to_move}' from '{old_parent}' to '{onto}'")
 
     except GitError as e:

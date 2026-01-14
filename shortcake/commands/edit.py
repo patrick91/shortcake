@@ -2,6 +2,9 @@ import typer
 from rich.console import Console
 
 from shortcake.git import GitError, GitRepo
+from shortcake.metadata import get_branch_metadata
+from shortcake.output import print_warning
+from shortcake.trailers import SHORTCAKE_PARENT_TRAILER
 
 app = typer.Typer()
 console = Console(stderr=True)
@@ -21,6 +24,7 @@ def _do_edit(no_verify: bool = False, message: str | None = None, reword: bool =
             git.commit(amend=True, no_verify=no_verify, edit_message=True)
             new_message = git.get_last_commit_message()
             typer.echo(f"Updated commit message: {new_message}")
+            _ensure_parent_trailer(git)
             return
 
         # Check if there are staged changes
@@ -36,6 +40,7 @@ def _do_edit(no_verify: bool = False, message: str | None = None, reword: bool =
             # Create a new commit with the given message
             git.commit(message=message, no_verify=no_verify)
             typer.echo(f"Created commit: {message}")
+            _ensure_parent_trailer(git)
         else:
             # Amend the commit without opening editor (reuse previous message)
             # Note: Metadata is stored by branch name in JSON, so no need to save/restore
@@ -55,6 +60,21 @@ def _do_edit(no_verify: bool = False, message: str | None = None, reword: bool =
         else:
             console.print(f"[bold red]Error:[/] {error_msg}")
         raise typer.Exit(1) from None
+
+
+def _ensure_parent_trailer(git: GitRepo) -> None:
+    """Ensure the current commit has a Shortcake parent trailer."""
+    metadata = get_branch_metadata(git.get_current_branch())
+    parent = metadata.get("parent")
+    if not parent:
+        return
+    try:
+        git.update_commit_trailers(
+            {SHORTCAKE_PARENT_TRAILER: parent},
+            no_verify=True,
+        )
+    except GitError as e:
+        print_warning(f"Failed to add trailers to commit: {e}")
 
 
 @app.command()
