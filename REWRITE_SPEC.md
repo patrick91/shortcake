@@ -254,9 +254,9 @@ class SyncResult:
 3. No validation of metadata integrity
 4. Git notes break on amend/rebase (note stays on old SHA)
 
-### 4.2 New Design: Commit Trailers
+### 4.2 New Design: Commit Trailers (First Commit Only)
 
-Store metadata in **commit trailers** in the tip commit of each branch:
+Store metadata in **commit trailers** in the **first commit** of each branch (the commit right after the branch point from parent):
 
 ```
 feat: add user authentication
@@ -264,9 +264,26 @@ feat: add user authentication
 This implements OAuth2 login flow.
 
 Shortcake-Parent: main
-Shortcake-Parent-Rev: abc123def456
 Shortcake-PR: 42
 ```
+
+**Key simplification:** Only store what MUST sync. Compute the rest.
+
+| Data | Stored in trailer? | Why |
+|------|-------------------|-----|
+| `Shortcake-Parent` (branch name) | ✅ Yes | Must sync between devices |
+| `Shortcake-PR` (number) | ✅ Yes | Must sync between devices |
+| `Parent-Rev` (SHA) | ❌ No | Compute via `git merge-base` |
+
+**Why first commit (not tip):**
+
+| Operation | Tip commit | First commit |
+|-----------|------------|--------------|
+| `git commit` (new commit) | ❌ Loses trailers | ✅ Unchanged |
+| `git commit --amend` | ✅ Preserved | ✅ Unchanged |
+| `git rebase` | ✅ Preserved | ✅ Preserved |
+| `git rebase -i` (squash) | Complex | ✅ Messages merge |
+| User drops commit | N/A | ⚠️ Loses metadata |
 
 **Why commit trailers:**
 
@@ -274,69 +291,96 @@ Shortcake-PR: 42
 |---------------|------------|-------------|-------|--------------|
 | `.git/shortcake.json` | ✅ | ✅ | ❌ | N/A |
 | Git notes | ❌ | ❌ | ✅* | ❌ |
-| Git refs | ✅ | ✅ | ✅ | Complex |
 | **Commit trailers** | ✅ | ✅ | ✅ | ✅ |
 
-*Notes require explicit push and break on SHA changes
+### 4.3 How It Works
 
-**How it works:**
+**Finding the first commit with trailers:**
+```bash
+# Get commits on branch not in parent, oldest first
+git log --reverse --format="%H" <branch> ^<parent> | head -1
 
-1. **On `sc create`**: First commit gets trailers added
-2. **On `sc commit`**: New tip commit gets trailers (moved from previous tip)
-3. **On `sc restack`**: Trailers updated during rebase (new parent info)
-4. **On `sc sync`**: After squash-merge detected, child branches rebased with updated trailers
-5. **On `sc checkout`**: Read trailers from tip commit, populate local cache
-
-**Trailer format:**
-```
-Shortcake-Parent: <branch-name>
-Shortcake-Parent-Rev: <sha>           # Where branch diverged from parent
-Shortcake-PR: <number>                # Optional, set after submit
+# Or search for trailer
+git log --format="%(trailers:key=Shortcake-Parent,valueonly)" <branch> ^<parent> | grep -v '^$' | head -1
 ```
 
-**Local cache for performance:**
+**On `sc create`:**
+1. User provides commit message (or uses gitmoji picker)
+2. Create branch from current position
+3. Create commit with trailers: `Shortcake-Parent: <parent-branch>`
 
-Keep `.git/shortcake.json` as a **read cache** to avoid parsing commits on every command:
+**On `sc commit`:**
+1. Normal commit, no trailer changes
+2. Trailers stay in first commit
+
+**On `sc restack`:**
+1. Rebase onto updated parent
+2. No trailer changes needed - parent branch name unchanged
+3. `Parent-Rev` computed dynamically via merge-base
+
+**On `sc sync` (after parent merged):**
+1. Detect parent branch was merged (e.g., `feature-1` → `main`)
+2. Rebase child branches onto `main`
+3. Amend first commit to update trailer: `Shortcake-Parent: main`
+
+**On `sc checkout` (from remote):**
+1. Fetch branch
+2. Read trailers from first commit
+3. Populate local cache
+
+### 4.4 Local Cache for Performance
+
+Keep `.git/shortcake.json` as a **read cache** to avoid git log on every command:
 
 ```json
 {
   "version": 2,
   "cache": {
     "feature-1": {
-      "tip_sha": "def456...",
+      "first_commit_sha": "abc123...",
       "parent": "main",
-      "parent_revision": "abc123...",
       "pr_number": 42
     }
   }
 }
 ```
 
-Cache is invalidated when tip SHA changes. Source of truth is always the commit trailers.
+Cache invalidated when first commit SHA changes (rare - only after rebase or amend of first commit).
 
-### 4.3 Handling Edge Cases
+**Source of truth is always the commit trailers.**
+
+### 4.5 Edge Cases
 
 **Branch with no commits yet:**
-- Can't store trailers until first commit
-- Use local-only tracking until `sc commit`
-- `sc create` should prompt/require a commit
+- Can't store trailers - require commit at `sc create` time
+- `sc create` prompts for commit message, creates initial commit with trailers
 
-**Multiple commits on branch:**
-- Only tip commit has trailers
-- On amend: trailers preserved (same commit)
-- On new commit: move trailers to new tip via `sc commit`
-- Direct `git commit` (without `sc`): trailers stay on old tip, `sc` commands detect and fix
+**User deletes first commit (interactive rebase):**
+- Metadata lost
+- Next `sc` command detects missing trailer, warns user
+- User can `sc adopt` to re-add tracking (amends current first commit)
 
-**Reading from remote branch:**
-- `sc checkout` fetches branch, reads trailers from tip
-- No special push needed - trailers travel with commits
+**User reorders commits (interactive rebase):**
+- Trailer might not be in "first" commit anymore
+- Search all commits on branch for trailer, use first found
+- Warn if multiple trailers found (shouldn't happen)
 
-### 4.4 Migration Strategy
+**Squash merge of parent:**
+1. `feature-1` has `Shortcake-Parent: main`
+2. `feature-2` has `Shortcake-Parent: feature-1`
+3. `feature-1` gets squash-merged into `main`
+4. `sc sync` detects merge, rebases `feature-2` onto `main`
+5. Amends first commit: `Shortcake-Parent: main`
+
+### 4.6 Migration Strategy
 
 1. On first run, read existing `.git/shortcake.json`
-2. For each tracked branch, add trailers to tip commit (via amend)
+2. For each tracked branch:
+   - Find first commit on branch (after parent)
+   - Amend to add trailers
 3. Update cache format to v2
-4. Warn user that branches will be amended (offer `--dry-run`)
+4. Warn user that first commits will be amended (requires force push)
+5. Offer `--dry-run` to preview changes
 
 ---
 
@@ -781,7 +825,7 @@ auto_push = false           # Push after create (not implemented, future)
 
 ---
 
-## 9. Implementation Plan
+## 10. Implementation Plan
 
 ### Phase 1: Foundation (Core Infrastructure)
 
@@ -841,9 +885,9 @@ auto_push = false           # Push after create (not implemented, future)
 
 ---
 
-## 10. Migration Path
+## 11. Migration Path
 
-### 10.1 Metadata Migration
+### 11.1 Metadata Migration
 
 ```python
 def migrate_v1_to_v2(git_dir: Path) -> None:
@@ -865,7 +909,7 @@ def migrate_v1_to_v2(git_dir: Path) -> None:
     filepath.write_text(json.dumps(data, indent=2) + "\n")
 ```
 
-### 10.2 User Communication
+### 11.2 User Communication
 
 On first run after upgrade:
 ```
@@ -881,7 +925,7 @@ Run 'sc help' for documentation.
 
 ---
 
-## 11. Success Criteria
+## 12. Success Criteria
 
 1. **All existing tests pass** (after updating to use commit trailers)
 2. **No DEBUG output in production code**
@@ -955,9 +999,9 @@ target-version = "py312"    # Matches requires-python
 
 ---
 
-*Document Version: 1.4*
+*Document Version: 1.5*
 *Created: 2025-01-15*
 *Updated: 2025-01-15 - Added workflow commands (sc add, sc continue, sc abort, etc.)*
 *Updated: 2025-01-15 - Unified get/checkout into smart `sc checkout` / `sc co`*
 *Updated: 2025-01-15 - Added multi-device workflow section and `sc pull` command*
-*Updated: 2025-01-15 - Changed metadata storage to commit trailers (survives amend/rebase/squash)*
+*Updated: 2025-01-15 - Simplified trailer design: first commit only, compute parent-rev dynamically*
