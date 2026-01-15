@@ -55,6 +55,7 @@ shortcake/
 3. **Tight coupling**: Commands directly import from each other (e.g., `submit.py` imports from `restack.py`)
 4. **No separation of concerns**: Business logic mixed with CLI presentation
 5. **Error handling inconsistency**: Some functions return None on error, others raise exceptions
+6. **Leaky abstraction during conflicts**: When a conflict occurs during `sc restack` or `sc sync`, the tool suggests using raw git commands (`git add`, `git rebase --continue`) instead of shortcake commands, breaking the abstraction and confusing users
 
 #### Missing Features
 
@@ -63,6 +64,8 @@ shortcake/
 3. Limited conflict resolution guidance
 4. No branch deletion command (`untrack`/`delete`)
 5. No way to view stack without tracked branches (visual tree)
+6. No `sc add` command to stage files during conflict resolution
+7. No unified `sc continue` / `sc abort` commands that work across all operations
 
 ---
 
@@ -123,7 +126,13 @@ shortcake/
 │   ├── move.py
 │   ├── nav.py
 │   ├── get.py
-│   └── config.py
+│   ├── config.py
+│   ├── add.py               # NEW: Stage files (replaces git add)
+│   ├── continue_.py         # NEW: Continue operation (unified)
+│   ├── abort.py             # NEW: Abort operation (unified)
+│   ├── commit.py            # NEW: Commit with metadata updates
+│   ├── diff.py              # NEW: Show changes
+│   └── log.py               # NEW: Show branch commits
 │
 ├── config.py                # User configuration
 ├── ui/                      # UI components
@@ -304,12 +313,116 @@ sc delete feature-1 --keep # Untrack but keep local branch
 sc untrack feature-1       # Alias for delete --keep
 ```
 
-### 5.3 Improved Commands
+### 5.3 New Workflow Commands (Replacing Raw Git)
+
+A key design principle: **users should never need to drop down to raw git commands during shortcake operations**. Currently, when a conflict occurs during `sc restack`, the tool suggests:
+
+```
+# BAD (current behavior)
+  1. Fix the conflicts in the affected files
+  2. Stage the resolved files: git add <files>
+  3. Continue the restack: sc restack --continue
+```
+
+This is confusing because it mixes abstractions. The rewrite introduces native commands:
+
+#### `sc add` - Stage Files
+
+```bash
+sc add <files>              # Stage specific files
+sc add .                    # Stage all changes
+sc add -p                   # Interactive staging (patch mode)
+```
+
+Wrapper around `git add` that also:
+- Validates we're in a shortcake operation (restack/sync in progress)
+- Provides context-aware help
+
+#### `sc continue` - Continue Operation
+
+```bash
+sc continue                 # Continue whatever operation is in progress
+```
+
+Unified command that detects and continues:
+- `sc restack` in progress → runs `sc restack --continue`
+- `sc sync` in progress → runs `sc sync --continue`
+- `sc split` in progress → runs `sc split --continue`
+
+#### `sc abort` - Abort Operation
+
+```bash
+sc abort                    # Abort whatever operation is in progress
+```
+
+Unified command that detects and aborts:
+- `sc restack` in progress → runs `sc restack --abort`
+- `sc sync` in progress → runs `sc sync --abort`
+- `sc split` in progress → runs `sc split --abort`
+
+#### `sc commit` - Create Commit
+
+```bash
+sc commit                   # Commit with gitmoji picker
+sc commit -m "message"      # Commit with message
+sc commit --amend           # Amend last commit
+```
+
+Wrapper around `git commit` that:
+- Opens gitmoji picker if no message provided
+- Updates shortcake metadata after commit
+- Works during conflict resolution
+
+#### `sc diff` - Show Changes
+
+```bash
+sc diff                     # Show unstaged changes
+sc diff --staged            # Show staged changes
+sc diff <branch>            # Diff against branch
+```
+
+#### `sc log` - Show Commit History
+
+```bash
+sc log                      # Show commits in current branch (not in parent)
+sc log --all                # Show all commits
+```
+
+Shows only the commits that are part of the current branch's changes, not the full history.
+
+#### Conflict Resolution Flow (New)
+
+```
+$ sc restack
+  Rebasing feature-2 onto origin/main... CONFLICT
+
+Conflict detected in src/utils.py
+
+To resolve:
+  1. Edit the conflicted files to resolve conflicts
+  2. Stage resolved files: sc add <files>
+  3. Continue: sc continue
+
+Or abort: sc abort
+
+$ sc add src/utils.py
+Staged: src/utils.py
+
+$ sc continue
+Continuing restack...
+  Rebasing feature-2 onto origin/main... done
+  Rebasing feature-3 onto feature-2... done
+
+Restack complete! Rebased 2 branch(es).
+```
+
+### 5.4 Improved Commands
 
 #### `sync` Improvements
 
 - Better output formatting showing what's happening
 - Clear summary at the end
+- Use `sc continue` / `sc abort` in conflict messages
 - Handle edge cases more gracefully:
   - Parent branch deleted remotely but not merged
   - PR closed without merging
@@ -318,7 +431,7 @@ sc untrack feature-1       # Alias for delete --keep
 #### `restack` Improvements
 
 - Remove DEBUG output
-- Better conflict resolution instructions
+- Use `sc add` / `sc continue` / `sc abort` in conflict messages
 - Show which commits will be replayed
 - Support `--branch` flag to restack specific branch
 
@@ -474,29 +587,38 @@ auto_push = false           # Push after create (not implemented, future)
 4. Reimplement `adopt` command
 5. Reimplement `edit` command
 
-### Phase 3: Stack Management
+### Phase 3: Workflow Commands (Git Wrappers)
+
+1. Implement `add` command (wraps git add)
+2. Implement `commit` command (wraps git commit + metadata)
+3. Implement `continue` command (unified continue)
+4. Implement `abort` command (unified abort)
+5. Implement `diff` command
+6. Implement `log` command
+
+### Phase 4: Stack Management
 
 1. Implement `core/merge_detection.py`
 2. Implement `core/rebase.py`
-3. Reimplement `restack` command (without DEBUG output)
-4. Reimplement `sync` command
+3. Reimplement `restack` command (using new workflow commands in messages)
+4. Reimplement `sync` command (using new workflow commands in messages)
 5. Implement new `delete` command
 
-### Phase 4: GitHub Integration
+### Phase 5: GitHub Integration
 
 1. Reimplement `github.py` adapter
 2. Reimplement `submit` command
 3. Reimplement `get` command
 4. Add PR body stack info improvements
 
-### Phase 5: Navigation & Extras
+### Phase 6: Navigation & Extras
 
 1. Reimplement `nav` commands (up/down/top/bottom)
 2. Reimplement `move` command
 3. Reimplement `split` command
 4. Reimplement `config` command
 
-### Phase 6: Polish
+### Phase 7: Polish
 
 1. Fix Python version requirements
 2. Update documentation
@@ -555,6 +677,7 @@ Run 'sc help' for documentation.
 5. **No global mutable state** in core modules
 6. **Clear separation** between CLI, core logic, and adapters
 7. **All commands documented** with examples
+8. **No raw git commands in user-facing messages** - all conflict resolution guidance uses `sc` commands (`sc add`, `sc continue`, `sc abort`)
 
 ---
 
@@ -577,8 +700,14 @@ shortcake/
 │   ├── github.py
 │   └── storage.py
 ├── commands/
-│   ├── status.py           # NEW
-│   └── delete.py           # NEW
+│   ├── status.py           # NEW: Stack overview
+│   ├── delete.py           # NEW: Untrack/delete branch
+│   ├── add.py              # NEW: Stage files (replaces git add)
+│   ├── continue_.py        # NEW: Unified continue
+│   ├── abort.py            # NEW: Unified abort
+│   ├── commit.py           # NEW: Commit with metadata
+│   ├── diff.py             # NEW: Show changes
+│   └── log.py              # NEW: Show branch commits
 └── ui/
     ├── __init__.py
     ├── output.py
@@ -610,5 +739,6 @@ target-version = "py312"    # Matches requires-python
 
 ---
 
-*Document Version: 1.0*
+*Document Version: 1.1*
 *Created: 2025-01-15*
+*Updated: 2025-01-15 - Added workflow commands (sc add, sc continue, sc abort, etc.)*
