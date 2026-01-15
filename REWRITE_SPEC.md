@@ -132,7 +132,8 @@ shortcake/
 │   ├── abort.py             # NEW: Abort operation (unified)
 │   ├── commit.py            # NEW: Commit with metadata updates
 │   ├── diff.py              # NEW: Show changes
-│   └── log.py               # NEW: Show branch commits
+│   ├── log.py               # NEW: Show branch commits
+│   └── pull.py              # NEW: Multi-device sync (fetch + fast-forward)
 │
 ├── config.py                # User configuration
 ├── ui/                      # UI components
@@ -485,9 +486,132 @@ Switched to someone-elses-feature
 
 ---
 
-## 6. Git Adapter Redesign
+## 6. Multi-Device Workflow
 
-### 6.1 Split by Responsibility
+### 6.1 Current Problems
+
+Working on stacks from multiple devices (laptop/desktop, work/home) has significant friction:
+
+| Scenario | Problem |
+|----------|---------|
+| Created stack on device A, want to work on device B | Metadata doesn't sync - B doesn't know about parent relationships |
+| Restacked on A, pushed, now working on B | Local branches diverged - must manually `sync --force` |
+| Want to see all my stacks from any device | `sc ls` only shows locally-tracked branches |
+| Resume work on device B after push from A | No clear workflow - easy to get into bad state |
+
+**Root cause:** Metadata is stored in `.git/shortcake.json` which is local-only.
+
+### 6.2 Proposed Solutions
+
+#### Option A: Infer-on-fetch (Current approach, improved)
+
+Keep metadata local but make commands smarter about inferring state:
+
+```bash
+# On device B, to resume work on a stack from device A:
+sc checkout feature-3        # Fetches, infers stack, adopts all branches
+sc sync                      # Fast-forwards any branches behind remote
+```
+
+**Improvements needed:**
+1. `sc sync` should auto-detect and adopt remote branches that are part of tracked stacks
+2. `sc checkout` should update metadata if branch already exists but is behind
+3. Better messaging when branches need updating
+
+#### Option B: Remote metadata storage (More robust)
+
+Store metadata in a special git ref that gets pushed:
+
+```
+refs/shortcake/<username>/metadata.json
+```
+
+**Pros:**
+- Metadata syncs automatically with push/fetch
+- Any device can see full stack structure
+- Works across team members
+
+**Cons:**
+- More complex implementation
+- Potential conflicts if editing from multiple devices simultaneously
+- Clutters remote with metadata refs
+
+#### Recommendation: Start with Option A (improved inference)
+
+For v2, focus on making inference bulletproof. Consider Option B for v3 if users need it.
+
+### 6.3 Multi-Device Command Behavior
+
+| Command | Multi-device behavior |
+|---------|----------------------|
+| `sc checkout <branch>` | Fetch + infer stack + adopt if needed |
+| `sc sync` | Fast-forward behind branches, warn on divergence, `--force` to reset |
+| `sc restack` | Fetch first, detect if behind remote, suggest `sync` if needed |
+| `sc ls` | Show locally tracked + optionally `--remote` to show remote branches |
+| `sc submit` | Works fine (just pushes) |
+| `sc create` | Works fine (creates locally) |
+
+### 6.4 New: `sc pull` Command
+
+Add a dedicated command for the "resume on another device" workflow:
+
+```bash
+sc pull                      # Pull latest for all tracked branches
+sc pull --all                # Pull + adopt any new branches in your stacks
+```
+
+**What it does:**
+1. Fetch from origin
+2. Fast-forward all tracked branches that are behind
+3. Auto-reset branches where local commits are rebased versions of remote (safe reset)
+4. Warn (don't auto-fix) branches with unique local commits
+5. Optionally discover and adopt new branches in existing stacks
+
+**Example workflow:**
+```
+# On device A:
+sc create                    # Create feature-1
+sc create                    # Create feature-2
+sc submit                    # Push both
+
+# On device B (next day):
+sc checkout feature-2        # Fetches and adopts the stack
+# ... make changes ...
+sc submit
+
+# Back on device A:
+sc pull                      # Fast-forwards feature-2 to include B's changes
+```
+
+### 6.5 Divergence Handling Improvements
+
+When branches have diverged, provide clear guidance:
+
+```
+$ sc sync
+
+⚠ 2 branch(es) have diverged from remote:
+  • feature-1: 1 local commit, 3 remote commits
+  • feature-2: 2 local commits, 3 remote commits
+
+This usually means:
+  • You restacked on another device and pushed
+  • A teammate amended/rebased your branch
+
+Options:
+  1. sc sync --force         # Reset to remote (discard local commits)
+  2. sc diff feature-1 origin/feature-1   # Review differences first
+  3. Keep local and manually reconcile
+
+Run 'sc sync --force' to reset all diverged branches to remote.
+Run 'sc sync --force feature-1' to reset only feature-1.
+```
+
+---
+
+## 7. Git Adapter Redesign
+
+### 7.1 Split by Responsibility
 
 ```python
 # adapters/git/repo.py - Repository state queries
@@ -520,7 +644,7 @@ class GitMutations:
     def push(self, remote: str, branch: str, force: bool = False): ...
 ```
 
-### 6.2 Subprocess Preference
+### 7.2 Subprocess Preference
 
 Use subprocess consistently instead of mixing with GitPython:
 
@@ -546,15 +670,15 @@ Rationale:
 
 ---
 
-## 7. Testing Strategy
+## 8. Testing Strategy
 
-### 7.1 Test Categories
+### 8.1 Test Categories
 
 1. **Unit Tests**: Pure functions in `core/`, mocked adapters
 2. **Integration Tests**: Real git operations in temp repos
 3. **E2E Tests**: Full CLI invocation with real repos
 
-### 7.2 Test Fixtures
+### 8.2 Test Fixtures
 
 ```python
 # Consistent fixtures across all tests
@@ -578,20 +702,20 @@ def storage(tmp_path: Path) -> MetadataStorage:
     return MetadataStorage(git_dir)
 ```
 
-### 7.3 Remove Git Notes from Tests
+### 8.3 Remove Git Notes from Tests
 
 All tests should use the JSON metadata format, not git notes.
 
 ---
 
-## 8. Configuration
+## 9. Configuration
 
-### 8.1 Config Location
+### 9.1 Config Location
 
 Follow XDG Base Directory Specification:
 - `$XDG_CONFIG_HOME/shortcake/config.toml` (default: `~/.config/shortcake/config.toml`)
 
-### 8.2 Config Schema
+### 9.2 Config Schema
 
 ```toml
 # ~/.config/shortcake/config.toml
@@ -637,6 +761,7 @@ auto_push = false           # Push after create (not implemented, future)
 4. Implement `abort` command (unified abort)
 5. Implement `diff` command
 6. Implement `log` command
+7. Implement `pull` command (multi-device workflow)
 
 ### Phase 4: Stack Management
 
@@ -750,7 +875,8 @@ shortcake/
 │   ├── abort.py            # NEW: Unified abort
 │   ├── commit.py           # NEW: Commit with metadata
 │   ├── diff.py             # NEW: Show changes
-│   └── log.py              # NEW: Show branch commits
+│   ├── log.py              # NEW: Show branch commits
+│   └── pull.py             # NEW: Multi-device sync
 └── ui/
     ├── __init__.py
     ├── output.py
@@ -783,7 +909,8 @@ target-version = "py312"    # Matches requires-python
 
 ---
 
-*Document Version: 1.2*
+*Document Version: 1.3*
 *Created: 2025-01-15*
 *Updated: 2025-01-15 - Added workflow commands (sc add, sc continue, sc abort, etc.)*
 *Updated: 2025-01-15 - Unified get/checkout into smart `sc checkout` / `sc co`*
+*Updated: 2025-01-15 - Added multi-device workflow section and `sc pull` command*
