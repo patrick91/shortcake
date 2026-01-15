@@ -252,31 +252,91 @@ class SyncResult:
 1. Tests use git notes (`git notes --ref shortcake`) but code uses `.git/shortcake.json`
 2. JSON file doesn't travel with the branch (lost on clone)
 3. No validation of metadata integrity
+4. Git notes break on amend/rebase (note stays on old SHA)
 
-### 4.2 New Design
+### 4.2 New Design: Commit Trailers
 
-Use **only** `.git/shortcake.json` with improved structure:
+Store metadata in **commit trailers** in the tip commit of each branch:
+
+```
+feat: add user authentication
+
+This implements OAuth2 login flow.
+
+Shortcake-Parent: main
+Shortcake-Parent-Rev: abc123def456
+Shortcake-PR: 42
+```
+
+**Why commit trailers:**
+
+| Storage Option | Amend-safe | Rebase-safe | Syncs | Squash-merge |
+|---------------|------------|-------------|-------|--------------|
+| `.git/shortcake.json` | ✅ | ✅ | ❌ | N/A |
+| Git notes | ❌ | ❌ | ✅* | ❌ |
+| Git refs | ✅ | ✅ | ✅ | Complex |
+| **Commit trailers** | ✅ | ✅ | ✅ | ✅ |
+
+*Notes require explicit push and break on SHA changes
+
+**How it works:**
+
+1. **On `sc create`**: First commit gets trailers added
+2. **On `sc commit`**: New tip commit gets trailers (moved from previous tip)
+3. **On `sc restack`**: Trailers updated during rebase (new parent info)
+4. **On `sc sync`**: After squash-merge detected, child branches rebased with updated trailers
+5. **On `sc checkout`**: Read trailers from tip commit, populate local cache
+
+**Trailer format:**
+```
+Shortcake-Parent: <branch-name>
+Shortcake-Parent-Rev: <sha>           # Where branch diverged from parent
+Shortcake-PR: <number>                # Optional, set after submit
+```
+
+**Local cache for performance:**
+
+Keep `.git/shortcake.json` as a **read cache** to avoid parsing commits on every command:
 
 ```json
 {
   "version": 2,
-  "branches": {
+  "cache": {
     "feature-1": {
+      "tip_sha": "def456...",
       "parent": "main",
-      "parent_revision": "abc123def456...",
-      "pr_number": 42,
-      "pr_url": "https://github.com/owner/repo/pull/42",
-      "created_at": "2025-01-15T10:30:00Z"
+      "parent_revision": "abc123...",
+      "pr_number": 42
     }
   }
 }
 ```
 
-### 4.3 Migration Strategy
+Cache is invalidated when tip SHA changes. Source of truth is always the commit trailers.
 
-1. On first run, detect version 1 format and migrate
-2. Update tests to use JSON file consistently (remove git notes usage)
-3. Add schema validation with clear error messages
+### 4.3 Handling Edge Cases
+
+**Branch with no commits yet:**
+- Can't store trailers until first commit
+- Use local-only tracking until `sc commit`
+- `sc create` should prompt/require a commit
+
+**Multiple commits on branch:**
+- Only tip commit has trailers
+- On amend: trailers preserved (same commit)
+- On new commit: move trailers to new tip via `sc commit`
+- Direct `git commit` (without `sc`): trailers stay on old tip, `sc` commands detect and fix
+
+**Reading from remote branch:**
+- `sc checkout` fetches branch, reads trailers from tip
+- No special push needed - trailers travel with commits
+
+### 4.4 Migration Strategy
+
+1. On first run, read existing `.git/shortcake.json`
+2. For each tracked branch, add trailers to tip commit (via amend)
+3. Update cache format to v2
+4. Warn user that branches will be amended (offer `--dry-run`)
 
 ---
 
@@ -488,57 +548,23 @@ Switched to someone-elses-feature
 
 ## 6. Multi-Device Workflow
 
-### 6.1 Current Problems
+### 6.1 How Commit Trailers Help
 
-Working on stacks from multiple devices (laptop/desktop, work/home) has significant friction:
+With commit trailers as metadata storage (see Section 4), multi-device workflow is much simpler:
 
-| Scenario | Problem |
-|----------|---------|
-| Created stack on device A, want to work on device B | Metadata doesn't sync - B doesn't know about parent relationships |
-| Restacked on A, pushed, now working on B | Local branches diverged - must manually `sync --force` |
-| Want to see all my stacks from any device | `sc ls` only shows locally-tracked branches |
-| Resume work on device B after push from A | No clear workflow - easy to get into bad state |
+| Scenario | With Trailers |
+|----------|---------------|
+| Created stack on device A, want to work on device B | `sc checkout feature-2` → trailers are in the commits, metadata loads automatically |
+| Restacked on A, pushed, now working on B | `sc pull` → fast-forwards, trailers already updated |
+| Want to see all my stacks from any device | Metadata travels with branches |
 
-**Root cause:** Metadata is stored in `.git/shortcake.json` which is local-only.
+### 6.2 Remaining Challenges
 
-### 6.2 Proposed Solutions
+Even with trailers, some friction remains:
 
-#### Option A: Infer-on-fetch (Current approach, improved)
-
-Keep metadata local but make commands smarter about inferring state:
-
-```bash
-# On device B, to resume work on a stack from device A:
-sc checkout feature-3        # Fetches, infers stack, adopts all branches
-sc sync                      # Fast-forwards any branches behind remote
-```
-
-**Improvements needed:**
-1. `sc sync` should auto-detect and adopt remote branches that are part of tracked stacks
-2. `sc checkout` should update metadata if branch already exists but is behind
-3. Better messaging when branches need updating
-
-#### Option B: Remote metadata storage (More robust)
-
-Store metadata in a special git ref that gets pushed:
-
-```
-refs/shortcake/<username>/metadata.json
-```
-
-**Pros:**
-- Metadata syncs automatically with push/fetch
-- Any device can see full stack structure
-- Works across team members
-
-**Cons:**
-- More complex implementation
-- Potential conflicts if editing from multiple devices simultaneously
-- Clutters remote with metadata refs
-
-#### Recommendation: Start with Option A (improved inference)
-
-For v2, focus on making inference bulletproof. Consider Option B for v3 if users need it.
+1. **Local branches behind remote** - need to fast-forward before working
+2. **Diverged branches** - restacked on one device, local changes on another
+3. **Cache staleness** - local cache needs refresh after fetch
 
 ### 6.3 Multi-Device Command Behavior
 
@@ -702,9 +728,29 @@ def storage(tmp_path: Path) -> MetadataStorage:
     return MetadataStorage(git_dir)
 ```
 
-### 8.3 Remove Git Notes from Tests
+### 8.3 Test Metadata via Trailers
 
-All tests should use the JSON metadata format, not git notes.
+Tests should use commit trailers as the source of truth:
+
+```python
+def get_branch_metadata(repo_path: Path, branch: str) -> dict:
+    """Read metadata from tip commit trailers."""
+    result = subprocess.run(
+        ["git", "log", "-1", "--format=%(trailers:key=Shortcake-Parent,valueonly)", branch],
+        cwd=repo_path, capture_output=True, text=True
+    )
+    parent = result.stdout.strip() or None
+    # ... parse other trailers
+    return {"parent": parent, ...}
+
+def set_branch_metadata(repo_path: Path, branch: str, parent: str):
+    """Add trailers to tip commit via amend."""
+    subprocess.run(
+        ["git", "commit", "--amend", "--no-edit",
+         "--trailer", f"Shortcake-Parent:{parent}"],
+        cwd=repo_path, check=True
+    )
+```
 
 ---
 
@@ -837,7 +883,7 @@ Run 'sc help' for documentation.
 
 ## 11. Success Criteria
 
-1. **All existing tests pass** (after updating to use JSON storage)
+1. **All existing tests pass** (after updating to use commit trailers)
 2. **No DEBUG output in production code**
 3. **Consistent error messages** with recovery guidance
 4. **Test coverage >= 80%** for core modules
@@ -909,8 +955,9 @@ target-version = "py312"    # Matches requires-python
 
 ---
 
-*Document Version: 1.3*
+*Document Version: 1.4*
 *Created: 2025-01-15*
 *Updated: 2025-01-15 - Added workflow commands (sc add, sc continue, sc abort, etc.)*
 *Updated: 2025-01-15 - Unified get/checkout into smart `sc checkout` / `sc co`*
 *Updated: 2025-01-15 - Added multi-device workflow section and `sc pull` command*
+*Updated: 2025-01-15 - Changed metadata storage to commit trailers (survives amend/rebase/squash)*
