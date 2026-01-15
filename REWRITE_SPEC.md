@@ -125,7 +125,7 @@ shortcake/
 │   ├── split.py
 │   ├── move.py
 │   ├── nav.py
-│   ├── get.py
+│   ├── checkout.py          # NEW: Smart checkout (replaces get)
 │   ├── config.py
 │   ├── add.py               # NEW: Stage files (replaces git add)
 │   ├── continue_.py         # NEW: Continue operation (unified)
@@ -441,6 +441,48 @@ Restack complete! Rebased 2 branch(es).
 - Better handling of PR update failures
 - Option to skip PR body updates (`--no-stack-info`)
 
+#### Unified `checkout` / `co` (Replaces `get`)
+
+Currently `get` fetches from remote and `checkout` would just switch locally. These should be unified into a single smart command:
+
+```bash
+sc checkout feature-1       # Smart checkout (see logic below)
+sc co feature-1             # Alias
+sc checkout 123             # Checkout by PR number
+sc checkout                 # Interactive: pick from branches/PRs
+sc checkout --mine          # Interactive: pick from your PRs
+```
+
+**Smart checkout logic:**
+
+1. If branch exists locally and is tracked → just switch to it
+2. If branch exists locally but not tracked → switch and offer to adopt
+3. If branch doesn't exist locally but exists on remote → fetch, adopt stack, switch (current `get` behavior)
+4. If PR number given → resolve to branch name, then apply above logic
+
+This means:
+- **Remove**: `get` command
+- **Add**: `checkout` / `co` command with smart behavior
+
+The user's mental model becomes simple: "I want to be on this branch" - the tool figures out the rest.
+
+```
+$ sc co feature-1
+Switched to feature-1
+
+$ sc co 123
+Resolving PR #123...
+  → Branch: someone-elses-feature
+Fetching from origin...
+Found 2 branch(es) in stack:
+  • base-feature
+  • someone-elses-feature
+Setting up branches...
+  ✓ base-feature (parent: main)
+  ✓ someone-elses-feature (parent: base-feature)
+Switched to someone-elses-feature
+```
+
 ---
 
 ## 6. Git Adapter Redesign
@@ -608,7 +650,7 @@ auto_push = false           # Push after create (not implemented, future)
 
 1. Reimplement `github.py` adapter
 2. Reimplement `submit` command
-3. Reimplement `get` command
+3. Implement `checkout` command (replaces `get`, with smart local/remote logic)
 4. Add PR body stack info improvements
 
 ### Phase 6: Navigation & Extras
@@ -702,6 +744,7 @@ shortcake/
 ├── commands/
 │   ├── status.py           # NEW: Stack overview
 │   ├── delete.py           # NEW: Untrack/delete branch
+│   ├── checkout.py         # NEW: Smart checkout (replaces get)
 │   ├── add.py              # NEW: Stage files (replaces git add)
 │   ├── continue_.py        # NEW: Unified continue
 │   ├── abort.py            # NEW: Unified abort
@@ -722,6 +765,7 @@ shortcake/
 | `shortcake/git.py` | Split into `adapters/git/` |
 | `shortcake/metadata.py` | Move to `adapters/storage.py` |
 | `shortcake/output.py` | Move to `ui/output.py` |
+| `shortcake/commands/get.py` | Replace with `checkout.py` (unified smart checkout) |
 | `tests/helpers/git_helpers.py` | Update to remove git notes |
 
 ## Appendix C: Version Requirements
@@ -739,6 +783,7 @@ target-version = "py312"    # Matches requires-python
 
 ---
 
-*Document Version: 1.1*
+*Document Version: 1.2*
 *Created: 2025-01-15*
 *Updated: 2025-01-15 - Added workflow commands (sc add, sc continue, sc abort, etc.)*
+*Updated: 2025-01-15 - Unified get/checkout into smart `sc checkout` / `sc co`*
