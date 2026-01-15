@@ -769,13 +769,15 @@ jobs:
 
 | Module | Target Coverage |
 |--------|----------------|
-| `core/stack.py` | 95% |
-| `core/merge_detection.py` | 95% |
-| `core/rebase.py` | 90% |
-| `adapters/git/` | 85% |
-| `adapters/storage.py` | 90% |
-| `commands/` | 80% |
-| **Overall** | **85%** |
+| `core/stack.py` | 100% |
+| `core/merge_detection.py` | 100% |
+| `core/rebase.py` | 100% |
+| `adapters/git/` | 100% |
+| `adapters/storage.py` | 100% |
+| `commands/` | 100% |
+| **Overall** | **100%** |
+
+No exceptions. Every line, every branch, every edge case.
 
 ---
 

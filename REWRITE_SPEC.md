@@ -930,7 +930,7 @@ Run 'sc help' for documentation.
 1. **All existing tests pass** (after updating to use commit trailers)
 2. **No DEBUG output in production code**
 3. **Consistent error messages** with recovery guidance
-4. **Test coverage >= 80%** for core modules
+4. **Test coverage = 100%** for core modules
 5. **No global mutable state** in core modules
 6. **Clear separation** between CLI, core logic, and adapters
 7. **All commands documented** with examples
