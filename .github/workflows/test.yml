@@ -31,4 +31,4 @@ jobs:
           path: htmlcov/
 
       - name: Check coverage
-        run: uv run coverage report --fail-under=80
+        run: uv run coverage report --fail-under=100

@@ -26,7 +26,3 @@ def adopt(
         raise typer.Exit(1)
 
     typer.echo(f"Adopted '{result.branch}' with parent '{result.parent}'")
-
-
-if __name__ == "__main__":
-    app()
