@@ -3,7 +3,6 @@ from dulwich.repo import Repo
 from shortcake import _git as git
 
 TRAILER_KEY = "Shortcake-Parent"
-TRUNK_BRANCHES = ("main", "master")
 
 
 @dataclass
@@ -27,14 +26,6 @@ def add_trailer(message: str, key: str, value: str) -> str:
     return f"{message.rstrip()}\n\n{key}: {value}\n"
 
 
-def detect_parent(repo: Repo) -> str | None:
-    """Auto-detect parent branch (main or master)."""
-    for trunk in TRUNK_BRANCHES:
-        if git.branch_exists(repo, trunk):
-            return trunk
-    return None
-
-
 def adopt(
     repo: Repo,
     branch: str | None = None,
@@ -45,17 +36,20 @@ def adopt(
 
     Returns AdoptResult with success/failure and details.
     """
+    # Get default branch for validation and fallback
+    default_branch = git.get_default_branch(repo)
+
     # Resolve branch
     if branch is None:
         branch = git.get_current_branch(repo)
 
-    # Check not trunk
-    if branch in TRUNK_BRANCHES:
-        return AdoptResult(branch, "", False, f"Cannot adopt trunk branch '{branch}'")
+    # Check not default branch
+    if branch == default_branch:
+        return AdoptResult(branch, "", False, f"Cannot adopt default branch '{branch}'")
 
     # Resolve parent
     if parent is None:
-        parent = detect_parent(repo)
+        parent = default_branch
         if parent is None:
             return AdoptResult(branch, "", False, "Cannot detect parent branch")
 

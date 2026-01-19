@@ -47,12 +47,12 @@ def test_adopt_already_tracked(repo_with_feature):
     assert "already tracked" in result.error
 
 
-def test_adopt_trunk_branch(temp_repo):
-    """Test error when trying to adopt trunk."""
+def test_adopt_default_branch(temp_repo):
+    """Test error when trying to adopt default branch."""
     result = adopt(temp_repo, branch="main")
 
     assert not result.success
-    assert "Cannot adopt trunk" in result.error
+    assert "Cannot adopt default branch" in result.error
 
 
 def test_get_trailer():

@@ -27,6 +27,21 @@ def branch_exists(repo: Repo, branch: str) -> bool:
     return f"refs/heads/{branch}".encode() in repo.refs
 
 
+def get_default_branch(repo: Repo) -> str | None:
+    """Get the default branch name from origin/HEAD or fallback to main/master."""
+    # Try origin/HEAD first (set by git clone)
+    origin_head = repo.refs.read_ref(b"refs/remotes/origin/HEAD")
+    if origin_head and origin_head.startswith(b"ref: refs/remotes/origin/"):
+        return origin_head[25:].decode()
+
+    # Fallback to checking for main/master
+    for branch in ("main", "master"):
+        if branch_exists(repo, branch):
+            return branch
+
+    return None
+
+
 def get_commits_between(repo: Repo, head: bytes, base: bytes) -> list[bytes]:
     """Get commits reachable from head but not from base."""
     walker = repo.get_walker(include=[head], exclude=[base])
