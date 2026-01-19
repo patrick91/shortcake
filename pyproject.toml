@@ -1,0 +1,17 @@
+[project]
+name = "shortcake"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "Patrick Arminio", email = "patrick.arminio@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = ["typer>=0.15.0"]
+
+[project.scripts]
+shortcake = "shortcake.cli:app"
+
+[build-system]
+requires = ["uv_build>=0.9.8,<0.10.0"]
+build-backend = "uv_build"
