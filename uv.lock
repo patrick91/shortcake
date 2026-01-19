@@ -175,7 +175,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "dulwich", specifier = ">=0.22.0" },
+    { name = "dulwich", specifier = ">=1.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "rich-toolkit", specifier = ">=0.12.0" },
     { name = "typer", specifier = ">=0.15.0" },
