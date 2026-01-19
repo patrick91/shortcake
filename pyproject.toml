@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Patrick Arminio", email = "patrick.arminio@gmail.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "typer>=0.15.0",
     "dulwich>=1.0.0",
