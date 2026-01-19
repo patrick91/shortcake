@@ -9,7 +9,7 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "typer>=0.15.0",
-    "dulwich>=0.22.0",
+    "dulwich>=1.0.0",
     "rich-toolkit>=0.12.0",
 ]
 
