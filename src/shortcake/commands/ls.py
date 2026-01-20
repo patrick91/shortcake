@@ -68,11 +68,8 @@ def _ls(repo: Repo) -> str:
     # Get all branches
     all_branches = set(git.get_all_local_branches(repo))
 
-    # Get current branch
-    try:
-        current = git.get_current_branch(repo)
-    except ValueError:
-        current = None
+    # Get current branch (None if detached HEAD)
+    current = git.get_current_branch(repo)
 
     # Find parent for each branch
     branches: dict[str, str | None] = {}

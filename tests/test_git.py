@@ -37,8 +37,7 @@ def test_get_current_branch_detached_head(temp_repo: Repo) -> None:
     head_path = Path(temp_repo.controldir()) / "HEAD"
     head_path.write_bytes(head_sha.hex().encode() + b"\n")
 
-    with pytest.raises(ValueError, match="detached HEAD"):
-        git.get_current_branch(temp_repo)
+    assert git.get_current_branch(temp_repo) is None
 
 
 def test_get_default_branch_from_origin_head(temp_repo: Repo) -> None:

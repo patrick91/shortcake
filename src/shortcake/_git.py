@@ -10,12 +10,12 @@ def open_repo(path: Path | None = None) -> Repo:
     return Repo(str(path) if path else ".")
 
 
-def get_current_branch(repo: Repo) -> str:
-    """Get name of current branch."""
+def get_current_branch(repo: Repo) -> str | None:
+    """Get name of current branch, or None if in detached HEAD state."""
     head_ref = repo.refs.read_ref(b"HEAD")
     if head_ref and head_ref.startswith(b"ref: refs/heads/"):
         return head_ref[16:].decode()
-    raise ValueError("Not on a branch (detached HEAD)")
+    return None
 
 
 def get_branch_head(repo: Repo, branch: str) -> bytes:
