@@ -10,11 +10,17 @@ TRAILER_KEY = "Shortcake-Parent"
 
 
 @dataclass
-class AdoptResult:
+class AdoptSuccess:
     branch: str
     parent: str
-    success: bool
-    error: str | None = None
+
+
+@dataclass
+class AdoptError:
+    error: str
+
+
+AdoptResult = AdoptSuccess | AdoptError
 
 
 def _get_trailer(message: str, key: str) -> str | None:
@@ -80,18 +86,17 @@ def _adopt(
 
     # Check not default branch
     if branch == default_branch:
-        return AdoptResult(branch, "", False, f"Cannot adopt default branch '{branch}'")
+        return AdoptError(f"Cannot adopt default branch '{branch}'")
 
     # Resolve parent
     if parent is None:
         parent = default_branch
         if parent is None:
-            error = "Cannot detect parent branch. Use --parent to specify."
-            return AdoptResult(branch, "", False, error)
+            return AdoptError("Cannot detect parent branch. Use --parent to specify.")
 
     # Check parent exists
     if not git.branch_exists(repo, parent):
-        return AdoptResult(branch, parent, False, f"Parent branch '{parent}' not found")
+        return AdoptError(f"Parent branch '{parent}' not found")
 
     # Find first commit on branch
     branch_head = git.get_branch_head(repo, branch)
@@ -99,9 +104,7 @@ def _adopt(
     commits = git.get_commits_between(repo, branch_head, parent_head)
 
     if not commits:
-        return AdoptResult(
-            branch, parent, False, f"No commits on '{branch}' relative to '{parent}'"
-        )
+        return AdoptError(f"No commits on '{branch}' relative to '{parent}'")
 
     # First commit is last in list (walker returns newest first)
     first_commit = commits[-1]
@@ -109,8 +112,7 @@ def _adopt(
     # Check if already tracked
     message = git.get_commit_message(repo, first_commit)
     if _get_trailer(message, TRAILER_KEY) is not None:
-        error = f"Branch '{branch}' is already tracked"
-        return AdoptResult(branch, parent, False, error)
+        return AdoptError(f"Branch '{branch}' is already tracked")
 
     # Amend with trailer
     new_message = _add_trailer(message, TRAILER_KEY, parent)
@@ -124,7 +126,7 @@ def _adopt(
     # Update branch ref
     git.update_branch(repo, branch, new_sha)
 
-    return AdoptResult(branch, parent, True)
+    return AdoptSuccess(branch, parent)
 
 
 # Typer command
@@ -138,7 +140,7 @@ def adopt(
     repo = git.open_repo()
     result = _adopt(repo, branch, parent)
 
-    if not result.success:
+    if isinstance(result, AdoptError):
         typer.echo(f"Error: {result.error}", err=True)
         raise typer.Exit(1)
 

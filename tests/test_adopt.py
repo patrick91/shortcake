@@ -6,6 +6,8 @@ from dulwich.repo import Repo
 from shortcake import _git as git
 from shortcake.commands.adopt import (
     TRAILER_KEY,
+    AdoptError,
+    AdoptSuccess,
     _add_trailer,
     _adopt,
     _get_trailer,
@@ -16,7 +18,7 @@ def test_adopt_current_branch(repo_with_feature: Repo) -> None:
     """Test adopting the current feature branch."""
     result = _adopt(repo_with_feature)
 
-    assert result.success
+    assert isinstance(result, AdoptSuccess)
     assert result.branch == "feature"
     assert result.parent == "main"
 
@@ -33,7 +35,7 @@ def test_adopt_specified_branch(repo_with_feature: Repo) -> None:
 
     result = _adopt(repo_with_feature, branch="feature")
 
-    assert result.success
+    assert isinstance(result, AdoptSuccess)
     assert result.branch == "feature"
 
 
@@ -41,7 +43,7 @@ def test_adopt_with_explicit_parent(repo_with_feature: Repo) -> None:
     """Test adopting with explicit parent."""
     result = _adopt(repo_with_feature, parent="main")
 
-    assert result.success
+    assert isinstance(result, AdoptSuccess)
 
 
 def test_adopt_already_tracked(repo_with_feature: Repo) -> None:
@@ -52,7 +54,7 @@ def test_adopt_already_tracked(repo_with_feature: Repo) -> None:
     # Try again
     result = _adopt(repo_with_feature)
 
-    assert not result.success
+    assert isinstance(result, AdoptError)
     assert "already tracked" in result.error
 
 
@@ -60,7 +62,7 @@ def test_adopt_default_branch(temp_repo: Repo) -> None:
     """Test error when trying to adopt default branch."""
     result = _adopt(temp_repo, branch="main")
 
-    assert not result.success
+    assert isinstance(result, AdoptError)
     assert "Cannot adopt default branch" in result.error
 
 
@@ -86,7 +88,7 @@ def test_adopt_no_parent_detected(tmp_path: Path) -> None:
 
     result = _adopt(repo)
 
-    assert not result.success
+    assert isinstance(result, AdoptError)
     assert "Cannot detect parent branch. Use --parent to specify." in result.error
 
 
@@ -94,7 +96,7 @@ def test_adopt_parent_not_found(repo_with_feature: Repo) -> None:
     """Test error when explicit parent doesn't exist."""
     result = _adopt(repo_with_feature, parent="nonexistent")
 
-    assert not result.success
+    assert isinstance(result, AdoptError)
     assert "Parent branch 'nonexistent' not found" in result.error
 
 
@@ -107,7 +109,7 @@ def test_adopt_no_commits_on_branch(temp_repo: Repo) -> None:
 
     result = _adopt(temp_repo)
 
-    assert not result.success
+    assert isinstance(result, AdoptError)
     assert "No commits on 'feature' relative to 'main'" in result.error
 
 
@@ -132,7 +134,7 @@ def test_adopt_multiple_commits(temp_repo: Repo, tmp_path: Path) -> None:
 
     result = _adopt(temp_repo)
 
-    assert result.success
+    assert isinstance(result, AdoptSuccess)
     assert result.branch == "feature"
 
     # Verify trailer on first commit
