@@ -169,11 +169,12 @@ def test_ls_parallel_stacks(temp_repo: Repo, tmp_path: Path) -> None:
 │
 ◯ stack-1-a
 │
-◉ stack-2-b (current)
-│
-◯ stack-2-a
-│
-◯ main""")
+│ ◉ stack-2-b (current)
+│ │
+│ ◯ stack-2-a
+│ │
+◯─┴─ main\
+""")
 
 
 def test_get_branch_parent_no_trailer(temp_repo: Repo) -> None:

@@ -228,67 +228,6 @@ def test_render_parallel_stacks_with_merge_connector() -> None:
     assert "main" in output
 
 
-def test_render_parallel_stacks_single() -> None:
-    """Test _render_parallel_stacks with single stack."""
-    tree = StackTree(roots=[])
-    result = tree._render_parallel_stacks([["line1", "line2"]])
-    assert result == ["line1", "line2"]
-
-
-def test_render_parallel_stacks_empty_lines() -> None:
-    """Test rendering parallel stacks with different heights."""
-    stack1 = ["◯ tall-branch", "│", "◯ mid", "│", "◯ base"]
-    stack2 = ["◯ short", "│", "◯ base"]
-
-    tree = StackTree(roots=[])
-    result = tree._render_parallel_stacks([stack1, stack2])
-
-    assert len(result) == 5  # Max height
-    # Verify output contains both stacks
-    output = "\n".join(result)
-    assert "tall-branch" in output
-    assert "short" in output
-
-
-def test_render_parallel_stacks_common_base_not_current() -> None:
-    """Test merge connector with non-current root (◯ marker)."""
-    stack1 = ["◯ stack-1", "│", "◯ base"]
-    stack2 = ["◯ stack-2", "│", "◯ base"]
-
-    tree = StackTree(roots=[])
-    result = tree._render_parallel_stacks([stack1, stack2])
-
-    output = "\n".join(result)
-    # Should have merge connector with ◯
-    assert "◯─┴─" in output
-
-
-def test_render_parallel_stacks_common_base_is_current() -> None:
-    """Test merge connector with current root (◉ marker)."""
-    stack1 = ["◯ stack-1", "│", "◉ base (current)"]
-    stack2 = ["◯ stack-2", "│", "◉ base (current)"]
-
-    tree = StackTree(roots=[])
-    result = tree._render_parallel_stacks([stack1, stack2])
-
-    output = "\n".join(result)
-    # Should have merge connector with ◉
-    assert "◉─┴─" in output
-
-
-def test_render_parallel_stacks_unknown_marker() -> None:
-    """Test merge connector fallback when base doesn't start with known marker."""
-    stack1 = ["◯ stack-1", "│", "? base"]
-    stack2 = ["◯ stack-2", "│", "? base"]
-
-    tree = StackTree(roots=[])
-    result = tree._render_parallel_stacks([stack1, stack2])
-
-    output = "\n".join(result)
-    # Should contain the base line as-is
-    assert "? base" in output
-
-
 def test_build_circular_reference_two_branches() -> None:
     """Test handling circular reference: A -> B -> A."""
     branches = {"branch-a": "branch-b", "branch-b": "branch-a"}
@@ -454,11 +393,11 @@ def test_snapshot_multiple_children() -> None:
     assert tree.render() == snapshot("""\
 ◯ feature-a
 │
-◯ feature-b
-│
-◯ feature-c
-│
-◉ main (current)\
+│ ◯ feature-b
+│ │
+│ │ ◯ feature-c
+│ │ │
+◉─┴─┴─ main (current)\
 """)
 
 
@@ -494,7 +433,11 @@ def test_snapshot_circular_reference() -> None:
 
     tree = StackTree.build(branches, all_branches, current)
     assert tree.render() == snapshot(
-        "◉ branch-a (current) (circular ref) │ ◯ branch-b (circular ref)"
+        """\
+◉ branch-a (current) (circular ref)
+
+◯ branch-b (circular ref)\
+"""
     )
 
 
@@ -524,7 +467,7 @@ def test_snapshot_complex_tree() -> None:
 │
 ◯ feature-a
 │
-◯ feature-b
-│
-◯ main\
+│ ◯ feature-b
+│ │
+◯─┴─ main\
 """)

@@ -147,123 +147,72 @@ class StackTree:
         if not self.roots:
             return ""
 
-        lines: list[str] = []
+        def get_node_label(node: BranchNode) -> str:
+            """Get the display label for a node."""
+            marker = "◉" if node.is_current else "◯"
+            suffix = " (current)" if node.is_current else ""
+            if node.warning == BranchWarning.ORPHAN:
+                suffix += " (parent missing)"
+            elif node.warning == BranchWarning.CYCLE:
+                suffix += " (circular ref)"
+            return f"{marker} {node.name}{suffix}"
 
         def render_branch(node: BranchNode, prefix: str = "") -> list[str]:
             """Render a single branch and its children, bottom-up."""
             result: list[str] = []
 
-            # Recursively render children first (they appear above parent)
-            for child in node.children:
+            if not node.children:
+                # Leaf node
+                result.append(f"{prefix}{get_node_label(node)}")
+                return result
+
+            if len(node.children) == 1:
+                # Single child - linear stack rendering
+                child = node.children[0]
                 child_lines = render_branch(child, prefix)
                 result.extend(child_lines)
-                # Add connector showing this child connects to parent
                 result.append(f"{prefix}│")
+                result.append(f"{prefix}{get_node_label(node)}")
+                return result
 
-            # Render this node
+            # Multiple children - parallel stacks rendering
+            for i, child in enumerate(node.children):
+                # Render child's subtree with no local prefix
+                child_lines = render_branch(child, "")
+
+                # Add connector line at the end of this stack
+                child_lines.append("│")
+
+                # Calculate column prefix: outer prefix + "│ " for each previous column
+                column_prefix = prefix + "│ " * i
+
+                # Add each line with the column prefix
+                for line in child_lines:
+                    result.append(f"{column_prefix}{line}")
+
+            # Render the parent with merge connectors
+            # Format: ◉─┴─┴─ name (for 3 children)
             marker = "◉" if node.is_current else "◯"
             suffix = " (current)" if node.is_current else ""
-
-            # Add warning suffix
             if node.warning == BranchWarning.ORPHAN:
                 suffix += " (parent missing)"
             elif node.warning == BranchWarning.CYCLE:
                 suffix += " (circular ref)"
 
-            result.append(f"{prefix}{marker} {node.name}{suffix}")
+            merge_connector = "─" + "┴─" * (len(node.children) - 1)
+            result.append(f"{prefix}{marker}{merge_connector} {node.name}{suffix}")
 
             return result
 
-        # Handle multiple roots (parallel stacks)
+        # Handle single or multiple roots
         if len(self.roots) == 1:
-            # Single stack - simple rendering
-            root = self.roots[0]
-            lines = render_branch(root)
+            lines = render_branch(self.roots[0])
         else:
-            # Multiple stacks converging on a common root
-            # Find if there's a common root among all trees
-            # For now, render each stack with proper indentation
-
-            # Collect all lines for each root's tree
-            all_stack_lines: list[list[str]] = []
+            # Multiple independent roots - render each separately
+            lines = []
             for root in self.roots:
-                stack_lines = render_branch(root)
-                all_stack_lines.append(stack_lines)
-
-            # Check if all roots share a common parent (convergence point)
-            # This would be shown with ─┴─ connectors
-            # For simplicity, we'll handle the case where roots are independent
-
-            # Find the common base if roots have the same parent
-            common_parents = {
-                r.parent_name for r in self.roots if r.parent_name is not None
-            }
-
-            if len(common_parents) == 1 and common_parents.pop() is not None:
-                # All roots share a common untracked parent - this shouldn't happen
-                # in typical usage since the parent would be a root
-                pass
-
-            # Render stacks side by side with proper connectors
-            lines = self._render_parallel_stacks(all_stack_lines)
+                if lines:
+                    lines.append("")  # Empty line between roots
+                lines.extend(render_branch(root))
 
         return "\n".join(lines)
-
-    def _render_parallel_stacks(self, stacks: list[list[str]]) -> list[str]:
-        """Render multiple parallel stacks with merge connectors."""
-        if len(stacks) == 1:
-            return stacks[0]
-
-        result: list[str] = []
-
-        # Find max height for alignment
-        max_height = max(len(s) for s in stacks)
-
-        # Pad shorter stacks
-        padded_stacks: list[list[str]] = []
-        for stack in stacks:
-            padding = max_height - len(stack)
-            padded = [""] * padding + stack
-            padded_stacks.append(padded)
-
-        # Check if all stacks end with the same root (common base)
-        last_lines = [s[-1] if s else "" for s in stacks]
-        all_same_root = len(set(last_lines)) == 1 and last_lines[0]
-
-        # Render line by line
-        for i in range(max_height):
-            combined_parts: list[str] = []
-
-            for j, stack in enumerate(padded_stacks):
-                line = stack[i] if i < len(stack) else ""
-
-                if j == 0:
-                    combined_parts.append(line)
-                else:
-                    # Add separator/connector
-                    if i == max_height - 1 and all_same_root:
-                        # Last line with common root - use merge connector
-                        # Skip this stack's last line, we'll handle it below
-                        pass
-                    elif line:
-                        # Add prefix for nested stack
-                        combined_parts.append(f"│ {line}")
-                    elif stack[i] == "":
-                        # Empty padding line
-                        combined_parts.append("│")
-
-            if i == max_height - 1 and all_same_root:
-                # Render the merged root line
-                base_line = last_lines[0]
-                # Replace the marker with merge connector
-                if base_line.startswith("◉"):
-                    merged = "◉" + "─┴─" * (len(stacks) - 1) + base_line[1:]
-                elif base_line.startswith("◯"):
-                    merged = "◯" + "─┴─" * (len(stacks) - 1) + base_line[1:]
-                else:
-                    merged = base_line
-                result.append(merged)
-            else:
-                result.append(" ".join(combined_parts))
-
-        return result
