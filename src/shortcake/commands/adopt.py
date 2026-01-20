@@ -2,11 +2,12 @@ from dataclasses import dataclass
 from typing import Annotated
 
 import typer
+from dulwich.objects import Commit
 from dulwich.repo import Repo
 
 from shortcake import _git as git
-
-TRAILER_KEY = "Shortcake-Parent"
+from shortcake._constants import TRAILER_KEY
+from shortcake._trailers import add_trailer, get_trailer
 
 
 @dataclass
@@ -23,23 +24,8 @@ class AdoptError:
 AdoptResult = AdoptSuccess | AdoptError
 
 
-def _get_trailer(message: str, key: str) -> str | None:
-    """Extract trailer value from commit message."""
-    for line in reversed(message.strip().split("\n")):
-        if line.startswith(f"{key}: "):
-            return line[len(key) + 2 :]
-    return None
-
-
-def _add_trailer(message: str, key: str, value: str) -> str:
-    """Add trailer to commit message."""
-    return f"{message.rstrip()}\n\n{key}: {value}\n"
-
-
 def _replay_commits(repo: Repo, commits: list[bytes], base: bytes) -> bytes:
     """Replay commits on top of a new base, return final SHA."""
-    from dulwich.objects import Commit
-
     current_base = base
     # Commits are newest-first, so reverse to replay in order
     for commit_sha in reversed(commits):
@@ -89,10 +75,8 @@ def _adopt(
         return AdoptError(f"Cannot adopt default branch '{branch}'")
 
     # Resolve parent
-    if parent is None:
-        parent = default_branch
-        if parent is None:
-            return AdoptError("Cannot detect parent branch. Use --parent to specify.")
+    if parent is None and (parent := default_branch) is None:
+        return AdoptError("Cannot detect parent branch. Use --parent to specify.")
 
     # Check parent exists
     if not git.branch_exists(repo, parent):
@@ -111,11 +95,11 @@ def _adopt(
 
     # Check if already tracked
     message = git.get_commit_message(repo, first_commit)
-    if _get_trailer(message, TRAILER_KEY) is not None:
+    if get_trailer(message, TRAILER_KEY) is not None:
         return AdoptError(f"Branch '{branch}' is already tracked")
 
     # Amend with trailer
-    new_message = _add_trailer(message, TRAILER_KEY, parent)
+    new_message = add_trailer(message, TRAILER_KEY, parent)
     new_sha = git.amend_commit_message(repo, first_commit, new_message)
 
     # Rewrite history: need to rebase all commits on top of new first commit

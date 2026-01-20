@@ -4,13 +4,12 @@ from dulwich import porcelain
 from dulwich.repo import Repo
 
 from shortcake import _git as git
+from shortcake._constants import TRAILER_KEY
+from shortcake._trailers import add_trailer, get_trailer
 from shortcake.commands.adopt import (
-    TRAILER_KEY,
     AdoptError,
     AdoptSuccess,
-    _add_trailer,
     _adopt,
-    _get_trailer,
 )
 
 
@@ -25,7 +24,7 @@ def test_adopt_current_branch(repo_with_feature: Repo) -> None:
     # Verify trailer was added
     head = git.get_branch_head(repo_with_feature, "feature")
     message = git.get_commit_message(repo_with_feature, head)
-    assert _get_trailer(message, TRAILER_KEY) == "main"
+    assert get_trailer(message, TRAILER_KEY) == "main"
 
 
 def test_adopt_specified_branch(repo_with_feature: Repo) -> None:
@@ -145,18 +144,18 @@ def test_adopt_multiple_commits(temp_repo: Repo, tmp_path: Path) -> None:
     )
     first_commit = commits[-1]
     message = git.get_commit_message(temp_repo, first_commit)
-    assert _get_trailer(message, TRAILER_KEY) == "main"
+    assert get_trailer(message, TRAILER_KEY) == "main"
 
 
 def test_get_trailer() -> None:
     """Test trailer extraction."""
     message = "feat: something\n\nBody text\n\nShortcake-Parent: main\n"
-    assert _get_trailer(message, "Shortcake-Parent") == "main"
-    assert _get_trailer(message, "Other") is None
+    assert get_trailer(message, "Shortcake-Parent") == "main"
+    assert get_trailer(message, "Other") is None
 
 
 def test_add_trailer() -> None:
     """Test trailer addition."""
     message = "feat: something"
-    result = _add_trailer(message, "Shortcake-Parent", "main")
+    result = add_trailer(message, "Shortcake-Parent", "main")
     assert "Shortcake-Parent: main" in result
