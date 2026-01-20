@@ -1,22 +1,18 @@
 from pathlib import Path
 
+import pytest
 from dulwich import porcelain
 from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._trailers import Trailers
-from shortcake.commands.adopt import (
-    AdoptError,
-    AdoptSuccess,
-    _adopt,
-)
+from shortcake.commands.adopt import AdoptError, _adopt
 
 
 def test_adopt_current_branch(repo_with_feature: Repo) -> None:
     """Test adopting the current feature branch."""
     result = _adopt(repo_with_feature)
 
-    assert isinstance(result, AdoptSuccess)
     assert result.branch == "feature"
     assert result.parent == "main"
 
@@ -33,7 +29,6 @@ def test_adopt_specified_branch(repo_with_feature: Repo) -> None:
 
     result = _adopt(repo_with_feature, branch="feature")
 
-    assert isinstance(result, AdoptSuccess)
     assert result.branch == "feature"
 
 
@@ -41,7 +36,8 @@ def test_adopt_with_explicit_parent(repo_with_feature: Repo) -> None:
     """Test adopting with explicit parent."""
     result = _adopt(repo_with_feature, parent="main")
 
-    assert isinstance(result, AdoptSuccess)
+    assert result.branch == "feature"
+    assert result.parent == "main"
 
 
 def test_adopt_already_tracked(repo_with_feature: Repo) -> None:
@@ -50,18 +46,14 @@ def test_adopt_already_tracked(repo_with_feature: Repo) -> None:
     _adopt(repo_with_feature)
 
     # Try again
-    result = _adopt(repo_with_feature)
-
-    assert isinstance(result, AdoptError)
-    assert "already tracked" in result.error
+    with pytest.raises(AdoptError, match="already tracked"):
+        _adopt(repo_with_feature)
 
 
 def test_adopt_default_branch(temp_repo: Repo) -> None:
     """Test error when trying to adopt default branch."""
-    result = _adopt(temp_repo, branch="main")
-
-    assert isinstance(result, AdoptError)
-    assert "Cannot adopt default branch" in result.error
+    with pytest.raises(AdoptError, match="Cannot adopt default branch"):
+        _adopt(temp_repo, branch="main")
 
 
 def test_adopt_no_parent_detected(tmp_path: Path) -> None:
@@ -84,18 +76,14 @@ def test_adopt_no_parent_detected(tmp_path: Path) -> None:
     porcelain.add(repo, paths=[str(test_file)])
     porcelain.commit(repo, message=b"Add feature")
 
-    result = _adopt(repo)
-
-    assert isinstance(result, AdoptError)
-    assert "Cannot detect parent branch. Use --parent to specify." in result.error
+    with pytest.raises(AdoptError, match="Cannot detect parent branch"):
+        _adopt(repo)
 
 
 def test_adopt_parent_not_found(repo_with_feature: Repo) -> None:
     """Test error when explicit parent doesn't exist."""
-    result = _adopt(repo_with_feature, parent="nonexistent")
-
-    assert isinstance(result, AdoptError)
-    assert "Parent branch 'nonexistent' not found" in result.error
+    with pytest.raises(AdoptError, match="Parent branch 'nonexistent' not found"):
+        _adopt(repo_with_feature, parent="nonexistent")
 
 
 def test_adopt_no_commits_on_branch(temp_repo: Repo) -> None:
@@ -105,10 +93,8 @@ def test_adopt_no_commits_on_branch(temp_repo: Repo) -> None:
     temp_repo.refs[b"refs/heads/feature"] = main_sha
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
 
-    result = _adopt(temp_repo)
-
-    assert isinstance(result, AdoptError)
-    assert "No commits on 'feature' relative to 'main'" in result.error
+    with pytest.raises(AdoptError, match="No commits on 'feature' relative to 'main'"):
+        _adopt(temp_repo)
 
 
 def test_adopt_multiple_commits(temp_repo: Repo, tmp_path: Path) -> None:
@@ -132,7 +118,6 @@ def test_adopt_multiple_commits(temp_repo: Repo, tmp_path: Path) -> None:
 
     result = _adopt(temp_repo)
 
-    assert isinstance(result, AdoptSuccess)
     assert result.branch == "feature"
 
     # Verify trailer on first commit
