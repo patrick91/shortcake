@@ -1,5 +1,9 @@
 from dataclasses import dataclass
+from typing import Annotated
+
+import typer
 from dulwich.repo import Repo
+
 from shortcake import _git as git
 
 TRAILER_KEY = "Shortcake-Parent"
@@ -13,7 +17,7 @@ class AdoptResult:
     error: str | None = None
 
 
-def get_trailer(message: str, key: str) -> str | None:
+def _get_trailer(message: str, key: str) -> str | None:
     """Extract trailer value from commit message."""
     for line in reversed(message.strip().split("\n")):
         if line.startswith(f"{key}: "):
@@ -21,12 +25,42 @@ def get_trailer(message: str, key: str) -> str | None:
     return None
 
 
-def add_trailer(message: str, key: str, value: str) -> str:
+def _add_trailer(message: str, key: str, value: str) -> str:
     """Add trailer to commit message."""
     return f"{message.rstrip()}\n\n{key}: {value}\n"
 
 
-def adopt(
+def _replay_commits(repo: Repo, commits: list[bytes], base: bytes) -> bytes:
+    """Replay commits on top of a new base, return final SHA."""
+    from dulwich.objects import Commit
+
+    current_base = base
+    # Commits are newest-first, so reverse to replay in order
+    for commit_sha in reversed(commits):
+        old_commit = repo[commit_sha]
+        new_sha = git.amend_commit_message(repo, commit_sha, old_commit.message.decode())
+        # Update the parent to point to current_base
+        new_commit = repo[new_sha]
+
+        fixed_commit = Commit()
+        fixed_commit.tree = old_commit.tree
+        fixed_commit.parents = [current_base]
+        fixed_commit.author = old_commit.author
+        fixed_commit.committer = old_commit.committer
+        fixed_commit.author_time = old_commit.author_time
+        fixed_commit.author_timezone = old_commit.author_timezone
+        fixed_commit.commit_time = new_commit.commit_time
+        fixed_commit.commit_timezone = old_commit.commit_timezone
+        fixed_commit.encoding = old_commit.encoding
+        fixed_commit.message = old_commit.message
+
+        repo.object_store.add_object(fixed_commit)
+        current_base = fixed_commit.id
+
+    return current_base
+
+
+def _adopt(
     repo: Repo,
     branch: str | None = None,
     parent: str | None = None,
@@ -74,11 +108,11 @@ def adopt(
 
     # Check if already tracked
     message = git.get_commit_message(repo, first_commit)
-    if get_trailer(message, TRAILER_KEY) is not None:
+    if _get_trailer(message, TRAILER_KEY) is not None:
         return AdoptResult(branch, parent, False, f"Branch '{branch}' is already tracked")
 
     # Amend with trailer
-    new_message = add_trailer(message, TRAILER_KEY, parent)
+    new_message = _add_trailer(message, TRAILER_KEY, parent)
     new_sha = git.amend_commit_message(repo, first_commit, new_message)
 
     # Rewrite history: need to rebase all commits on top of new first commit
@@ -92,30 +126,19 @@ def adopt(
     return AdoptResult(branch, parent, True)
 
 
-def _replay_commits(repo: Repo, commits: list[bytes], base: bytes) -> bytes:
-    """Replay commits on top of a new base, return final SHA."""
-    current_base = base
-    # Commits are newest-first, so reverse to replay in order
-    for commit_sha in reversed(commits):
-        old_commit = repo[commit_sha]
-        new_sha = git.amend_commit_message(repo, commit_sha, old_commit.message.decode())
-        # Update the parent to point to current_base
-        new_commit = repo[new_sha]
-        from dulwich.objects import Commit
+# Typer command
 
-        fixed_commit = Commit()
-        fixed_commit.tree = old_commit.tree
-        fixed_commit.parents = [current_base]
-        fixed_commit.author = old_commit.author
-        fixed_commit.committer = old_commit.committer
-        fixed_commit.author_time = old_commit.author_time
-        fixed_commit.author_timezone = old_commit.author_timezone
-        fixed_commit.commit_time = new_commit.commit_time
-        fixed_commit.commit_timezone = old_commit.commit_timezone
-        fixed_commit.encoding = old_commit.encoding
-        fixed_commit.message = old_commit.message
 
-        repo.object_store.add_object(fixed_commit)
-        current_base = fixed_commit.id
+def adopt(
+    branch: Annotated[str | None, typer.Argument()] = None,
+    parent: Annotated[str | None, typer.Option("--parent", "-p")] = None,
+) -> None:
+    """Track an existing branch by adding Shortcake-Parent trailer."""
+    repo = git.open_repo()
+    result = _adopt(repo, branch, parent)
 
-    return current_base
+    if not result.success:
+        typer.echo(f"Error: {result.error}", err=True)
+        raise typer.Exit(1)
+
+    typer.echo(f"Adopted '{result.branch}' with parent '{result.parent}'")
