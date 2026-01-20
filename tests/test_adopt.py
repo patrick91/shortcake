@@ -4,8 +4,7 @@ from dulwich import porcelain
 from dulwich.repo import Repo
 
 from shortcake import _git as git
-from shortcake._constants import TRAILER_KEY
-from shortcake._trailers import add_trailer, get_trailer
+from shortcake._trailers import Trailers
 from shortcake.commands.adopt import (
     AdoptError,
     AdoptSuccess,
@@ -24,7 +23,7 @@ def test_adopt_current_branch(repo_with_feature: Repo) -> None:
     # Verify trailer was added
     head = git.get_branch_head(repo_with_feature, "feature")
     message = git.get_commit_message(repo_with_feature, head)
-    assert get_trailer(message, TRAILER_KEY) == "main"
+    assert Trailers.from_message(message).parent_branch == "main"
 
 
 def test_adopt_specified_branch(repo_with_feature: Repo) -> None:
@@ -144,18 +143,34 @@ def test_adopt_multiple_commits(temp_repo: Repo, tmp_path: Path) -> None:
     )
     first_commit = commits[-1]
     message = git.get_commit_message(temp_repo, first_commit)
-    assert get_trailer(message, TRAILER_KEY) == "main"
+    assert Trailers.from_message(message).parent_branch == "main"
 
 
-def test_get_trailer() -> None:
+def test_trailers_from_message() -> None:
     """Test trailer extraction."""
     message = "feat: something\n\nBody text\n\nShortcake-Parent: main\n"
-    assert get_trailer(message, "Shortcake-Parent") == "main"
-    assert get_trailer(message, "Other") is None
+    trailers = Trailers.from_message(message)
+    assert trailers.parent_branch == "main"
 
 
-def test_add_trailer() -> None:
+def test_trailers_from_message_empty() -> None:
+    """Test trailer extraction with no trailers."""
+    message = "feat: something\n\nBody text\n"
+    trailers = Trailers.from_message(message)
+    assert trailers.parent_branch is None
+
+
+def test_trailers_apply_to() -> None:
     """Test trailer addition."""
     message = "feat: something"
-    result = add_trailer(message, "Shortcake-Parent", "main")
+    trailers = Trailers(parent_branch="main")
+    result = trailers.apply_to(message)
     assert "Shortcake-Parent: main" in result
+
+
+def test_trailers_apply_to_empty() -> None:
+    """Test apply with no trailers does nothing."""
+    message = "feat: something"
+    trailers = Trailers()
+    result = trailers.apply_to(message)
+    assert result == message

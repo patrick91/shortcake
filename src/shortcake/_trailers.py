@@ -1,16 +1,32 @@
+from dataclasses import dataclass
+
 from dulwich import porcelain
 
-
-def get_trailer(message: str, key: str) -> str | None:
-    """Extract trailer value from commit message."""
-    result = porcelain.interpret_trailers(message, only_trailers=True, only_input=True)
-    for line in result.decode().strip().split("\n"):
-        if line.startswith(f"{key}: "):
-            return line[len(key) + 2 :]
-    return None
+from shortcake._constants import TRAILER_KEY
 
 
-def add_trailer(message: str, key: str, value: str) -> str:
-    """Add trailer to commit message."""
-    result = porcelain.interpret_trailers(message, trailers=[(key, value)])
-    return result.decode()
+@dataclass
+class Trailers:
+    parent_branch: str | None = None
+
+    @classmethod
+    def from_message(cls, message: str) -> "Trailers":
+        """Parse trailers from commit message."""
+        result = porcelain.interpret_trailers(
+            message, only_trailers=True, only_input=True
+        )
+        parent_branch = None
+        for line in result.decode().strip().split("\n"):
+            if line.startswith(f"{TRAILER_KEY}: "):
+                parent_branch = line[len(TRAILER_KEY) + 2 :]
+        return cls(parent_branch=parent_branch)
+
+    def apply_to(self, message: str) -> str:
+        """Add trailers to message."""
+        trailers: list[tuple[str, str]] = []
+        if self.parent_branch is not None:
+            trailers.append((TRAILER_KEY, self.parent_branch))
+        if not trailers:
+            return message
+        result = porcelain.interpret_trailers(message, trailers=trailers)
+        return result.decode()
