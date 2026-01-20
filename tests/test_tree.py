@@ -1,4 +1,4 @@
-from shortcake._tree import BranchNode, StackTree
+from shortcake._tree import BranchNode, BranchWarning, StackTree
 
 
 def test_build_simple_stack() -> None:
@@ -285,3 +285,115 @@ def test_render_parallel_stacks_unknown_marker() -> None:
     output = "\n".join(result)
     # Should contain the base line as-is
     assert "? base" in output
+
+
+def test_build_circular_reference_two_branches() -> None:
+    """Test handling circular reference: A -> B -> A."""
+    branches = {"branch-a": "branch-b", "branch-b": "branch-a"}
+    all_branches = {"branch-a", "branch-b"}
+    current = "branch-a"
+
+    tree = StackTree.build(branches, all_branches, current)
+
+    # Both branches should be roots (cycle broken)
+    assert len(tree.roots) == 2
+    root_names = {r.name for r in tree.roots}
+    assert root_names == {"branch-a", "branch-b"}
+
+    # Both should have cycle warning
+    for root in tree.roots:
+        assert root.warning == BranchWarning.CYCLE
+
+
+def test_build_self_reference() -> None:
+    """Test handling self-reference: A -> A."""
+    branches = {"branch-a": "branch-a"}
+    all_branches = {"branch-a", "main"}
+    current = "branch-a"
+
+    tree = StackTree.build(branches, all_branches, current)
+
+    assert len(tree.roots) == 1
+    assert tree.roots[0].name == "branch-a"
+    assert tree.roots[0].warning == BranchWarning.CYCLE
+
+
+def test_build_longer_cycle() -> None:
+    """Test handling longer cycle: A -> B -> C -> A."""
+    branches = {
+        "branch-a": "branch-b",
+        "branch-b": "branch-c",
+        "branch-c": "branch-a",
+    }
+    all_branches = {"branch-a", "branch-b", "branch-c"}
+    current = "branch-a"
+
+    tree = StackTree.build(branches, all_branches, current)
+
+    # All three should be roots
+    assert len(tree.roots) == 3
+    for root in tree.roots:
+        assert root.warning == BranchWarning.CYCLE
+
+
+def test_render_circular_reference_warning() -> None:
+    """Test that circular reference shows warning in output."""
+    branches = {"branch-a": "branch-b", "branch-b": "branch-a"}
+    all_branches = {"branch-a", "branch-b"}
+    current = "branch-a"
+
+    tree = StackTree.build(branches, all_branches, current)
+    output = tree.render()
+
+    assert "(circular ref)" in output
+    assert "branch-a" in output
+    assert "branch-b" in output
+
+
+def test_render_orphan_warning() -> None:
+    """Test that orphan branch shows warning in output."""
+    branches = {"feature": "deleted-branch"}
+    all_branches = {"main", "feature"}
+    current = "feature"
+
+    tree = StackTree.build(branches, all_branches, current)
+    output = tree.render()
+
+    assert "(parent missing)" in output
+    assert "feature" in output
+
+
+def test_build_orphan_has_warning() -> None:
+    """Test that orphan branch has correct warning set."""
+    branches = {"feature": "deleted-branch"}
+    all_branches = {"main", "feature"}
+    current = "feature"
+
+    tree = StackTree.build(branches, all_branches, current)
+
+    assert len(tree.roots) == 1
+    assert tree.roots[0].warning == BranchWarning.ORPHAN
+
+
+def test_build_mixed_normal_and_cycle() -> None:
+    """Test tree with both normal branches and a cycle."""
+    branches = {
+        "feature": "main",  # Normal
+        "cycle-a": "cycle-b",  # Cycle
+        "cycle-b": "cycle-a",  # Cycle
+    }
+    all_branches = {"main", "feature", "cycle-a", "cycle-b"}
+    current = "feature"
+
+    tree = StackTree.build(branches, all_branches, current)
+
+    # Should have 3 roots: main (with feature child), cycle-a, cycle-b
+    assert len(tree.roots) == 3
+    root_names = {r.name for r in tree.roots}
+    assert root_names == {"main", "cycle-a", "cycle-b"}
+
+    # Find the main root and verify it has feature as child
+    main_root = next(r for r in tree.roots if r.name == "main")
+    assert len(main_root.children) == 1
+    assert main_root.children[0].name == "feature"
+    assert main_root.children[0].warning is None  # No warning for normal branch
