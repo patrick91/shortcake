@@ -1,3 +1,5 @@
+from inline_snapshot import snapshot
+
 from shortcake._tree import BranchNode, BranchWarning, StackTree
 
 
@@ -397,3 +399,129 @@ def test_build_mixed_normal_and_cycle() -> None:
     assert len(main_root.children) == 1
     assert main_root.children[0].name == "feature"
     assert main_root.children[0].warning is None  # No warning for normal branch
+
+
+# Snapshot tests for rendering output
+
+
+def test_snapshot_simple_stack() -> None:
+    """Snapshot test for simple single-branch stack."""
+    branches = {"feature": "main"}
+    all_branches = {"main", "feature"}
+    current = "feature"
+
+    tree = StackTree.build(branches, all_branches, current)
+    assert tree.render() == snapshot("""\
+◉ feature (current)
+│
+◯ main\
+""")
+
+
+def test_snapshot_multi_level_stack() -> None:
+    """Snapshot test for A → B → C chain."""
+    branches = {
+        "feature-a": "main",
+        "feature-b": "feature-a",
+        "feature-c": "feature-b",
+    }
+    all_branches = {"main", "feature-a", "feature-b", "feature-c"}
+    current = "feature-c"
+
+    tree = StackTree.build(branches, all_branches, current)
+    assert tree.render() == snapshot("""\
+◉ feature-c (current)
+│
+◯ feature-b
+│
+◯ feature-a
+│
+◯ main\
+""")
+
+
+def test_snapshot_multiple_children() -> None:
+    """Snapshot test for multiple branches from same parent."""
+    branches = {
+        "feature-a": "main",
+        "feature-b": "main",
+        "feature-c": "main",
+    }
+    all_branches = {"main", "feature-a", "feature-b", "feature-c"}
+    current = "main"
+
+    tree = StackTree.build(branches, all_branches, current)
+    assert tree.render() == snapshot("""\
+◯ feature-a
+◯ feature-b
+◯ feature-c
+│
+◉ main (current)\
+""")
+
+
+def test_snapshot_current_not_on_tracked() -> None:
+    """Snapshot test when current branch is not tracked."""
+    branches = {"feature": "main"}
+    all_branches = {"main", "feature", "other"}
+    current = "other"
+
+    tree = StackTree.build(branches, all_branches, current)
+    assert tree.render() == snapshot("""\
+◯ feature
+│
+◯ main\
+""")
+
+
+def test_snapshot_orphan_branch() -> None:
+    """Snapshot test for orphan branch warning."""
+    branches = {"feature": "deleted-branch"}
+    all_branches = {"main", "feature"}
+    current = "feature"
+
+    tree = StackTree.build(branches, all_branches, current)
+    assert tree.render() == snapshot("◉ feature (current) (parent missing)")
+
+
+def test_snapshot_circular_reference() -> None:
+    """Snapshot test for circular reference warning."""
+    branches = {"branch-a": "branch-b", "branch-b": "branch-a"}
+    all_branches = {"branch-a", "branch-b"}
+    current = "branch-a"
+
+    tree = StackTree.build(branches, all_branches, current)
+    assert tree.render() == snapshot(
+        "◉ branch-a (current) (circular ref) │ ◯ branch-b (circular ref)"
+    )
+
+
+def test_snapshot_self_reference() -> None:
+    """Snapshot test for self-reference warning."""
+    branches = {"feature": "feature"}
+    all_branches = {"main", "feature"}
+    current = "feature"
+
+    tree = StackTree.build(branches, all_branches, current)
+    assert tree.render() == snapshot("◉ feature (current) (circular ref)")
+
+
+def test_snapshot_complex_tree() -> None:
+    """Snapshot test for complex tree with multiple stacks."""
+    branches = {
+        "feature-a": "main",
+        "feature-a-1": "feature-a",
+        "feature-b": "main",
+    }
+    all_branches = {"main", "feature-a", "feature-a-1", "feature-b"}
+    current = "feature-a-1"
+
+    tree = StackTree.build(branches, all_branches, current)
+    assert tree.render() == snapshot("""\
+◉ feature-a-1 (current)
+│
+◯ feature-a
+◯ feature-b
+│
+◯ main\
+""")
