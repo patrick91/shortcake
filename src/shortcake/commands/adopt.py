@@ -6,21 +6,20 @@ from dulwich.objects import Commit
 from dulwich.repo import Repo
 
 from shortcake import _git as git
+from shortcake._exceptions import ShortcakeError
 from shortcake._trailers import Trailers
 
 
+class AdoptError(ShortcakeError):
+    """Error during adopt operation."""
+
+    pass
+
+
 @dataclass
-class AdoptSuccess:
+class AdoptResult:
     branch: str
     parent: str
-
-
-@dataclass
-class AdoptError:
-    error: str
-
-
-AdoptResult = AdoptSuccess | AdoptError
 
 
 def _replay_commits(repo: Repo, commits: list[bytes], base: bytes) -> bytes:
@@ -60,7 +59,7 @@ def _adopt(
     """
     Track an existing branch by adding Shortcake-Parent trailer.
 
-    Returns AdoptResult with success/failure and details.
+    Raises AdoptError on failure, returns AdoptResult on success.
     """
     # Get default branch for validation and fallback
     default_branch = git.get_default_branch(repo)
@@ -71,15 +70,15 @@ def _adopt(
 
     # Check not default branch
     if branch == default_branch:
-        return AdoptError(f"Cannot adopt default branch '{branch}'")
+        raise AdoptError(f"Cannot adopt default branch '{branch}'")
 
     # Resolve parent
     if parent is None and (parent := default_branch) is None:
-        return AdoptError("Cannot detect parent branch. Use --parent to specify.")
+        raise AdoptError("Cannot detect parent branch. Use --parent to specify.")
 
     # Check parent exists
     if not git.branch_exists(repo, parent):
-        return AdoptError(f"Parent branch '{parent}' not found")
+        raise AdoptError(f"Parent branch '{parent}' not found")
 
     # Find first commit on branch
     branch_head = git.get_branch_head(repo, branch)
@@ -87,7 +86,7 @@ def _adopt(
     commits = git.get_commits_between(repo, branch_head, parent_head)
 
     if not commits:
-        return AdoptError(f"No commits on '{branch}' relative to '{parent}'")
+        raise AdoptError(f"No commits on '{branch}' relative to '{parent}'")
 
     # First commit is last in list (walker returns newest first)
     first_commit = commits[-1]
@@ -96,7 +95,7 @@ def _adopt(
     message = git.get_commit_message(repo, first_commit)
     trailers = Trailers.from_message(message)
     if trailers.parent_branch is not None:
-        return AdoptError(f"Branch '{branch}' is already tracked")
+        raise AdoptError(f"Branch '{branch}' is already tracked")
 
     # Amend with trailer
     new_trailers = Trailers(parent_branch=parent)
@@ -111,7 +110,7 @@ def _adopt(
     # Update branch ref
     git.update_branch(repo, branch, new_sha)
 
-    return AdoptSuccess(branch, parent)
+    return AdoptResult(branch, parent)
 
 
 # Typer command
@@ -123,10 +122,11 @@ def adopt(
 ) -> None:
     """Track an existing branch by adding Shortcake-Parent trailer."""
     repo = git.open_repo()
-    result = _adopt(repo, branch, parent)
 
-    if isinstance(result, AdoptError):
-        typer.echo(f"Error: {result.error}", err=True)
-        raise typer.Exit(1)
+    try:
+        result = _adopt(repo, branch, parent)
+    except AdoptError as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1) from None
 
     typer.echo(f"Adopted '{result.branch}' with parent '{result.parent}'")
