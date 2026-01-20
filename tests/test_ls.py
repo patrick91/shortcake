@@ -112,6 +112,69 @@ def test_ls_chain_of_branches(temp_repo: Repo, tmp_path: Path) -> None:
 ◯ main""")
 
 
+def test_ls_parallel_stacks(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test ls with parallel stacks off main."""
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+
+    # Create stack-1-a off main
+    temp_repo.refs[b"refs/heads/stack-1-a"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/stack-1-a")
+
+    file_1a = tmp_path / "stack1a.txt"
+    file_1a.write_text("stack1a")
+    porcelain.add(temp_repo, paths=[str(file_1a)])
+    porcelain.commit(temp_repo, message=b"Add stack-1-a")
+
+    _adopt(temp_repo, branch="stack-1-a", parent="main")
+
+    # Create stack-1-b off stack-1-a
+    stack_1a_sha = temp_repo.refs[b"refs/heads/stack-1-a"]
+    temp_repo.refs[b"refs/heads/stack-1-b"] = stack_1a_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/stack-1-b")
+
+    file_1b = tmp_path / "stack1b.txt"
+    file_1b.write_text("stack1b")
+    porcelain.add(temp_repo, paths=[str(file_1b)])
+    porcelain.commit(temp_repo, message=b"Add stack-1-b")
+
+    _adopt(temp_repo, branch="stack-1-b", parent="stack-1-a")
+
+    # Create stack-2-a off main (parallel stack)
+    temp_repo.refs[b"refs/heads/stack-2-a"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/stack-2-a")
+
+    file_2a = tmp_path / "stack2a.txt"
+    file_2a.write_text("stack2a")
+    porcelain.add(temp_repo, paths=[str(file_2a)])
+    porcelain.commit(temp_repo, message=b"Add stack-2-a")
+
+    _adopt(temp_repo, branch="stack-2-a", parent="main")
+
+    # Create stack-2-b off stack-2-a
+    stack_2a_sha = temp_repo.refs[b"refs/heads/stack-2-a"]
+    temp_repo.refs[b"refs/heads/stack-2-b"] = stack_2a_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/stack-2-b")
+
+    file_2b = tmp_path / "stack2b.txt"
+    file_2b.write_text("stack2b")
+    porcelain.add(temp_repo, paths=[str(file_2b)])
+    porcelain.commit(temp_repo, message=b"Add stack-2-b")
+
+    _adopt(temp_repo, branch="stack-2-b", parent="stack-2-a")
+
+    result = _ls(temp_repo)
+
+    assert result == snapshot("""\
+◯ stack-1-b
+│
+◯ stack-1-a
+◉ stack-2-b (current)
+│
+◯ stack-2-a
+│
+◯ main""")
+
+
 def test_get_branch_parent_no_trailer(temp_repo: Repo) -> None:
     """Test _get_branch_parent returns None when no trailer exists."""
     all_branches = set(git.get_all_local_branches(temp_repo))
