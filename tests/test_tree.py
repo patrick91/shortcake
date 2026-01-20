@@ -453,7 +453,9 @@ def test_snapshot_multiple_children() -> None:
     tree = StackTree.build(branches, all_branches, current)
     assert tree.render() == snapshot("""\
 ◯ feature-a
+│
 ◯ feature-b
+│
 ◯ feature-c
 │
 ◉ main (current)\
@@ -521,6 +523,7 @@ def test_snapshot_complex_tree() -> None:
 ◉ feature-a-1 (current)
 │
 ◯ feature-a
+│
 ◯ feature-b
 │
 ◯ main\

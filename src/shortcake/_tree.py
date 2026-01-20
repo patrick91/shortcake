@@ -157,9 +157,7 @@ class StackTree:
             for child in node.children:
                 child_lines = render_branch(child, prefix)
                 result.extend(child_lines)
-
-            # Render connector line if this node has children
-            if node.children:
+                # Add connector showing this child connects to parent
                 result.append(f"{prefix}│")
 
             # Render this node
