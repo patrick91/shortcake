@@ -174,3 +174,12 @@ def test_trailers_apply_to_empty() -> None:
     trailers = Trailers()
     result = trailers.apply_to(message)
     assert result == message
+
+
+def test_trailers_apply_to_preserves_existing() -> None:
+    """Test apply preserves existing trailers."""
+    message = "feat: something\n\nBody\n\nExisting-Trailer: value\n"
+    trailers = Trailers(parent_branch="main")
+    result = trailers.apply_to(message)
+    assert "Existing-Trailer: value" in result
+    assert "Shortcake-Parent: main" in result
