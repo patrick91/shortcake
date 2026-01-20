@@ -1,7 +1,8 @@
-from pathlib import Path
-from dulwich.repo import Repo
-from dulwich.objects import Commit
 import time
+from pathlib import Path
+
+from dulwich.objects import Commit
+from dulwich.repo import Repo
 
 
 def open_repo(path: Path | None = None) -> Repo:

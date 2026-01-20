@@ -19,6 +19,10 @@ dev = [
     "pytest-cov>=6.0.0",
 ]
 
+[dependency-groups]
+typing = ["ty>=0.0.1"]
+linting = ["ruff>=0.11.0"]
+
 [project.scripts]
 shortcake = "shortcake.cli:app"
 sc = "shortcake.cli:app"
@@ -26,3 +30,17 @@ sc = "shortcake.cli:app"
 [build-system]
 requires = ["uv_build>=0.9.8,<0.10.0"]
 build-backend = "uv_build"
+
+[tool.ty.rules]
+# Ignore due to dulwich's incomplete type annotations
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+unresolved-attribute = "ignore"
+unsupported-operator = "ignore"
+
+[tool.ruff]
+target-version = "py313"  # ruff doesn't support py314 yet
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]

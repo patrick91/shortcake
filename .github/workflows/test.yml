@@ -6,9 +6,28 @@ on:
   pull_request:
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python 3.14
+        run: uv python install 3.14
+
+      - name: Lint with ruff
+        run: uv run --group linting ruff check src/ tests/
+
+      - name: Check formatting
+        run: uv run --group linting ruff format --check src/ tests/
+
+      - name: Type check with ty
+        run: uv run --group typing ty check src/
+
   test:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
