@@ -82,7 +82,7 @@ def test_adopt_no_parent_detected(tmp_path: Path):
     result = adopt(repo)
 
     assert not result.success
-    assert "Cannot detect parent branch" in result.error
+    assert "Cannot detect parent branch. Use --parent to specify." in result.error
 
 
 def test_adopt_parent_not_found(repo_with_feature):

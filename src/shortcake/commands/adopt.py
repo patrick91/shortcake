@@ -51,7 +51,9 @@ def adopt(
     if parent is None:
         parent = default_branch
         if parent is None:
-            return AdoptResult(branch, "", False, "Cannot detect parent branch")
+            return AdoptResult(
+                branch, "", False, "Cannot detect parent branch. Use --parent to specify."
+            )
 
     # Check parent exists
     if not git.branch_exists(repo, parent):
