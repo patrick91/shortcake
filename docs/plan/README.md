@@ -43,17 +43,26 @@ This trailer defines the stack relationship. No external state files needed.
 ```
 src/shortcake/
 ├── __init__.py
-├── cli.py              # Typer app, all commands
-├── git.py              # Git operations (dulwich)
-├── trailers.py         # Trailer read/write
-└── stack.py            # Stack traversal logic
+├── cli.py              # Typer app, imports and registers commands
+├── _git.py             # Git operations (dulwich) - internal
+└── commands/
+    ├── __init__.py
+    └── adopt.py        # adopt command + _adopt() business logic
 
 tests/
 ├── conftest.py         # Fixtures (temp repos)
-├── test_adopt.py
-├── test_ls.py
-└── ...
+├── test_adopt.py       # Tests for _adopt() business logic
+├── test_cli.py         # CLI integration tests
+└── test_git.py         # Tests for _git module
 ```
+
+### Convention
+
+- `commands/*.py` - Each file contains:
+  - `_function()` - Internal business logic (testable directly)
+  - `function()` - Typer command (thin wrapper)
+- `_module.py` - Internal modules (prefixed with underscore)
+- Tests call `_function()` directly for unit tests, CLI for integration
 
 ## Notes
 

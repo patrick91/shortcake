@@ -1,12 +1,14 @@
 import typer
 
-app = typer.Typer()
+from shortcake.commands.adopt import adopt
+
+app = typer.Typer(no_args_is_help=True)
 
 
-@app.command()
-def hello(name: str = "World") -> None:
-    print(f"Hello {name}!")
+@app.callback()
+def main() -> None:
+    """Shortcake - Stacked PR management tool."""
+    pass
 
 
-if __name__ == "__main__":
-    app()
+app.command()(adopt)
