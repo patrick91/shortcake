@@ -199,7 +199,11 @@ class StackTree:
             elif node.warning == BranchWarning.CYCLE:
                 suffix += " (circular ref)"
 
-            merge_connector = "─" + "┴─" * (len(node.children) - 1)
+            # Format: ◯─┘ (2 children), ◯─┴─┘ (3 children), etc.
+            if len(node.children) == 2:
+                merge_connector = "─┘"
+            else:
+                merge_connector = "─" + "┴─" * (len(node.children) - 2) + "┘"
             result.append(f"{prefix}{marker}{merge_connector} {node.name}{suffix}")
 
             return result
