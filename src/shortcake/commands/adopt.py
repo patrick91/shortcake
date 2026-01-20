@@ -6,8 +6,7 @@ from dulwich.objects import Commit
 from dulwich.repo import Repo
 
 from shortcake import _git as git
-from shortcake._constants import TRAILER_KEY
-from shortcake._trailers import add_trailer, get_trailer
+from shortcake._trailers import Trailers
 
 
 @dataclass
@@ -95,11 +94,13 @@ def _adopt(
 
     # Check if already tracked
     message = git.get_commit_message(repo, first_commit)
-    if get_trailer(message, TRAILER_KEY) is not None:
+    trailers = Trailers.from_message(message)
+    if trailers.parent_branch is not None:
         return AdoptError(f"Branch '{branch}' is already tracked")
 
     # Amend with trailer
-    new_message = add_trailer(message, TRAILER_KEY, parent)
+    new_trailers = Trailers(parent_branch=parent)
+    new_message = new_trailers.apply_to(message)
     new_sha = git.amend_commit_message(repo, first_commit, new_message)
 
     # Rewrite history: need to rebase all commits on top of new first commit
