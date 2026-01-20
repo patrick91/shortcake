@@ -397,7 +397,7 @@ def test_snapshot_multiple_children() -> None:
 │ │
 │ │ ◯ feature-c
 │ │ │
-◉─┴─┘ main (current)\
+◉──┴──┘ main (current)\
 """)
 
 
@@ -469,5 +469,5 @@ def test_snapshot_complex_tree() -> None:
 │
 │ ◯ feature-b
 │ │
-◯─┘ main\
+◯──┘ main\
 """)

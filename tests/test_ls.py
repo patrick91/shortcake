@@ -173,7 +173,7 @@ def test_ls_parallel_stacks(temp_repo: Repo, tmp_path: Path) -> None:
 │ │
 │ ◯ stack-2-a
 │ │
-◯─┘ main\
+◯──┘ main\
 """)
 
 
