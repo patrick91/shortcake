@@ -150,3 +150,120 @@ def test_ls_detached_head(repo_with_feature: Repo, tmp_path: Path) -> None:
     assert "main" in result
     # No branch should be marked as current
     assert "(current)" not in result
+
+
+def test_get_branch_parent_stops_at_other_branch_head(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test that walking stops when reaching another branch's HEAD."""
+    # Create a scenario where one branch is ahead of another:
+    # main: C0 -> C1
+    # develop: C0 -> C1 -> C2 (develop is ahead of main)
+    #
+    # When checking develop (untracked), we walk C2 -> C1
+    # C1 is main's HEAD, so we stop there (line 58)
+
+    # Add another commit to main
+    file1 = tmp_path / "file1.txt"
+    file1.write_text("content1")
+    porcelain.add(temp_repo, paths=[str(file1)])
+    porcelain.commit(temp_repo, message=b"Second commit on main")
+
+    # Create develop branch from main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/develop"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/develop")
+
+    # Add commit to develop (now develop is ahead of main)
+    file2 = tmp_path / "file2.txt"
+    file2.write_text("content2")
+    porcelain.add(temp_repo, paths=[str(file2)])
+    porcelain.commit(temp_repo, message=b"Commit on develop")
+
+    # Now check - develop has no trailer, so when we walk its history,
+    # we'll hit main's HEAD and stop
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    result = _get_branch_parent(temp_repo, "develop", all_branches)
+
+    # Should return None since develop is not tracked (no trailer found)
+    assert result is None
+
+
+def test_get_branch_parent_with_merge_commit(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test walking through merge commits (covers revisiting commits via line 53)."""
+    # Create a diamond pattern with merge on a single branch:
+    #
+    #     C0 (initial)
+    #      |
+    #     C1
+    #    /  \
+    #   C2   C3
+    #    \  /
+    #     M (merge commit with 2 parents)
+    #
+    # Walking from M with BFS: queue starts [M]
+    # - Pop M, add C2, C3 → queue = [C2, C3]
+    # - Pop C2, add C1 → queue = [C3, C1]
+    # - Pop C3, add C1 → queue = [C1, C1]  (C1 added twice!)
+    # - Pop C1 (first), seen={M,C2,C3,C1}, add C0 → queue = [C1, C0]
+    # - Pop C1 (second), it's in seen! → line 53 triggered
+
+    from dulwich.objects import Commit
+
+    # C1
+    file1 = tmp_path / "file1.txt"
+    file1.write_text("content1")
+    porcelain.add(temp_repo, paths=[str(file1)])
+    porcelain.commit(temp_repo, message=b"C1")
+    c1_sha = temp_repo.refs[b"refs/heads/main"]
+
+    # Create C2 directly (not on a branch) with parent C1
+    c1_commit = temp_repo[c1_sha]
+    c2 = Commit()
+    c2.tree = c1_commit.tree
+    c2.parents = [c1_sha]
+    c2.author = c1_commit.author
+    c2.committer = c1_commit.committer
+    c2.author_time = c1_commit.author_time
+    c2.author_timezone = c1_commit.author_timezone
+    c2.commit_time = c1_commit.commit_time + 1
+    c2.commit_timezone = c1_commit.commit_timezone
+    c2.message = b"C2"
+    temp_repo.object_store.add_object(c2)
+    c2_sha = c2.id
+
+    # Create C3 directly with parent C1
+    c3 = Commit()
+    c3.tree = c1_commit.tree
+    c3.parents = [c1_sha]
+    c3.author = c1_commit.author
+    c3.committer = c1_commit.committer
+    c3.author_time = c1_commit.author_time
+    c3.author_timezone = c1_commit.author_timezone
+    c3.commit_time = c1_commit.commit_time + 2
+    c3.commit_timezone = c1_commit.commit_timezone
+    c3.message = b"C3"
+    temp_repo.object_store.add_object(c3)
+    c3_sha = c3.id
+
+    # Create merge commit M with parents C2 and C3 (both have parent C1)
+    merge = Commit()
+    merge.tree = c1_commit.tree
+    merge.parents = [c2_sha, c3_sha]  # Two parents that share C1!
+    merge.author = c1_commit.author
+    merge.committer = c1_commit.committer
+    merge.author_time = c1_commit.author_time
+    merge.author_timezone = c1_commit.author_timezone
+    merge.commit_time = c1_commit.commit_time + 3
+    merge.commit_timezone = c1_commit.commit_timezone
+    merge.message = b"Merge C2 and C3"
+    temp_repo.object_store.add_object(merge)
+    temp_repo.refs[b"refs/heads/main"] = merge.id
+
+    # Now when we walk main, we'll visit C1 through both C2 and C3,
+    # hitting the "already seen" check on line 53
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    result = _get_branch_parent(temp_repo, "main", all_branches)
+
+    # No trailer found
+    assert result is None
