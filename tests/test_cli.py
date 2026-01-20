@@ -1,14 +1,17 @@
-import pytest
 from pathlib import Path
+
+import pytest
+from dulwich.repo import Repo
 from typer.testing import CliRunner
-from dulwich import porcelain
 
 from shortcake.cli import app
 
 runner = CliRunner()
 
 
-def test_cli_adopt_success(repo_with_feature, tmp_path: Path, monkeypatch):
+def test_cli_adopt_success(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Test CLI adopt command success."""
     monkeypatch.chdir(tmp_path)
 
@@ -18,7 +21,9 @@ def test_cli_adopt_success(repo_with_feature, tmp_path: Path, monkeypatch):
     assert "Adopted 'feature' with parent 'main'" in result.output
 
 
-def test_cli_adopt_with_branch(repo_with_feature, tmp_path: Path, monkeypatch):
+def test_cli_adopt_with_branch(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Test CLI adopt with explicit branch argument."""
     monkeypatch.chdir(tmp_path)
     # Switch to main first
@@ -30,7 +35,9 @@ def test_cli_adopt_with_branch(repo_with_feature, tmp_path: Path, monkeypatch):
     assert "Adopted 'feature'" in result.output
 
 
-def test_cli_adopt_with_parent_option(repo_with_feature, tmp_path: Path, monkeypatch):
+def test_cli_adopt_with_parent_option(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Test CLI adopt with --parent option."""
     monkeypatch.chdir(tmp_path)
 
@@ -39,7 +46,9 @@ def test_cli_adopt_with_parent_option(repo_with_feature, tmp_path: Path, monkeyp
     assert result.exit_code == 0
 
 
-def test_cli_adopt_error(temp_repo, tmp_path: Path, monkeypatch):
+def test_cli_adopt_error(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Test CLI adopt command error handling."""
     monkeypatch.chdir(tmp_path)
 
@@ -50,7 +59,7 @@ def test_cli_adopt_error(temp_repo, tmp_path: Path, monkeypatch):
     assert "Cannot adopt default branch" in result.output
 
 
-def test_cli_help(tmp_path: Path, monkeypatch):
+def test_cli_help(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Test CLI shows help."""
     monkeypatch.chdir(tmp_path)
 

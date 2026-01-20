@@ -38,7 +38,8 @@ def _replay_commits(repo: Repo, commits: list[bytes], base: bytes) -> bytes:
     # Commits are newest-first, so reverse to replay in order
     for commit_sha in reversed(commits):
         old_commit = repo[commit_sha]
-        new_sha = git.amend_commit_message(repo, commit_sha, old_commit.message.decode())
+        old_message = old_commit.message.decode()
+        new_sha = git.amend_commit_message(repo, commit_sha, old_message)
         # Update the parent to point to current_base
         new_commit = repo[new_sha]
 
@@ -85,9 +86,8 @@ def _adopt(
     if parent is None:
         parent = default_branch
         if parent is None:
-            return AdoptResult(
-                branch, "", False, "Cannot detect parent branch. Use --parent to specify."
-            )
+            error = "Cannot detect parent branch. Use --parent to specify."
+            return AdoptResult(branch, "", False, error)
 
     # Check parent exists
     if not git.branch_exists(repo, parent):
@@ -109,7 +109,8 @@ def _adopt(
     # Check if already tracked
     message = git.get_commit_message(repo, first_commit)
     if _get_trailer(message, TRAILER_KEY) is not None:
-        return AdoptResult(branch, parent, False, f"Branch '{branch}' is already tracked")
+        error = f"Branch '{branch}' is already tracked"
+        return AdoptResult(branch, parent, False, error)
 
     # Amend with trailer
     new_message = _add_trailer(message, TRAILER_KEY, parent)

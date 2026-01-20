@@ -6,13 +6,13 @@ from dulwich.repo import Repo
 from shortcake import _git as git
 from shortcake.commands.adopt import (
     TRAILER_KEY,
-    _adopt,
     _add_trailer,
+    _adopt,
     _get_trailer,
 )
 
 
-def test_adopt_current_branch(repo_with_feature):
+def test_adopt_current_branch(repo_with_feature: Repo) -> None:
     """Test adopting the current feature branch."""
     result = _adopt(repo_with_feature)
 
@@ -26,7 +26,7 @@ def test_adopt_current_branch(repo_with_feature):
     assert _get_trailer(message, TRAILER_KEY) == "main"
 
 
-def test_adopt_specified_branch(repo_with_feature):
+def test_adopt_specified_branch(repo_with_feature: Repo) -> None:
     """Test adopting a specified branch."""
     # Switch back to main
     repo_with_feature.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
@@ -37,14 +37,14 @@ def test_adopt_specified_branch(repo_with_feature):
     assert result.branch == "feature"
 
 
-def test_adopt_with_explicit_parent(repo_with_feature):
+def test_adopt_with_explicit_parent(repo_with_feature: Repo) -> None:
     """Test adopting with explicit parent."""
     result = _adopt(repo_with_feature, parent="main")
 
     assert result.success
 
 
-def test_adopt_already_tracked(repo_with_feature):
+def test_adopt_already_tracked(repo_with_feature: Repo) -> None:
     """Test error when branch already tracked."""
     # First adopt
     _adopt(repo_with_feature)
@@ -56,7 +56,7 @@ def test_adopt_already_tracked(repo_with_feature):
     assert "already tracked" in result.error
 
 
-def test_adopt_default_branch(temp_repo):
+def test_adopt_default_branch(temp_repo: Repo) -> None:
     """Test error when trying to adopt default branch."""
     result = _adopt(temp_repo, branch="main")
 
@@ -64,7 +64,7 @@ def test_adopt_default_branch(temp_repo):
     assert "Cannot adopt default branch" in result.error
 
 
-def test_adopt_no_parent_detected(tmp_path: Path):
+def test_adopt_no_parent_detected(tmp_path: Path) -> None:
     """Test error when no parent branch can be detected."""
     # Create repo without main or master
     repo = Repo.init(tmp_path, default_branch=b"develop")
@@ -90,7 +90,7 @@ def test_adopt_no_parent_detected(tmp_path: Path):
     assert "Cannot detect parent branch. Use --parent to specify." in result.error
 
 
-def test_adopt_parent_not_found(repo_with_feature):
+def test_adopt_parent_not_found(repo_with_feature: Repo) -> None:
     """Test error when explicit parent doesn't exist."""
     result = _adopt(repo_with_feature, parent="nonexistent")
 
@@ -98,7 +98,7 @@ def test_adopt_parent_not_found(repo_with_feature):
     assert "Parent branch 'nonexistent' not found" in result.error
 
 
-def test_adopt_no_commits_on_branch(temp_repo):
+def test_adopt_no_commits_on_branch(temp_repo: Repo) -> None:
     """Test error when branch has no commits relative to parent."""
     # Create feature branch at same commit as main (no new commits)
     main_sha = temp_repo.refs[b"refs/heads/main"]
@@ -111,7 +111,7 @@ def test_adopt_no_commits_on_branch(temp_repo):
     assert "No commits on 'feature' relative to 'main'" in result.error
 
 
-def test_adopt_multiple_commits(temp_repo, tmp_path: Path):
+def test_adopt_multiple_commits(temp_repo: Repo, tmp_path: Path) -> None:
     """Test adopting branch with multiple commits triggers replay."""
     # Create feature branch
     main_sha = temp_repo.refs[b"refs/heads/main"]
@@ -146,14 +146,14 @@ def test_adopt_multiple_commits(temp_repo, tmp_path: Path):
     assert _get_trailer(message, TRAILER_KEY) == "main"
 
 
-def test_get_trailer():
+def test_get_trailer() -> None:
     """Test trailer extraction."""
     message = "feat: something\n\nBody text\n\nShortcake-Parent: main\n"
     assert _get_trailer(message, "Shortcake-Parent") == "main"
     assert _get_trailer(message, "Other") is None
 
 
-def test_add_trailer():
+def test_add_trailer() -> None:
     """Test trailer addition."""
     message = "feat: something"
     result = _add_trailer(message, "Shortcake-Parent", "main")

@@ -1,7 +1,8 @@
-import pytest
 from pathlib import Path
-from dulwich.repo import Repo
+
+import pytest
 from dulwich import porcelain
+from dulwich.repo import Repo
 
 
 @pytest.fixture
