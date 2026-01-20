@@ -219,7 +219,7 @@ def test_get_branch_parent_stops_at_other_branch_head(
     # develop: C0 -> C1 -> C2 (develop is ahead of main)
     #
     # When checking develop (untracked), we walk C2 -> C1
-    # C1 is main's HEAD, so we stop there (line 58)
+    # C1 is main's HEAD, so we stop there
 
     # Add another commit to main
     file1 = tmp_path / "file1.txt"
@@ -248,7 +248,7 @@ def test_get_branch_parent_stops_at_other_branch_head(
 
 
 def test_get_branch_parent_with_merge_commit(temp_repo: Repo, tmp_path: Path) -> None:
-    """Test walking through merge commits (covers revisiting commits via line 53)."""
+    """Test walking through merge commits (covers the 'already seen' check)."""
     # Create a diamond pattern with merge on a single branch:
     #
     #     C0 (initial)
@@ -264,7 +264,7 @@ def test_get_branch_parent_with_merge_commit(temp_repo: Repo, tmp_path: Path) ->
     # - Pop C2, add C1 → queue = [C3, C1]
     # - Pop C3, add C1 → queue = [C1, C1]  (C1 added twice!)
     # - Pop C1 (first), seen={M,C2,C3,C1}, add C0 → queue = [C1, C0]
-    # - Pop C1 (second), it's in seen! → line 53 triggered
+    # - Pop C1 (second), it's in seen → skip
 
     from dulwich.objects import Commit
 
