@@ -2,6 +2,7 @@ from pathlib import Path
 
 from dulwich import porcelain
 from dulwich.repo import Repo
+from inline_snapshot import snapshot
 
 from shortcake import _git as git
 from shortcake.commands.adopt import _adopt
@@ -16,15 +17,14 @@ def test_ls_no_tracked(temp_repo: Repo) -> None:
 
 def test_ls_single_tracked(repo_with_feature: Repo) -> None:
     """Test ls with a single tracked branch."""
-    # First adopt the feature branch
     _adopt(repo_with_feature)
 
     result = _ls(repo_with_feature)
 
-    assert "feature" in result
-    assert "main" in result
-    assert "◉ feature (current)" in result
-    assert "◯ main" in result
+    assert result == snapshot("""\
+◉ feature (current)
+│
+◯ main""")
 
 
 def test_ls_current_highlighted(repo_with_feature: Repo) -> None:
@@ -33,13 +33,18 @@ def test_ls_current_highlighted(repo_with_feature: Repo) -> None:
 
     # Check from feature branch (current)
     result = _ls(repo_with_feature)
-    assert "◉ feature (current)" in result
+    assert result == snapshot("""\
+◉ feature (current)
+│
+◯ main""")
 
     # Switch to main and check
     repo_with_feature.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
     result = _ls(repo_with_feature)
-    assert "◉ main (current)" in result
-    assert "◯ feature" in result
+    assert result == snapshot("""\
+◯ feature
+│
+◉ main (current)""")
 
 
 def test_ls_multi_commit_branch(temp_repo: Repo, tmp_path: Path) -> None:
@@ -65,8 +70,10 @@ def test_ls_multi_commit_branch(temp_repo: Repo, tmp_path: Path) -> None:
     _adopt(temp_repo)
 
     result = _ls(temp_repo)
-    assert "feature" in result
-    assert "main" in result
+    assert result == snapshot("""\
+◉ feature (current)
+│
+◯ main""")
 
 
 def test_ls_chain_of_branches(temp_repo: Repo, tmp_path: Path) -> None:
@@ -97,19 +104,12 @@ def test_ls_chain_of_branches(temp_repo: Repo, tmp_path: Path) -> None:
 
     result = _ls(temp_repo)
 
-    # Verify all branches in output
-    assert "feature-a" in result
-    assert "feature-b" in result
-    assert "main" in result
-
-    # Verify order (top to bottom should be: feature-b, feature-a, main)
-    lines = [line for line in result.split("\n") if line.strip()]
-    branch_lines = [line for line in lines if "feature" in line or "main" in line]
-    # feature-b should be before feature-a in output (children above parents)
-    fb_idx = next(i for i, line in enumerate(branch_lines) if "feature-b" in line)
-    fa_idx = next(i for i, line in enumerate(branch_lines) if "feature-a" in line)
-    main_idx = next(i for i, line in enumerate(branch_lines) if "main" in line)
-    assert fb_idx < fa_idx < main_idx
+    assert result == snapshot("""\
+◉ feature-b (current)
+│
+◯ feature-a
+│
+◯ main""")
 
 
 def test_get_branch_parent_no_trailer(temp_repo: Repo) -> None:
@@ -139,10 +139,10 @@ def test_ls_detached_head(repo_with_feature: Repo, tmp_path: Path) -> None:
     result = _ls(repo_with_feature)
 
     # Should still show the tree, just without current marker
-    assert "feature" in result
-    assert "main" in result
-    # No branch should be marked as current
-    assert "(current)" not in result
+    assert result == snapshot("""\
+◯ feature
+│
+◯ main""")
 
 
 def test_get_branch_parent_stops_at_other_branch_head(
