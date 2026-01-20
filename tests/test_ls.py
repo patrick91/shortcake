@@ -127,13 +127,6 @@ def test_get_branch_parent_with_trailer(repo_with_feature: Repo) -> None:
     assert result == "main"
 
 
-def test_get_branch_parent_nonexistent_branch(temp_repo: Repo) -> None:
-    """Test _get_branch_parent with nonexistent branch."""
-    all_branches = set(git.get_all_local_branches(temp_repo))
-    result = _get_branch_parent(temp_repo, "nonexistent", all_branches)
-    assert result is None
-
-
 def test_ls_detached_head(repo_with_feature: Repo, tmp_path: Path) -> None:
     """Test ls works when in detached HEAD state."""
     _adopt(repo_with_feature)

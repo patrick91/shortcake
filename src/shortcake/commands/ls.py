@@ -1,18 +1,9 @@
-import contextlib
-
 import typer
 from dulwich.repo import Repo
 
 from shortcake import _git as git
-from shortcake._exceptions import ShortcakeError
 from shortcake._trailers import Trailers
 from shortcake._tree import StackTree
-
-
-class LsError(ShortcakeError):
-    """Error during ls operation."""
-
-    pass
 
 
 def _get_branch_parent(repo: Repo, branch: str, all_branches: set[str]) -> str | None:
@@ -30,17 +21,13 @@ def _get_branch_parent(repo: Repo, branch: str, all_branches: set[str]) -> str |
     Returns:
         Parent branch name if found, None otherwise
     """
-    try:
-        branch_head = git.get_branch_head(repo, branch)
-    except KeyError:
-        return None
+    branch_head = git.get_branch_head(repo, branch)
 
     # Get heads of other branches to know where to stop
     other_branch_heads: set[bytes] = set()
     for other_branch in all_branches:
         if other_branch != branch:
-            with contextlib.suppress(KeyError):
-                other_branch_heads.add(git.get_branch_head(repo, other_branch))
+            other_branch_heads.add(git.get_branch_head(repo, other_branch))
 
     # Walk commits from branch head
     seen: set[bytes] = set()
@@ -57,22 +44,16 @@ def _get_branch_parent(repo: Repo, branch: str, all_branches: set[str]) -> str |
         if commit_sha in other_branch_heads:
             continue
 
-        try:
-            message = git.get_commit_message(repo, commit_sha)
-            trailers = Trailers.from_message(message)
-            if trailers.parent_branch is not None:
-                return trailers.parent_branch
-        except KeyError:
-            continue
+        message = git.get_commit_message(repo, commit_sha)
+        trailers = Trailers.from_message(message)
+        if trailers.parent_branch is not None:
+            return trailers.parent_branch
 
         # Add parents to visit
-        try:
-            commit = repo[commit_sha]
-            for parent_sha in commit.parents:
-                if parent_sha not in seen:
-                    to_visit.append(parent_sha)
-        except KeyError:
-            continue
+        commit = repo[commit_sha]
+        for parent_sha in commit.parents:
+            if parent_sha not in seen:
+                to_visit.append(parent_sha)
 
     return None
 
@@ -108,12 +89,7 @@ def _ls(repo: Repo) -> str:
 def ls() -> None:
     """List all tracked branches as a tree."""
     repo = git.open_repo()
-
-    try:
-        output = _ls(repo)
-    except LsError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1) from None
+    output = _ls(repo)
 
     if not output:
         typer.echo("No tracked branches found.")
