@@ -242,3 +242,106 @@ def test_cli_create_prompts_for_branch_name(
     assert result.exit_code == 0
     assert "Could not generate branch name" in result.output
     assert "Created branch 'my-custom-branch'" in result.output
+
+
+def test_cli_create_invalid_branch_name_after_empty_prompt(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test error when user enters invalid name after empty slug prompt."""
+    monkeypatch.chdir(tmp_path)
+
+    # Message generates empty slug, user enters invalid name (only special chars)
+    result = runner.invoke(app, ["create", "-m", "...", "--allow-empty"], input="...\n")
+
+    assert result.exit_code == 1
+    assert "Could not generate branch name" in result.output
+    assert "Invalid branch name" in result.output
+
+
+def test_cli_create_invalid_branch_name_after_exists_prompt(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test error when user enters invalid name after branch exists prompt."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create existing branch
+    temp_repo.refs[b"refs/heads/feat-existing"] = temp_repo.refs[b"refs/heads/main"]
+
+    # User enters invalid name (only special chars)
+    result = runner.invoke(
+        app, ["create", "-m", "feat: existing", "--allow-empty"], input="...\n"
+    )
+
+    assert result.exit_code == 1
+    assert "already exists" in result.output
+    assert "Invalid branch name" in result.output
+
+
+def test_cli_create_interactive_mode(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create in interactive mode (opens editor)."""
+    from unittest.mock import patch
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("shortcake.commands.create.open_editor") as mock_editor:
+        mock_editor.return_value = "feat: interactive feature"
+        result = runner.invoke(app, ["create", "--allow-empty"])
+
+    assert result.exit_code == 0
+    assert "Created branch 'feat-interactive-feature'" in result.output
+
+
+def test_cli_create_interactive_cancelled(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create when editor is cancelled."""
+    from unittest.mock import patch
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("shortcake.commands.create.open_editor") as mock_editor:
+        mock_editor.return_value = None  # Editor cancelled
+        result = runner.invoke(app, ["create", "--allow-empty"])
+
+    assert result.exit_code == 1
+    assert "Aborted: empty message" in result.output
+
+
+def test_cli_create_gitmoji_mode(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create with --gitmoji flag."""
+    from unittest.mock import patch
+
+    from shortcake._gitmoji import GITMOJIS
+
+    monkeypatch.chdir(tmp_path)
+
+    with (
+        patch("shortcake.commands.create.pick_gitmoji") as mock_gitmoji,
+        patch("shortcake.commands.create.open_editor") as mock_editor,
+    ):
+        mock_gitmoji.return_value = GITMOJIS[0]  # First gitmoji (🎨)
+        mock_editor.return_value = "🎨 improve code style"
+        result = runner.invoke(app, ["create", "--gitmoji", "--allow-empty"])
+
+    assert result.exit_code == 0
+    assert "Created branch" in result.output
+
+
+def test_cli_create_gitmoji_cancelled(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create when gitmoji picker is cancelled."""
+    from unittest.mock import patch
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("shortcake.commands.create.pick_gitmoji") as mock_gitmoji:
+        mock_gitmoji.return_value = None  # Picker cancelled
+        result = runner.invoke(app, ["create", "--gitmoji", "--allow-empty"])
+
+    assert result.exit_code == 1
+    assert "Cancelled" in result.output

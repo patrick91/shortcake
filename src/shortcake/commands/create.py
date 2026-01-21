@@ -155,10 +155,5 @@ def create(
                 raise typer.Exit(1) from None
 
     # Create the branch
-    try:
-        result = _create(repo, message, branch_name)
-    except CreateError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1) from None
-
+    result = _create(repo, message, branch_name)
     typer.echo(f"Created branch '{result.branch}' from '{result.parent}'")

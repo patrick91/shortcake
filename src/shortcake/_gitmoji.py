@@ -1,7 +1,8 @@
 from dataclasses import dataclass
 
 from rich_toolkit import RichToolkit
-from rich_toolkit.menu import Menu, Option
+from rich_toolkit.menu import Option
+from rich_toolkit.styles import MinimalStyle
 
 
 @dataclass
@@ -99,17 +100,16 @@ def pick_gitmoji() -> Gitmoji | None:
         Option(name=f"{g.emoji} {g.description}", value=g) for g in GITMOJIS
     ]
 
-    toolkit = RichToolkit()
-    menu = Menu(
-        label="Select a gitmoji",
-        options=options,
-        allow_filtering=True,
-    )
+    toolkit = RichToolkit(style=MinimalStyle())
 
     try:
-        selected = toolkit.ask_selection(menu)
+        selected = toolkit.ask(
+            label="Select a gitmoji",
+            options=options,
+            allow_filtering=True,
+        )
         if selected:
             return selected
         return None
-    except (KeyboardInterrupt, EOFError):
+    except (KeyboardInterrupt, EOFError, SystemExit):
         return None

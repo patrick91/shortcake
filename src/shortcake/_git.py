@@ -148,24 +148,6 @@ def run_precommit_hook(repo: Repo) -> tuple[bool, str | None]:
         return False, str(e)
 
 
-class PreCommitHookError(Exception):
-    """Raised when pre-commit hook fails during commit."""
-
-    def __init__(self, message: str) -> None:
-        self.message = message
-        super().__init__(message)
-
-
 def create_commit(repo: Repo, message: str, no_verify: bool = False) -> bytes:
-    """Create commit with staged changes. Returns SHA.
-
-    Raises:
-        PreCommitHookError: If pre-commit hook fails
-    """
-    from dulwich.errors import CommitError
-
-    try:
-        return porcelain.commit(repo, message=message.encode(), no_verify=no_verify)
-    except CommitError as e:
-        # Extract the error message from the hook failure
-        raise PreCommitHookError(str(e)) from None
+    """Create commit with staged changes. Returns SHA."""
+    return porcelain.commit(repo, message=message.encode(), no_verify=no_verify)

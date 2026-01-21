@@ -213,6 +213,34 @@ def test_has_precommit_hook_missing(temp_repo: Repo) -> None:
     assert git.has_precommit_hook(temp_repo) is False
 
 
+def test_run_precommit_hook_missing(temp_repo: Repo) -> None:
+    """Test running pre-commit hook when it doesn't exist."""
+    # No hook exists - should return success
+    success, error = git.run_precommit_hook(temp_repo)
+    assert success is True
+    assert error is None
+
+
+def test_run_precommit_hook_exception(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test pre-commit hook when subprocess raises an exception."""
+    from unittest.mock import patch
+
+    # Create a hook file so we get past the existence check
+    hooks_dir = Path(temp_repo.controldir()) / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_path = hooks_dir / "pre-commit"
+    hook_path.write_text("#!/bin/sh\nexit 0\n")
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
+
+    # Mock subprocess.run to raise an exception
+    with patch("shortcake._git.subprocess.run") as mock_run:
+        mock_run.side_effect = OSError("Permission denied")
+        success, error = git.run_precommit_hook(temp_repo)
+
+    assert success is False
+    assert "Permission denied" in (error or "")
+
+
 # Integration tests
 
 

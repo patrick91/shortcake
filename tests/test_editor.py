@@ -1,5 +1,9 @@
 import os
+from pathlib import Path
 from unittest.mock import patch
+
+import pytest
+from dulwich.repo import Repo
 
 from shortcake._editor import _get_git_editor, get_editor, open_editor
 
@@ -20,7 +24,9 @@ def test_get_editor_editor() -> None:
         assert get_editor() == "nano"
 
 
-def test_get_editor_git_config(temp_repo, monkeypatch) -> None:
+def test_get_editor_git_config(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Test git config core.editor fallback."""
     # Set editor in git config
     config = temp_repo.get_config()
@@ -46,7 +52,9 @@ def test_get_editor_default() -> None:
         assert get_editor() == "vi"
 
 
-def test_get_git_editor_no_repo(tmp_path, monkeypatch) -> None:
+def test_get_git_editor_no_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """Test _get_git_editor returns None when not in a repo."""
     monkeypatch.chdir(tmp_path)
     assert _get_git_editor() is None
@@ -55,7 +63,7 @@ def test_get_git_editor_no_repo(tmp_path, monkeypatch) -> None:
 # Editor interaction tests
 
 
-def test_open_editor_strips_comments(tmp_path) -> None:
+def test_open_editor_strips_comments(tmp_path: Path) -> None:
     """Test that comment lines are removed."""
     # Create a fake editor that writes content with comments
     editor_script = tmp_path / "fake_editor.sh"
@@ -78,7 +86,7 @@ EOF
     assert result == "feat: add feature\nBody text here"
 
 
-def test_open_editor_returns_none_on_empty(tmp_path) -> None:
+def test_open_editor_returns_none_on_empty(tmp_path: Path) -> None:
     """Test returns None for empty content."""
     # Create a fake editor that writes only comments
     editor_script = tmp_path / "fake_editor.sh"
@@ -98,7 +106,7 @@ EOF
     assert result is None
 
 
-def test_open_editor_preserves_initial_content(tmp_path) -> None:
+def test_open_editor_preserves_initial_content(tmp_path: Path) -> None:
     """Test initial content is available to editor."""
     # Create a fake editor that appends to initial content
     editor_script = tmp_path / "fake_editor.sh"
@@ -115,7 +123,7 @@ echo " appended" >> "$1"
     assert result == "initial appended"
 
 
-def test_open_editor_returns_none_on_error(tmp_path) -> None:
+def test_open_editor_returns_none_on_error(tmp_path: Path) -> None:
     """Test returns None when editor fails."""
     # Create a fake editor that exits with error
     editor_script = tmp_path / "fake_editor.sh"
