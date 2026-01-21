@@ -115,6 +115,34 @@ def test_create_with_staged_changes(temp_repo: Repo, tmp_path: Path) -> None:
     assert b"new_feature.py" in [entry.path for entry in tree.items()]
 
 
+def test_create_only_commits_staged_changes(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test that only staged changes are committed, unstaged changes remain."""
+    # Create and stage one file
+    staged_file = tmp_path / "staged.py"
+    staged_file.write_text("print('staged')")
+    porcelain.add(temp_repo, paths=[str(staged_file)])
+
+    # Create another file but don't stage it
+    unstaged_file = tmp_path / "unstaged.py"
+    unstaged_file.write_text("print('unstaged')")
+
+    message = "feat: add staged file only"
+    branch_name = _slugify(message)
+    result = _create(temp_repo, message, branch_name)
+
+    # Verify staged file is in commit
+    head = git.get_branch_head(temp_repo, result.branch)
+    commit = temp_repo[head]
+    tree = temp_repo[commit.tree]
+    committed_files = [entry.path for entry in tree.items()]
+    assert b"staged.py" in committed_files
+    assert b"unstaged.py" not in committed_files
+
+    # Verify unstaged file still exists in working directory
+    assert unstaged_file.exists()
+    assert unstaged_file.read_text() == "print('unstaged')"
+
+
 def test_create_empty_commit(temp_repo: Repo) -> None:
     """Test creating with no staged changes creates empty commit."""
     message = "feat: start feature"
