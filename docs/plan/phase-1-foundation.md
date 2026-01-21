@@ -90,11 +90,11 @@ sc create                      # Interactive (later)
 - Create commit with trailer
 
 **Tests:**
-- [ ] Create from main
-- [ ] Create from feature (stacking)
-- [ ] With staged changes
-- [ ] Branch name generation
-- [ ] Special characters in message
+- [x] Create from main
+- [x] Create from feature (stacking)
+- [x] With staged changes
+- [x] Branch name generation
+- [x] Special characters in message
 
 ---
 
@@ -104,4 +104,4 @@ sc create                      # Interactive (later)
 - [x] Create test fixtures
 - [x] Implement `sc adopt`
 - [x] Implement `sc ls`
-- [ ] Implement `sc create`
+- [x] Implement `sc create`
