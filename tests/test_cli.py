@@ -362,7 +362,7 @@ def test_cli_up_success(
     runner.invoke(app, ["adopt"])
 
     # Switch to main
-    repo_with_feature.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.switch(repo_with_feature, "main")
 
     result = runner.invoke(app, ["up"])
 
@@ -422,7 +422,7 @@ def test_cli_top_success(
 
     # Adopt and switch to main
     runner.invoke(app, ["adopt"])
-    repo_with_feature.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.switch(repo_with_feature, "main")
 
     result = runner.invoke(app, ["top"])
 
@@ -564,7 +564,7 @@ def test_cli_up_multiple_children_interactive(
     porcelain.commit(repo, message=msg_c.encode())
 
     # Switch to branch_a
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    porcelain.switch(repo, "branch_a")
 
     # Run up with input to select branch_b
     result = runner.invoke(app, ["up"], input="branch_b\n")
@@ -676,7 +676,7 @@ def test_cli_up_with_child_argument(
     porcelain.commit(repo, message=msg_c.encode())
 
     # Switch to branch_a
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    porcelain.switch(repo, "branch_a")
 
     # Run up with explicit child argument
     result = runner.invoke(app, ["up", "branch_c"])
@@ -811,7 +811,7 @@ def test_cli_top_multiple_children_interactive(
     porcelain.commit(repo, message=msg_c.encode())
 
     # Switch to main
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.switch(repo, "main")
 
     # Run top with input to select branch_b (which is a leaf)
     result = runner.invoke(app, ["top"], input="branch_b\n")
@@ -1023,7 +1023,7 @@ def test_cli_top_fork_then_continue(
     porcelain.commit(repo, message=msg_c.encode())
 
     # Switch to main
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.switch(repo, "main")
 
     # Run top, select branch_b which has branch_d as child
     result = runner.invoke(app, ["top"], input="branch_b\n")
@@ -1105,7 +1105,7 @@ def test_cli_top_fork_then_another_fork(
     porcelain.commit(repo, message=msg_c.encode())
 
     # Switch to main
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.switch(repo, "main")
 
     # Run top, select branch_b which has another fork (branch_d, branch_e)
     result = runner.invoke(app, ["top"], input="branch_b\n")

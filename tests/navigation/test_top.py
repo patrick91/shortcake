@@ -1,6 +1,9 @@
 """Tests for the top command."""
 
+from pathlib import Path
+
 import pytest
+from dulwich import porcelain
 from dulwich.repo import Repo
 
 from shortcake import _git as git
@@ -14,7 +17,7 @@ from shortcake.commands.top import (
 
 def test_top_jumps_to_leaf(repo_with_stack: Repo) -> None:
     """Test jumping from branch_a to branch_c (top of stack)."""
-    repo_with_stack.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    porcelain.switch(repo_with_stack, "branch_a")
 
     result = _top(repo_with_stack)
 
@@ -38,7 +41,7 @@ def test_top_already_at_top(repo_with_stack: Repo) -> None:
 
 def test_top_from_main(repo_with_stack: Repo) -> None:
     """Test jumping from main to top of stack."""
-    repo_with_stack.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.switch(repo_with_stack, "main")
 
     result = _top(repo_with_stack)
 
@@ -48,7 +51,7 @@ def test_top_from_main(repo_with_stack: Repo) -> None:
 
 def test_top_multiple_children(repo_with_fork: Repo) -> None:
     """Test error when multiple children at some level."""
-    repo_with_fork.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.switch(repo_with_fork, "main")
 
     # Walking up from main will hit branch_a which has two children
     with pytest.raises(MultipleChildrenError) as exc_info:
@@ -67,3 +70,20 @@ def test_top_detached_head(repo_with_stack: Repo) -> None:
 
     with pytest.raises(DetachedHeadError):
         _top(repo_with_stack)
+
+
+def test_top_updates_working_directory(repo_with_stack: Repo) -> None:
+    """Test that navigation updates working directory, not just HEAD."""
+    # repo_with_stack has: main → branch_a (a.txt) → branch_b (b.txt) → branch_c (c.txt)
+    tmp_path = Path(repo_with_stack.path)
+
+    # Switch to main (only has README.md, no a.txt/b.txt/c.txt)
+    porcelain.switch(repo_with_stack, "main")
+    assert not (tmp_path / "c.txt").exists()
+
+    # Navigate to top (branch_c)
+    _top(repo_with_stack)
+
+    # Verify branch changed AND working directory updated
+    assert git.get_current_branch(repo_with_stack) == "branch_c"
+    assert (tmp_path / "c.txt").exists()  # branch_c's file should now exist

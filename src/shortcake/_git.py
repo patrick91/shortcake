@@ -99,6 +99,11 @@ def checkout_branch(repo: Repo, branch: str) -> None:
     repo.refs.set_symbolic_ref(b"HEAD", f"refs/heads/{branch}".encode())
 
 
+def switch_branch(repo: Repo, branch: str) -> None:
+    """Switch to branch, updating working directory and index."""
+    porcelain.switch(repo, branch)
+
+
 def has_staged_changes(repo: Repo) -> bool:
     """Check if there are staged changes."""
     status = porcelain.status(repo)

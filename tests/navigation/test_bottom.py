@@ -30,7 +30,7 @@ def test_bottom_jumps_to_base(repo_with_stack: Repo) -> None:
 
 def test_bottom_already_at_bottom(repo_with_stack: Repo) -> None:
     """Test when already at bottom of stack (parent is trunk)."""
-    repo_with_stack.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    porcelain.switch(repo_with_stack, "branch_a")
 
     result = _bottom(repo_with_stack)
 
@@ -41,7 +41,7 @@ def test_bottom_already_at_bottom(repo_with_stack: Repo) -> None:
 
 def test_bottom_from_middle(repo_with_stack: Repo) -> None:
     """Test jumping from middle of stack to bottom."""
-    repo_with_stack.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    porcelain.switch(repo_with_stack, "branch_b")
 
     result = _bottom(repo_with_stack)
 
@@ -91,3 +91,23 @@ def test_bottom_single_tracked_branch(repo_with_tracked_feature: Repo) -> None:
     assert result.from_branch == "feature"
     assert result.to_branch == "feature"
     assert result.already_at_bottom is True
+
+
+def test_bottom_updates_working_directory(repo_with_stack: Repo) -> None:
+    """Test that navigation updates working directory, not just HEAD."""
+    # repo_with_stack has: main → branch_a (a.txt) → branch_b (b.txt) → branch_c (c.txt)
+    # Fixture ends on branch_c, so c.txt exists in working directory
+    tmp_path = Path(repo_with_stack.path)
+
+    # Verify we're on branch_c with c.txt present
+    assert git.get_current_branch(repo_with_stack) == "branch_c"
+    assert (tmp_path / "c.txt").exists()
+
+    # Navigate to bottom (branch_a)
+    _bottom(repo_with_stack)
+
+    # Verify branch changed AND working directory updated
+    assert git.get_current_branch(repo_with_stack) == "branch_a"
+    assert (tmp_path / "a.txt").exists()  # branch_a's file should exist
+    assert not (tmp_path / "b.txt").exists()  # branch_b's file should be gone
+    assert not (tmp_path / "c.txt").exists()  # branch_c's file should be gone

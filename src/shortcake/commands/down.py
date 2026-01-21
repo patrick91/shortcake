@@ -57,7 +57,7 @@ def _down(repo: Repo) -> DownResult:
     default_branch = git.get_default_branch(repo)
     at_bottom = parent == default_branch
 
-    git.checkout_branch(repo, parent)
+    git.switch_branch(repo, parent)
     return DownResult(from_branch=current, to_branch=parent, at_bottom=at_bottom)
 
 

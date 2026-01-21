@@ -74,7 +74,7 @@ def _up(repo: Repo, child: str | None = None) -> UpResult:
     else:
         raise MultipleChildrenError(children)
 
-    git.checkout_branch(repo, target)
+    git.switch_branch(repo, target)
     return UpResult(from_branch=current, to_branch=target)
 
 
@@ -99,7 +99,7 @@ def up(
         if selected not in e.children:
             typer.echo(f"Error: '{selected}' is not a valid child", err=True)
             raise typer.Exit(1) from None
-        git.checkout_branch(repo, selected)
+        git.switch_branch(repo, selected)
         typer.echo(f"Switched to '{selected}'")
         return
     except UpError as e:
