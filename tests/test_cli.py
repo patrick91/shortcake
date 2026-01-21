@@ -68,3 +68,33 @@ def test_cli_help(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.exit_code == 0
     assert "Shortcake" in result.output
     assert "adopt" in result.output
+    assert "ls" in result.output
+
+
+def test_cli_ls_no_tracked(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI ls with no tracked branches."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["ls"])
+
+    assert result.exit_code == 0
+    assert "No tracked branches found." in result.output
+
+
+def test_cli_ls_with_tracked(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI ls with tracked branches."""
+    monkeypatch.chdir(tmp_path)
+
+    # First adopt the branch
+    runner.invoke(app, ["adopt"])
+
+    result = runner.invoke(app, ["ls"])
+
+    assert result.exit_code == 0
+    assert "feature" in result.output
+    assert "main" in result.output
+    assert "◉" in result.output  # Current branch marker

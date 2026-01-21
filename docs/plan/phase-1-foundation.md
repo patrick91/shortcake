@@ -19,11 +19,11 @@ sc adopt [branch] --parent X   # Explicit parent
 - Error if already tracked
 
 **Tests:**
-- [ ] Adopt from main
-- [ ] Adopt from feature branch
-- [ ] Adopt with explicit --parent
-- [ ] Already tracked (error)
-- [ ] On trunk branch (error)
+- [x] Adopt from main
+- [x] Adopt from feature branch
+- [x] Adopt with explicit --parent
+- [x] Already tracked (error)
+- [x] On trunk branch (error)
 
 ---
 
@@ -49,7 +49,7 @@ sc ls              # All tracked branches
 │ │
 │ │ ◯ stack_3_branch_A
 │ │ │
-◉─┴─┴─ main (current)
+◉─┴─┘ main (current)
 ```
 
 - Shows ALL tracked branches, grouped by stack
@@ -64,11 +64,13 @@ sc ls              # All tracked branches
 - Render with box-drawing characters
 
 **Tests:**
-- [ ] Empty (no tracked branches)
-- [ ] Single tracked branch (not a stack)
-- [ ] One stack with multiple branches
-- [ ] Multiple independent stacks
-- [ ] Current branch highlighting
+- [x] Empty (no tracked branches)
+- [x] Single tracked branch (not a stack)
+- [x] One stack with multiple branches
+- [x] Multiple independent stacks (parallel stacks)
+- [x] Current branch highlighting
+- [x] Orphan branch (parent deleted) shows warning
+- [x] Circular reference detection
 
 ---
 
@@ -98,8 +100,8 @@ sc create                      # Interactive (later)
 
 ## Checklist
 
-- [ ] Add dulwich + pytest + rich-toolkit to dependencies
-- [ ] Create test fixtures
-- [ ] Implement `sc adopt`
-- [ ] Implement `sc ls`
+- [x] Add dulwich + pytest to dependencies
+- [x] Create test fixtures
+- [x] Implement `sc adopt`
+- [x] Implement `sc ls`
 - [ ] Implement `sc create`
