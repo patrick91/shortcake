@@ -82,7 +82,7 @@ def modify(
     """Modify the current commit or create a new one.
 
     Use -m/--message to create a new commit with the given message.
-    Use -e/--edit to amend the current commit (opens editor).
+    Without flags (or with -e/--edit), amends the current commit (opens editor).
     """
     repo = git.open_repo()
 
@@ -97,10 +97,6 @@ def modify(
         typer.echo("Error: Cannot use both -m and -e", err=True)
         raise typer.Exit(1)
 
-    if not message and not edit:
-        typer.echo("Error: Must specify -m <message> or -e", err=True)
-        raise typer.Exit(1)
-
     # Check for staged changes and run hooks if needed
     has_staged = git.has_staged_changes(repo)
     if not no_verify and has_staged and git.has_precommit_hook(repo):
@@ -110,7 +106,7 @@ def modify(
             typer.echo(f"Error: Pre-commit hook failed:\n{error}", err=True)
             raise typer.Exit(1)
 
-    if edit:
+    if edit or not message:
         # Amend: open editor with current message
         old_sha = repo.head()
         old_message = git.get_commit_message(repo, old_sha)

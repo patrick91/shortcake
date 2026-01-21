@@ -1298,16 +1298,20 @@ def test_cli_modify_hook_failure(
     assert "Pre-commit hook failed" in result.output
 
 
-def test_cli_modify_no_flags_error(
+def test_cli_modify_no_flags_defaults_to_amend(
     repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test CLI modify requires -m or -e flag."""
+    """Test CLI modify with no flags defaults to amend with editor."""
+    from unittest.mock import patch
+
     monkeypatch.chdir(tmp_path)
 
-    result = runner.invoke(app, ["modify"])
+    with patch("shortcake.commands.modify.open_editor") as mock_editor:
+        mock_editor.return_value = "feat: amended via default"
+        result = runner.invoke(app, ["modify"])
 
-    assert result.exit_code == 1
-    assert "Must specify -m <message> or -e" in result.output
+    assert result.exit_code == 0
+    assert "Amended commit on 'feature'" in result.output
 
 
 def test_cli_modify_both_flags_error(
