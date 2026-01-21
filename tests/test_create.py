@@ -238,7 +238,8 @@ def test_run_precommit_hook_exception(temp_repo: Repo, tmp_path: Path) -> None:
         success, error = git.run_precommit_hook(temp_repo)
 
     assert success is False
-    assert "Permission denied" in (error or "")
+    assert error is not None
+    assert "Permission denied" in error
 
 
 # Integration tests
