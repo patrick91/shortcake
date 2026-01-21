@@ -1,6 +1,8 @@
+import subprocess
 import time
 from pathlib import Path
 
+from dulwich import porcelain
 from dulwich.objects import Commit
 from dulwich.repo import Repo
 
@@ -83,3 +85,87 @@ def get_all_local_branches(repo: Repo) -> list[str]:
     """Get all local branch names."""
     prefix = b"refs/heads/"
     return [ref[len(prefix) :].decode() for ref in repo.refs if ref.startswith(prefix)]
+
+
+def create_branch(repo: Repo, name: str, sha: bytes) -> None:
+    """Create a new branch pointing at sha."""
+    repo.refs[f"refs/heads/{name}".encode()] = sha
+
+
+def checkout_branch(repo: Repo, branch: str) -> None:
+    """Switch HEAD to branch (keeps working directory and staged changes)."""
+    # Only update HEAD symbolic ref - don't reset working directory
+    # This preserves any staged changes for the new commit
+    repo.refs.set_symbolic_ref(b"HEAD", f"refs/heads/{branch}".encode())
+
+
+def has_staged_changes(repo: Repo) -> bool:
+    """Check if there are staged changes."""
+    status = porcelain.status(repo)
+    return bool(
+        status.staged["add"] or status.staged["modify"] or status.staged["delete"]
+    )
+
+
+def get_staged_files(repo: Repo) -> list[str]:
+    """Get list of staged file paths."""
+    status = porcelain.status(repo)
+    files = []
+    files.extend(p.decode() for p in status.staged["add"])
+    files.extend(p.decode() for p in status.staged["modify"])
+    return files
+
+
+def has_precommit_hook(repo: Repo) -> bool:
+    """Check if pre-commit hook exists and is executable."""
+    hook_path = Path(repo.controldir()) / "hooks" / "pre-commit"
+    return hook_path.exists() and hook_path.is_file()
+
+
+def run_precommit_hook(repo: Repo) -> tuple[bool, str | None]:
+    """Run pre-commit hook. Returns (success, error_message)."""
+    hook_path = Path(repo.controldir()) / "hooks" / "pre-commit"
+    if not hook_path.exists():
+        return True, None
+
+    staged_files = get_staged_files(repo)
+
+    try:
+        result = subprocess.run(
+            [str(hook_path)],
+            capture_output=True,
+            text=True,
+            cwd=repo.path,  # Working directory
+        )
+        # Re-stage files modified by hooks (e.g., formatters)
+        if staged_files:
+            porcelain.add(repo, paths=staged_files)
+
+        if result.returncode != 0:
+            return False, result.stdout or result.stderr
+        return True, None
+    except Exception as e:
+        return False, str(e)
+
+
+class PreCommitHookError(Exception):
+    """Raised when pre-commit hook fails during commit."""
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+        super().__init__(message)
+
+
+def create_commit(repo: Repo, message: str, no_verify: bool = False) -> bytes:
+    """Create commit with staged changes. Returns SHA.
+
+    Raises:
+        PreCommitHookError: If pre-commit hook fails
+    """
+    from dulwich.errors import CommitError
+
+    try:
+        return porcelain.commit(repo, message=message.encode(), no_verify=no_verify)
+    except CommitError as e:
+        # Extract the error message from the hook failure
+        raise PreCommitHookError(str(e)) from None
