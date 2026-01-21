@@ -1,6 +1,7 @@
 import typer
 
 from shortcake.commands.adopt import adopt
+from shortcake.commands.create import create
 from shortcake.commands.ls import ls
 
 app = typer.Typer(no_args_is_help=True)
@@ -13,4 +14,5 @@ def main() -> None:
 
 
 app.command()(adopt)
+app.command()(create)
 app.command()(ls)
