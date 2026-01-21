@@ -471,3 +471,80 @@ def test_snapshot_complex_tree() -> None:
 │ │
 ◯─┘ main\
 """)
+
+
+def test_snapshot_orphan_with_children() -> None:
+    """Snapshot test for orphan branch that has children."""
+    branches = {
+        "child": "orphan",
+        "orphan": "deleted-branch",
+    }
+    all_branches = {"main", "child", "orphan"}
+    current = "child"
+
+    tree = StackTree.build(branches, all_branches, current)
+    assert tree.render() == snapshot("""\
+◉ child (current)
+│
+◯ orphan (parent missing)\
+""")
+
+
+def test_snapshot_orphan_with_multiple_children() -> None:
+    """Snapshot test for orphan branch with multiple children (uses merge connector)."""
+    branches = {
+        "child-a": "orphan",
+        "child-b": "orphan",
+        "orphan": "deleted-branch",
+    }
+    all_branches = {"main", "child-a", "child-b", "orphan"}
+    current = "child-a"
+
+    tree = StackTree.build(branches, all_branches, current)
+    assert tree.render() == snapshot("""\
+◉ child-a (current)
+│
+│ ◯ child-b
+│ │
+◯─┘ orphan (parent missing)\
+""")
+
+
+def test_snapshot_cycle_with_child() -> None:
+    """Snapshot test for cycle node that has a child branch."""
+    # cycle-a and cycle-b form a cycle, but child points to cycle-a
+    branches = {
+        "child-a": "cycle-a",
+        "child-b": "cycle-a",
+        "cycle-a": "cycle-b",
+        "cycle-b": "cycle-a",
+    }
+    all_branches = {"child-a", "child-b", "cycle-a", "cycle-b"}
+    current = "child-a"
+
+    tree = StackTree.build(branches, all_branches, current)
+    assert tree.render() == snapshot("""\
+◉ child-a (current)
+│
+│ ◯ child-b
+│ │
+◯─┘ cycle-a (circular ref)
+
+◯ cycle-b (circular ref)\
+""")
+
+
+def test_build_branch_with_none_parent() -> None:
+    """Test building tree when a branch has None as parent value."""
+    # This edge case tests line 66 - when parent chain ends with None
+    # (None parent means "no parent" not "deleted parent", so no warning)
+    branches: dict[str, str | None] = {"feature": None}
+    all_branches = {"main", "feature"}
+    current = "feature"
+
+    tree = StackTree.build(branches, all_branches, current)
+
+    # Feature should be a root with no warning (None parent ≠ deleted parent)
+    assert len(tree.roots) == 1
+    assert tree.roots[0].name == "feature"
+    assert tree.roots[0].warning is None  # No warning for None parent

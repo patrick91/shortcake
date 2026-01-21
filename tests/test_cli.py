@@ -1,6 +1,8 @@
+import stat
 from pathlib import Path
 
 import pytest
+from dulwich import porcelain
 from dulwich.repo import Repo
 from typer.testing import CliRunner
 
@@ -98,3 +100,248 @@ def test_cli_ls_with_tracked(
     assert "feature" in result.output
     assert "main" in result.output
     assert "◉" in result.output  # Current branch marker
+
+
+def test_cli_create_success(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create command success with --allow-empty."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app, ["create", "-m", "feat: add new feature", "--allow-empty"]
+    )
+
+    assert result.exit_code == 0
+    assert "Created branch 'feat-add-new-feature' from 'main'" in result.output
+
+
+def test_cli_create_no_staged_changes_error(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create fails without staged changes."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["create", "-m", "feat: something"])
+
+    assert result.exit_code == 1
+    assert "No staged changes" in result.output
+    assert "--allow-empty" in result.output
+
+
+def test_cli_create_prompts_when_branch_exists(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI prompts for new name when branch exists."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create a branch first
+    temp_repo.refs[b"refs/heads/feat-existing"] = temp_repo.refs[b"refs/heads/main"]
+
+    # Provide alternative name via input
+    result = runner.invoke(
+        app,
+        ["create", "-m", "feat: existing", "--allow-empty"],
+        input="my-new-branch\n",
+    )
+
+    assert result.exit_code == 0
+    assert "already exists" in result.output
+    assert "Created branch 'my-new-branch'" in result.output
+
+
+def test_cli_create_error_detached_head(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create error in detached HEAD state."""
+    monkeypatch.chdir(tmp_path)
+
+    # Detach HEAD
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    del temp_repo.refs[b"HEAD"]
+    temp_repo.refs[b"HEAD"] = main_sha
+
+    result = runner.invoke(app, ["create", "-m", "feat: something"])
+
+    assert result.exit_code == 1
+    assert "Error:" in result.output
+    assert "detached HEAD" in result.output
+
+
+def test_cli_help_includes_create(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI help includes create command."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["--help"])
+
+    assert "create" in result.output
+
+
+def test_cli_create_no_verify(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create with --no-verify skips hooks."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create a failing hook
+    hooks_dir = Path(temp_repo.controldir()) / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_path = hooks_dir / "pre-commit"
+    hook_path.write_text("#!/bin/sh\nexit 1\n")
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
+
+    # Stage a file to trigger hook check
+    new_file = tmp_path / "test.txt"
+    new_file.write_text("content")
+    porcelain.add(temp_repo, paths=[str(new_file)])
+
+    # With --no-verify, should succeed despite failing hook
+    result = runner.invoke(app, ["create", "-m", "feat: test", "-n"])
+
+    assert result.exit_code == 0
+    assert "Created branch" in result.output
+
+
+def test_cli_create_hook_failure(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create fails when pre-commit hook fails."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create a failing hook
+    hooks_dir = Path(temp_repo.controldir()) / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_path = hooks_dir / "pre-commit"
+    hook_path.write_text("#!/bin/sh\necho 'Hook failed!'\nexit 1\n")
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
+
+    # Stage a file to trigger hook check
+    new_file = tmp_path / "test.txt"
+    new_file.write_text("content")
+    porcelain.add(temp_repo, paths=[str(new_file)])
+
+    result = runner.invoke(app, ["create", "-m", "feat: test"])
+
+    assert result.exit_code == 1
+    assert "Pre-commit hook failed" in result.output
+
+
+def test_cli_create_prompts_for_branch_name(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI prompts for branch name when slug is empty."""
+    monkeypatch.chdir(tmp_path)
+
+    # Message with only special chars - will generate empty slug
+    result = runner.invoke(
+        app, ["create", "-m", "...", "--allow-empty"], input="my-custom-branch\n"
+    )
+
+    assert result.exit_code == 0
+    assert "Could not generate branch name" in result.output
+    assert "Created branch 'my-custom-branch'" in result.output
+
+
+def test_cli_create_invalid_branch_name_after_empty_prompt(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test error when user enters invalid name after empty slug prompt."""
+    monkeypatch.chdir(tmp_path)
+
+    # Message generates empty slug, user enters invalid name (only special chars)
+    result = runner.invoke(app, ["create", "-m", "...", "--allow-empty"], input="...\n")
+
+    assert result.exit_code == 1
+    assert "Could not generate branch name" in result.output
+    assert "Invalid branch name" in result.output
+
+
+def test_cli_create_invalid_branch_name_after_exists_prompt(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test error when user enters invalid name after branch exists prompt."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create existing branch
+    temp_repo.refs[b"refs/heads/feat-existing"] = temp_repo.refs[b"refs/heads/main"]
+
+    # User enters invalid name (only special chars)
+    result = runner.invoke(
+        app, ["create", "-m", "feat: existing", "--allow-empty"], input="...\n"
+    )
+
+    assert result.exit_code == 1
+    assert "already exists" in result.output
+    assert "Invalid branch name" in result.output
+
+
+def test_cli_create_interactive_mode(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create in interactive mode (opens editor)."""
+    from unittest.mock import patch
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("shortcake.commands.create.open_editor") as mock_editor:
+        mock_editor.return_value = "feat: interactive feature"
+        result = runner.invoke(app, ["create", "--allow-empty"])
+
+    assert result.exit_code == 0
+    assert "Created branch 'feat-interactive-feature'" in result.output
+
+
+def test_cli_create_interactive_cancelled(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create when editor is cancelled."""
+    from unittest.mock import patch
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("shortcake.commands.create.open_editor") as mock_editor:
+        mock_editor.return_value = None  # Editor cancelled
+        result = runner.invoke(app, ["create", "--allow-empty"])
+
+    assert result.exit_code == 1
+    assert "Aborted: empty message" in result.output
+
+
+def test_cli_create_gitmoji_mode(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create with --gitmoji flag."""
+    from unittest.mock import patch
+
+    from shortcake._gitmoji import GITMOJIS
+
+    monkeypatch.chdir(tmp_path)
+
+    with (
+        patch("shortcake.commands.create.pick_gitmoji") as mock_gitmoji,
+        patch("shortcake.commands.create.open_editor") as mock_editor,
+    ):
+        mock_gitmoji.return_value = GITMOJIS[0]  # First gitmoji (🎨)
+        mock_editor.return_value = "🎨 improve code style"
+        result = runner.invoke(app, ["create", "--gitmoji", "--allow-empty"])
+
+    assert result.exit_code == 0
+    assert "Created branch" in result.output
+
+
+def test_cli_create_gitmoji_cancelled(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create when gitmoji picker is cancelled."""
+    from unittest.mock import patch
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("shortcake.commands.create.pick_gitmoji") as mock_gitmoji:
+        mock_gitmoji.return_value = None  # Picker cancelled
+        result = runner.invoke(app, ["create", "--gitmoji", "--allow-empty"])
+
+    assert result.exit_code == 1
+    assert "Cancelled" in result.output
