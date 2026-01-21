@@ -151,3 +151,79 @@ def run_precommit_hook(repo: Repo) -> tuple[bool, str | None]:
 def create_commit(repo: Repo, message: str, no_verify: bool = False) -> bytes:
     """Create commit with staged changes. Returns SHA."""
     return porcelain.commit(repo, message=message.encode(), no_verify=no_verify)
+
+
+def get_branch_parent(repo: Repo, branch: str, all_branches: set[str]) -> str | None:
+    """
+    Get parent from Shortcake-Parent trailer in first commit.
+
+    Walks commits from branch head to find the first commit that has the trailer,
+    or until we reach a commit that's on another branch.
+
+    Args:
+        repo: The git repository
+        branch: The branch name to check
+        all_branches: Set of all branch names for determining boundaries
+
+    Returns:
+        Parent branch name if found, None otherwise
+    """
+    from shortcake._trailers import Trailers
+
+    branch_head = get_branch_head(repo, branch)
+
+    # Get heads of other branches to know where to stop
+    other_branch_heads: set[bytes] = set()
+    for other_branch in all_branches:
+        if other_branch != branch:
+            other_branch_heads.add(get_branch_head(repo, other_branch))
+
+    # Walk commits from branch head
+    seen: set[bytes] = set()
+    to_visit = [branch_head]
+
+    while to_visit:
+        commit_sha = to_visit.pop(0)
+
+        if commit_sha in seen:
+            continue
+        seen.add(commit_sha)
+
+        # Stop if we've reached another branch's head
+        if commit_sha in other_branch_heads:
+            continue
+
+        message = get_commit_message(repo, commit_sha)
+        trailers = Trailers.from_message(message)
+        if trailers.parent_branch is not None:
+            return trailers.parent_branch
+
+        # Add parents to visit
+        commit = repo[commit_sha]
+        for parent_sha in commit.parents:
+            if parent_sha not in seen:
+                to_visit.append(parent_sha)
+
+    return None
+
+
+def get_branch_children(repo: Repo, branch: str) -> list[str]:
+    """
+    Get all branches whose parent is the given branch.
+
+    Args:
+        repo: The git repository
+        branch: The branch name to find children for
+
+    Returns:
+        Sorted list of branch names that have this branch as parent
+    """
+    all_branches = set(get_all_local_branches(repo))
+    children = []
+    for potential_child in all_branches:
+        if potential_child == branch:
+            continue
+        parent = get_branch_parent(repo, potential_child, all_branches)
+        if parent == branch:
+            children.append(potential_child)
+    return sorted(children)

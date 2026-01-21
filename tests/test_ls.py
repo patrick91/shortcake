@@ -6,7 +6,7 @@ from inline_snapshot import snapshot
 
 from shortcake import _git as git
 from shortcake.commands.adopt import _adopt
-from shortcake.commands.ls import _get_branch_parent, _ls
+from shortcake.commands.ls import _ls
 
 
 def test_ls_no_tracked(temp_repo: Repo) -> None:
@@ -178,17 +178,17 @@ def test_ls_parallel_stacks(temp_repo: Repo, tmp_path: Path) -> None:
 
 
 def test_get_branch_parent_no_trailer(temp_repo: Repo) -> None:
-    """Test _get_branch_parent returns None when no trailer exists."""
+    """Test get_branch_parent returns None when no trailer exists."""
     all_branches = set(git.get_all_local_branches(temp_repo))
-    result = _get_branch_parent(temp_repo, "main", all_branches)
+    result = git.get_branch_parent(temp_repo, "main", all_branches)
     assert result is None
 
 
 def test_get_branch_parent_with_trailer(repo_with_feature: Repo) -> None:
-    """Test _get_branch_parent finds trailer."""
+    """Test get_branch_parent finds trailer."""
     _adopt(repo_with_feature)
     all_branches = set(git.get_all_local_branches(repo_with_feature))
-    result = _get_branch_parent(repo_with_feature, "feature", all_branches)
+    result = git.get_branch_parent(repo_with_feature, "feature", all_branches)
     assert result == "main"
 
 
@@ -241,7 +241,7 @@ def test_get_branch_parent_stops_at_other_branch_head(
     # Now check - develop has no trailer, so when we walk its history,
     # we'll hit main's HEAD and stop
     all_branches = set(git.get_all_local_branches(temp_repo))
-    result = _get_branch_parent(temp_repo, "develop", all_branches)
+    result = git.get_branch_parent(temp_repo, "develop", all_branches)
 
     # Should return None since develop is not tracked (no trailer found)
     assert result is None
@@ -319,9 +319,9 @@ def test_get_branch_parent_with_merge_commit(temp_repo: Repo, tmp_path: Path) ->
     temp_repo.refs[b"refs/heads/main"] = merge.id
 
     # Now when we walk main, we'll visit C1 through both C2 and C3,
-    # hitting the "already seen" check on line 53
+    # hitting the "already seen" check
     all_branches = set(git.get_all_local_branches(temp_repo))
-    result = _get_branch_parent(temp_repo, "main", all_branches)
+    result = git.get_branch_parent(temp_repo, "main", all_branches)
 
     # No trailer found
     assert result is None

@@ -53,6 +53,7 @@ def adopt(branch: ..., parent: ...) -> None:
 - 100% coverage required
 - Use `dulwich` fixtures from `conftest.py` for git operations
 - Test business logic via `_function()`, CLI via `CliRunner`
+- Use plain functions for tests, not test classes
 
 ## Tech Stack
 
