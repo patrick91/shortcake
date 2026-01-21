@@ -92,10 +92,15 @@ def create_branch(repo: Repo, name: str, sha: bytes) -> None:
     repo.refs[f"refs/heads/{name}".encode()] = sha
 
 
-def checkout_branch(repo: Repo, branch: str) -> None:
-    """Switch HEAD to branch (keeps working directory and staged changes)."""
-    # Only update HEAD symbolic ref - don't reset working directory
-    # This preserves any staged changes for the new commit
+def set_head_to_branch(repo: Repo, branch: str) -> None:
+    """Set HEAD to branch without updating working directory.
+
+    Only updates the HEAD symbolic ref. Does not modify the working
+    directory or index. Use this when you want to preserve staged
+    changes (e.g., for creating a new branch with pending changes).
+
+    For full branch switching with working directory update, use switch_branch().
+    """
     repo.refs.set_symbolic_ref(b"HEAD", f"refs/heads/{branch}".encode())
 
 

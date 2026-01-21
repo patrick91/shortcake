@@ -77,7 +77,7 @@ def _create(repo: Repo, message: str, branch_name: str) -> CreateResult:
 
     head_sha = git.get_branch_head(repo, parent)
     git.create_branch(repo, branch_name, head_sha)
-    git.checkout_branch(repo, branch_name)
+    git.set_head_to_branch(repo, branch_name)
 
     trailers = Trailers(parent_branch=parent)
     full_message = trailers.apply_to(message)
