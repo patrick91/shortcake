@@ -163,6 +163,13 @@ def create_commit(repo: Repo, message: str, no_verify: bool = False) -> bytes:
     return porcelain.commit(repo, message=message.encode(), no_verify=no_verify)
 
 
+def amend_commit(repo: Repo, message: str, no_verify: bool = False) -> bytes:
+    """Amend HEAD commit with new message and staged changes. Returns SHA."""
+    return porcelain.commit(
+        repo, message=message.encode(), amend=True, no_verify=no_verify
+    )
+
+
 def get_branch_parent(repo: Repo, branch: str, all_branches: set[str]) -> str | None:
     """
     Get parent from Shortcake-Parent trailer in first commit.
