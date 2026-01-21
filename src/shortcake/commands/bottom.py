@@ -77,7 +77,7 @@ def _bottom(repo: Repo) -> BottomResult:
 
         current = parent
 
-    git.checkout_branch(repo, current)
+    git.switch_branch(repo, current)
     return BottomResult(from_branch=start, to_branch=current, already_at_bottom=False)
 
 

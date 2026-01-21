@@ -67,7 +67,7 @@ def _top(repo: Repo) -> TopResult:
 
     already_at_top = current == start
     if not already_at_top:
-        git.checkout_branch(repo, current)
+        git.switch_branch(repo, current)
 
     return TopResult(
         from_branch=start, to_branch=current, already_at_top=already_at_top
@@ -91,7 +91,7 @@ def top() -> None:
             typer.echo(f"Error: '{selected}' is not a valid child", err=True)
             raise typer.Exit(1) from None
         # Checkout selected and try again from there
-        git.checkout_branch(repo, selected)
+        git.switch_branch(repo, selected)
         typer.echo(f"Switched to '{selected}'")
         # Continue walking up from selected branch
         try:
