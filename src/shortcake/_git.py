@@ -10,12 +10,12 @@ def open_repo(path: Path | None = None) -> Repo:
     return Repo(str(path) if path else ".")
 
 
-def get_current_branch(repo: Repo) -> str:
-    """Get name of current branch."""
+def get_current_branch(repo: Repo) -> str | None:
+    """Get name of current branch, or None if in detached HEAD state."""
     head_ref = repo.refs.read_ref(b"HEAD")
     if head_ref and head_ref.startswith(b"ref: refs/heads/"):
         return head_ref[16:].decode()
-    raise ValueError("Not on a branch (detached HEAD)")
+    return None
 
 
 def get_branch_head(repo: Repo, branch: str) -> bytes:
@@ -77,3 +77,9 @@ def amend_commit_message(repo: Repo, sha: bytes, new_message: str) -> bytes:
 def update_branch(repo: Repo, branch: str, sha: bytes) -> None:
     """Update branch to point to commit."""
     repo.refs[f"refs/heads/{branch}".encode()] = sha
+
+
+def get_all_local_branches(repo: Repo) -> list[str]:
+    """Get all local branch names."""
+    prefix = b"refs/heads/"
+    return [ref[len(prefix) :].decode() for ref in repo.refs if ref.startswith(prefix)]

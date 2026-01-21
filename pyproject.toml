@@ -22,6 +22,9 @@ dev = [
 [dependency-groups]
 typing = ["ty>=0.0.1"]
 linting = ["ruff>=0.11.0"]
+dev = [
+    "inline-snapshot>=0.31.1",
+]
 
 [project.scripts]
 shortcake = "shortcake.cli:app"
