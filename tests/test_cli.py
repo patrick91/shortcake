@@ -1122,19 +1122,30 @@ def test_cli_top_fork_then_another_fork(
 # ============================================================================
 
 
-def test_cli_modify_with_message(
+def test_cli_modify_with_message_creates_new_commit(
     repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test CLI modify command with -m option."""
+    """Test CLI modify command with -m option creates new commit."""
     monkeypatch.chdir(tmp_path)
 
     # First adopt to add trailer
     runner.invoke(app, ["adopt"])
 
-    result = runner.invoke(app, ["modify", "-m", "feat: updated message"])
+    old_sha = repo_with_feature.head()
+
+    # Stage a new file (required for -m)
+    new_file = tmp_path / "new.txt"
+    new_file.write_text("content")
+    porcelain.add(repo_with_feature, paths=[str(new_file)])
+
+    result = runner.invoke(app, ["modify", "-m", "feat: new commit"])
 
     assert result.exit_code == 0
-    assert "Amended commit on 'feature'" in result.output
+    assert "Created commit on 'feature'" in result.output
+
+    # Verify old commit is parent of new commit
+    new_commit = repo_with_feature[repo_with_feature.head()]
+    assert old_sha in new_commit.parents
 
 
 def test_cli_modify_preserves_trailer(
@@ -1147,6 +1158,11 @@ def test_cli_modify_preserves_trailer(
 
     # First adopt to add trailer
     runner.invoke(app, ["adopt"])
+
+    # Stage a new file (required for -m)
+    new_file = tmp_path / "new.txt"
+    new_file.write_text("content")
+    porcelain.add(repo_with_feature, paths=[str(new_file)])
 
     result = runner.invoke(app, ["modify", "-m", "feat: completely new message"])
 
@@ -1172,7 +1188,7 @@ def test_cli_modify_detached_head(
     del temp_repo.refs[b"HEAD"]
     temp_repo.refs[b"HEAD"] = main_sha
 
-    result = runner.invoke(app, ["modify", "-m", "new message"])
+    result = runner.invoke(app, ["modify", "-e"])
 
     assert result.exit_code == 1
     assert "detached HEAD" in result.output
@@ -1181,14 +1197,14 @@ def test_cli_modify_detached_head(
 def test_cli_modify_interactive(
     repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test CLI modify in interactive mode (opens editor)."""
+    """Test CLI modify with -e opens editor to amend."""
     from unittest.mock import patch
 
     monkeypatch.chdir(tmp_path)
 
     with patch("shortcake.commands.modify.open_editor") as mock_editor:
         mock_editor.return_value = "feat: edited message"
-        result = runner.invoke(app, ["modify"])
+        result = runner.invoke(app, ["modify", "-e"])
 
     assert result.exit_code == 0
     assert "Amended commit on 'feature'" in result.output
@@ -1197,14 +1213,14 @@ def test_cli_modify_interactive(
 def test_cli_modify_editor_aborted(
     repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test CLI modify when editor is cancelled/empty."""
+    """Test CLI modify with -e when editor is cancelled/empty."""
     from unittest.mock import patch
 
     monkeypatch.chdir(tmp_path)
 
     with patch("shortcake.commands.modify.open_editor") as mock_editor:
         mock_editor.return_value = None  # Editor cancelled/empty
-        result = runner.invoke(app, ["modify"])
+        result = runner.invoke(app, ["modify", "-e"])
 
     assert result.exit_code == 1
     assert "Aborted: empty message" in result.output
@@ -1255,7 +1271,7 @@ def test_cli_modify_no_verify(
     result = runner.invoke(app, ["modify", "-m", "feat: test", "-n"])
 
     assert result.exit_code == 0
-    assert "Amended commit" in result.output
+    assert "Created commit" in result.output
 
 
 def test_cli_modify_hook_failure(
@@ -1280,6 +1296,42 @@ def test_cli_modify_hook_failure(
 
     assert result.exit_code == 1
     assert "Pre-commit hook failed" in result.output
+
+
+def test_cli_modify_no_flags_error(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI modify requires -m or -e flag."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["modify"])
+
+    assert result.exit_code == 1
+    assert "Must specify -m <message> or -e" in result.output
+
+
+def test_cli_modify_both_flags_error(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI modify cannot use both -m and -e."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["modify", "-m", "message", "-e"])
+
+    assert result.exit_code == 1
+    assert "Cannot use both -m and -e" in result.output
+
+
+def test_cli_modify_message_no_staged_error(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI modify -m requires staged changes."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["modify", "-m", "feat: message"])
+
+    assert result.exit_code == 1
+    assert "No staged changes to commit" in result.output
 
 
 def test_cli_help_includes_modify(
