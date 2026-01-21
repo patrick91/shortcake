@@ -345,3 +345,773 @@ def test_cli_create_gitmoji_cancelled(
 
     assert result.exit_code == 1
     assert "Cancelled" in result.output
+
+
+# ============================================================================
+# Navigation CLI tests
+# ============================================================================
+
+
+def test_cli_up_success(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI up command success."""
+    monkeypatch.chdir(tmp_path)
+
+    # First adopt the feature branch
+    runner.invoke(app, ["adopt"])
+
+    # Switch to main
+    porcelain.switch(repo_with_feature, "main")
+
+    result = runner.invoke(app, ["up"])
+
+    assert result.exit_code == 0
+    assert "Switched to 'feature'" in result.output
+
+
+def test_cli_up_at_top(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI up when already at top."""
+    monkeypatch.chdir(tmp_path)
+
+    # Adopt and stay on feature (which has no children)
+    runner.invoke(app, ["adopt"])
+
+    result = runner.invoke(app, ["up"])
+
+    assert result.exit_code == 0
+    assert "Already at top of stack" in result.output
+
+
+def test_cli_down_success(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI down command success."""
+    monkeypatch.chdir(tmp_path)
+
+    # First adopt the feature branch
+    runner.invoke(app, ["adopt"])
+
+    result = runner.invoke(app, ["down"])
+
+    assert result.exit_code == 0
+    assert "Switched to 'main'" in result.output
+    assert "bottom of stack" in result.output
+
+
+def test_cli_down_not_tracked(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI down when branch is not tracked."""
+    monkeypatch.chdir(tmp_path)
+
+    # Don't adopt, try to go down
+    result = runner.invoke(app, ["down"])
+
+    assert result.exit_code == 1
+    assert "not tracked" in result.output
+
+
+def test_cli_top_success(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI top command success."""
+    monkeypatch.chdir(tmp_path)
+
+    # Adopt and switch to main
+    runner.invoke(app, ["adopt"])
+    porcelain.switch(repo_with_feature, "main")
+
+    result = runner.invoke(app, ["top"])
+
+    assert result.exit_code == 0
+    assert "Switched to 'feature'" in result.output
+
+
+def test_cli_top_already_at_top(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI top when already at top."""
+    monkeypatch.chdir(tmp_path)
+
+    # Adopt and stay on feature
+    runner.invoke(app, ["adopt"])
+
+    result = runner.invoke(app, ["top"])
+
+    assert result.exit_code == 0
+    assert "Already at top of stack" in result.output
+
+
+def test_cli_bottom_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test CLI bottom command success with a deeper stack."""
+    from shortcake._trailers import Trailers
+
+    monkeypatch.chdir(tmp_path)
+
+    # Create a repo with main → branch_a → branch_b
+    repo = Repo.init(tmp_path, default_branch=b"main")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Test")
+    porcelain.add(repo, paths=[str(readme)])
+    porcelain.commit(repo, message=b"Initial commit")
+
+    # Create branch_a
+    main_sha = repo.refs[b"refs/heads/main"]
+    repo.refs[b"refs/heads/branch_a"] = main_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: a")
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a")
+    porcelain.add(repo, paths=[str(file_a)])
+    porcelain.commit(repo, message=msg_a.encode())
+
+    # Create branch_b from branch_a
+    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    trailers_b = Trailers(parent_branch="branch_a")
+    msg_b = trailers_b.apply_to("feat: b")
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b")
+    porcelain.add(repo, paths=[str(file_b)])
+    porcelain.commit(repo, message=msg_b.encode())
+
+    # Now run bottom from branch_b
+    result = runner.invoke(app, ["bottom"])
+
+    assert result.exit_code == 0
+    assert "Switched to 'branch_a'" in result.output
+
+
+def test_cli_bottom_already_at_bottom(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI bottom when already at bottom."""
+    monkeypatch.chdir(tmp_path)
+
+    # Adopt the feature branch (its parent is main, so it's at bottom)
+    runner.invoke(app, ["adopt"])
+
+    result = runner.invoke(app, ["bottom"])
+
+    assert result.exit_code == 0
+    assert "Already at bottom of stack" in result.output
+
+
+def test_cli_help_includes_navigation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI help includes navigation commands."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["--help"])
+
+    assert "up" in result.output
+    assert "down" in result.output
+    assert "top" in result.output
+    assert "bottom" in result.output
+
+
+def test_cli_up_multiple_children_interactive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI up prompts when multiple children exist."""
+    from shortcake._trailers import Trailers
+
+    monkeypatch.chdir(tmp_path)
+
+    # Create a repo with main → branch_a → (branch_b, branch_c)
+    repo = Repo.init(tmp_path, default_branch=b"main")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Test")
+    porcelain.add(repo, paths=[str(readme)])
+    porcelain.commit(repo, message=b"Initial commit")
+
+    # Create branch_a
+    main_sha = repo.refs[b"refs/heads/main"]
+    repo.refs[b"refs/heads/branch_a"] = main_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: a")
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a")
+    porcelain.add(repo, paths=[str(file_a)])
+    porcelain.commit(repo, message=msg_a.encode())
+
+    # Create branch_b from branch_a
+    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    trailers_b = Trailers(parent_branch="branch_a")
+    msg_b = trailers_b.apply_to("feat: b")
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b")
+    porcelain.add(repo, paths=[str(file_b)])
+    porcelain.commit(repo, message=msg_b.encode())
+
+    # Create branch_c from branch_a (fork!)
+    repo.refs[b"refs/heads/branch_c"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    trailers_c = Trailers(parent_branch="branch_a")
+    msg_c = trailers_c.apply_to("feat: c")
+    file_c = tmp_path / "c.txt"
+    file_c.write_text("c")
+    porcelain.add(repo, paths=[str(file_c)])
+    porcelain.commit(repo, message=msg_c.encode())
+
+    # Switch to branch_a
+    porcelain.switch(repo, "branch_a")
+
+    # Run up with input to select branch_b
+    result = runner.invoke(app, ["up"], input="branch_b\n")
+
+    assert result.exit_code == 0
+    assert "Multiple children" in result.output
+    assert "Switched to 'branch_b'" in result.output
+
+
+def test_cli_up_multiple_children_invalid_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI up error when invalid child selected."""
+    from shortcake._trailers import Trailers
+
+    monkeypatch.chdir(tmp_path)
+
+    # Create a repo with main → branch_a → (branch_b, branch_c)
+    repo = Repo.init(tmp_path, default_branch=b"main")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Test")
+    porcelain.add(repo, paths=[str(readme)])
+    porcelain.commit(repo, message=b"Initial commit")
+
+    # Create branch_a
+    main_sha = repo.refs[b"refs/heads/main"]
+    repo.refs[b"refs/heads/branch_a"] = main_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: a")
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a")
+    porcelain.add(repo, paths=[str(file_a)])
+    porcelain.commit(repo, message=msg_a.encode())
+
+    # Create branch_b from branch_a
+    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    trailers_b = Trailers(parent_branch="branch_a")
+    msg_b = trailers_b.apply_to("feat: b")
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b")
+    porcelain.add(repo, paths=[str(file_b)])
+    porcelain.commit(repo, message=msg_b.encode())
+
+    # Create branch_c from branch_a (fork!)
+    repo.refs[b"refs/heads/branch_c"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    trailers_c = Trailers(parent_branch="branch_a")
+    msg_c = trailers_c.apply_to("feat: c")
+    file_c = tmp_path / "c.txt"
+    file_c.write_text("c")
+    porcelain.add(repo, paths=[str(file_c)])
+    porcelain.commit(repo, message=msg_c.encode())
+
+    # Switch to branch_a
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+
+    # Run up with invalid input
+    result = runner.invoke(app, ["up"], input="invalid_branch\n")
+
+    assert result.exit_code == 1
+    assert "not a valid child" in result.output
+
+
+def test_cli_up_with_child_argument(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI up with explicit child argument."""
+    from shortcake._trailers import Trailers
+
+    monkeypatch.chdir(tmp_path)
+
+    # Create repo with main → branch_a → (branch_b, branch_c)
+    repo = Repo.init(tmp_path, default_branch=b"main")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Test")
+    porcelain.add(repo, paths=[str(readme)])
+    porcelain.commit(repo, message=b"Initial commit")
+
+    main_sha = repo.refs[b"refs/heads/main"]
+    repo.refs[b"refs/heads/branch_a"] = main_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: a")
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a")
+    porcelain.add(repo, paths=[str(file_a)])
+    porcelain.commit(repo, message=msg_a.encode())
+
+    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    trailers_b = Trailers(parent_branch="branch_a")
+    msg_b = trailers_b.apply_to("feat: b")
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b")
+    porcelain.add(repo, paths=[str(file_b)])
+    porcelain.commit(repo, message=msg_b.encode())
+
+    repo.refs[b"refs/heads/branch_c"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    trailers_c = Trailers(parent_branch="branch_a")
+    msg_c = trailers_c.apply_to("feat: c")
+    file_c = tmp_path / "c.txt"
+    file_c.write_text("c")
+    porcelain.add(repo, paths=[str(file_c)])
+    porcelain.commit(repo, message=msg_c.encode())
+
+    # Switch to branch_a
+    porcelain.switch(repo, "branch_a")
+
+    # Run up with explicit child argument
+    result = runner.invoke(app, ["up", "branch_c"])
+
+    assert result.exit_code == 0
+    assert "Switched to 'branch_c'" in result.output
+
+
+def test_cli_up_detached_head(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI up error in detached HEAD state."""
+    monkeypatch.chdir(tmp_path)
+
+    # Detach HEAD
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    del temp_repo.refs[b"HEAD"]
+    temp_repo.refs[b"HEAD"] = main_sha
+
+    result = runner.invoke(app, ["up"])
+
+    assert result.exit_code == 1
+    assert "detached HEAD" in result.output
+
+
+def test_cli_down_detached_head(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI down error in detached HEAD state."""
+    monkeypatch.chdir(tmp_path)
+
+    # Detach HEAD
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    del temp_repo.refs[b"HEAD"]
+    temp_repo.refs[b"HEAD"] = main_sha
+
+    result = runner.invoke(app, ["down"])
+
+    assert result.exit_code == 1
+    assert "detached HEAD" in result.output
+
+
+def test_cli_top_detached_head(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI top error in detached HEAD state."""
+    monkeypatch.chdir(tmp_path)
+
+    # Detach HEAD
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    del temp_repo.refs[b"HEAD"]
+    temp_repo.refs[b"HEAD"] = main_sha
+
+    result = runner.invoke(app, ["top"])
+
+    assert result.exit_code == 1
+    assert "detached HEAD" in result.output
+
+
+def test_cli_bottom_detached_head(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI bottom error in detached HEAD state."""
+    monkeypatch.chdir(tmp_path)
+
+    # Detach HEAD
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    del temp_repo.refs[b"HEAD"]
+    temp_repo.refs[b"HEAD"] = main_sha
+
+    result = runner.invoke(app, ["bottom"])
+
+    assert result.exit_code == 1
+    assert "detached HEAD" in result.output
+
+
+def test_cli_bottom_not_tracked(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI bottom when branch is not tracked."""
+    monkeypatch.chdir(tmp_path)
+
+    # Don't adopt, try to go to bottom
+    result = runner.invoke(app, ["bottom"])
+
+    assert result.exit_code == 1
+    assert "not tracked" in result.output
+
+
+def test_cli_top_multiple_children_interactive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI top prompts when multiple children exist."""
+    from shortcake._trailers import Trailers
+
+    monkeypatch.chdir(tmp_path)
+
+    # Create repo with main → branch_a → (branch_b, branch_c)
+    repo = Repo.init(tmp_path, default_branch=b"main")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Test")
+    porcelain.add(repo, paths=[str(readme)])
+    porcelain.commit(repo, message=b"Initial commit")
+
+    main_sha = repo.refs[b"refs/heads/main"]
+    repo.refs[b"refs/heads/branch_a"] = main_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: a")
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a")
+    porcelain.add(repo, paths=[str(file_a)])
+    porcelain.commit(repo, message=msg_a.encode())
+
+    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    trailers_b = Trailers(parent_branch="branch_a")
+    msg_b = trailers_b.apply_to("feat: b")
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b")
+    porcelain.add(repo, paths=[str(file_b)])
+    porcelain.commit(repo, message=msg_b.encode())
+
+    repo.refs[b"refs/heads/branch_c"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    trailers_c = Trailers(parent_branch="branch_a")
+    msg_c = trailers_c.apply_to("feat: c")
+    file_c = tmp_path / "c.txt"
+    file_c.write_text("c")
+    porcelain.add(repo, paths=[str(file_c)])
+    porcelain.commit(repo, message=msg_c.encode())
+
+    # Switch to main
+    porcelain.switch(repo, "main")
+
+    # Run top with input to select branch_b (which is a leaf)
+    result = runner.invoke(app, ["top"], input="branch_b\n")
+
+    assert result.exit_code == 0
+    assert "Multiple children" in result.output
+    assert "Switched to 'branch_b'" in result.output
+
+
+def test_cli_top_multiple_children_invalid_selection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI top error when invalid child selected."""
+    from shortcake._trailers import Trailers
+
+    monkeypatch.chdir(tmp_path)
+
+    # Create repo with main → branch_a → (branch_b, branch_c)
+    repo = Repo.init(tmp_path, default_branch=b"main")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Test")
+    porcelain.add(repo, paths=[str(readme)])
+    porcelain.commit(repo, message=b"Initial commit")
+
+    main_sha = repo.refs[b"refs/heads/main"]
+    repo.refs[b"refs/heads/branch_a"] = main_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: a")
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a")
+    porcelain.add(repo, paths=[str(file_a)])
+    porcelain.commit(repo, message=msg_a.encode())
+
+    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    trailers_b = Trailers(parent_branch="branch_a")
+    msg_b = trailers_b.apply_to("feat: b")
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b")
+    porcelain.add(repo, paths=[str(file_b)])
+    porcelain.commit(repo, message=msg_b.encode())
+
+    repo.refs[b"refs/heads/branch_c"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    trailers_c = Trailers(parent_branch="branch_a")
+    msg_c = trailers_c.apply_to("feat: c")
+    file_c = tmp_path / "c.txt"
+    file_c.write_text("c")
+    porcelain.add(repo, paths=[str(file_c)])
+    porcelain.commit(repo, message=msg_c.encode())
+
+    # Switch to main
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+
+    # Run top with invalid input
+    result = runner.invoke(app, ["top"], input="invalid_branch\n")
+
+    assert result.exit_code == 1
+    assert "not a valid child" in result.output
+
+
+def test_cli_up_invalid_child_argument(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI up with invalid child argument."""
+    from shortcake._trailers import Trailers
+
+    monkeypatch.chdir(tmp_path)
+
+    # Create repo with main → branch_a → branch_b
+    repo = Repo.init(tmp_path, default_branch=b"main")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Test")
+    porcelain.add(repo, paths=[str(readme)])
+    porcelain.commit(repo, message=b"Initial commit")
+
+    main_sha = repo.refs[b"refs/heads/main"]
+    repo.refs[b"refs/heads/branch_a"] = main_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: a")
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a")
+    porcelain.add(repo, paths=[str(file_a)])
+    porcelain.commit(repo, message=msg_a.encode())
+
+    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    trailers_b = Trailers(parent_branch="branch_a")
+    msg_b = trailers_b.apply_to("feat: b")
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b")
+    porcelain.add(repo, paths=[str(file_b)])
+    porcelain.commit(repo, message=msg_b.encode())
+
+    # Switch to main (which has branch_a as child)
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+
+    # Run up with invalid child argument (branch_b is not a direct child of main)
+    result = runner.invoke(app, ["up", "nonexistent"])
+
+    assert result.exit_code == 1
+    assert "not a child" in result.output
+
+
+def test_cli_down_to_non_trunk_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI down from branch_c to branch_b (not trunk)."""
+    from shortcake._trailers import Trailers
+
+    monkeypatch.chdir(tmp_path)
+
+    # Create repo with main → branch_a → branch_b
+    repo = Repo.init(tmp_path, default_branch=b"main")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Test")
+    porcelain.add(repo, paths=[str(readme)])
+    porcelain.commit(repo, message=b"Initial commit")
+
+    main_sha = repo.refs[b"refs/heads/main"]
+    repo.refs[b"refs/heads/branch_a"] = main_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: a")
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a")
+    porcelain.add(repo, paths=[str(file_a)])
+    porcelain.commit(repo, message=msg_a.encode())
+
+    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    trailers_b = Trailers(parent_branch="branch_a")
+    msg_b = trailers_b.apply_to("feat: b")
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b")
+    porcelain.add(repo, paths=[str(file_b)])
+    porcelain.commit(repo, message=msg_b.encode())
+
+    # Now on branch_b, go down to branch_a (not trunk)
+    result = runner.invoke(app, ["down"])
+
+    assert result.exit_code == 0
+    assert "Switched to 'branch_a'" in result.output
+    assert "bottom of stack" not in result.output
+
+
+def test_cli_top_fork_then_continue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI top with fork, select branch that has more children."""
+    from shortcake._trailers import Trailers
+
+    monkeypatch.chdir(tmp_path)
+
+    # Create: main → branch_a → (branch_b → branch_d, branch_c)
+    repo = Repo.init(tmp_path, default_branch=b"main")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Test")
+    porcelain.add(repo, paths=[str(readme)])
+    porcelain.commit(repo, message=b"Initial commit")
+
+    main_sha = repo.refs[b"refs/heads/main"]
+    repo.refs[b"refs/heads/branch_a"] = main_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: a")
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a")
+    porcelain.add(repo, paths=[str(file_a)])
+    porcelain.commit(repo, message=msg_a.encode())
+
+    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+
+    # branch_b from branch_a
+    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    trailers_b = Trailers(parent_branch="branch_a")
+    msg_b = trailers_b.apply_to("feat: b")
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b")
+    porcelain.add(repo, paths=[str(file_b)])
+    porcelain.commit(repo, message=msg_b.encode())
+
+    branch_b_sha = repo.refs[b"refs/heads/branch_b"]
+
+    # branch_d from branch_b (so branch_b has a child)
+    repo.refs[b"refs/heads/branch_d"] = branch_b_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_d")
+    trailers_d = Trailers(parent_branch="branch_b")
+    msg_d = trailers_d.apply_to("feat: d")
+    file_d = tmp_path / "d.txt"
+    file_d.write_text("d")
+    porcelain.add(repo, paths=[str(file_d)])
+    porcelain.commit(repo, message=msg_d.encode())
+
+    # branch_c from branch_a (fork sibling of branch_b)
+    repo.refs[b"refs/heads/branch_c"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    trailers_c = Trailers(parent_branch="branch_a")
+    msg_c = trailers_c.apply_to("feat: c")
+    file_c = tmp_path / "c.txt"
+    file_c.write_text("c")
+    porcelain.add(repo, paths=[str(file_c)])
+    porcelain.commit(repo, message=msg_c.encode())
+
+    # Switch to main
+    porcelain.switch(repo, "main")
+
+    # Run top, select branch_b which has branch_d as child
+    result = runner.invoke(app, ["top"], input="branch_b\n")
+
+    assert result.exit_code == 0
+    assert "Multiple children" in result.output
+    assert "Switched to 'branch_b'" in result.output
+    # Should continue to branch_d
+    assert "Switched to 'branch_d'" in result.output
+
+
+def test_cli_top_fork_then_another_fork(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI top with fork, select branch that has another fork."""
+    from shortcake._trailers import Trailers
+
+    monkeypatch.chdir(tmp_path)
+
+    # Create: main → branch_a → (branch_b → (branch_d, branch_e), branch_c)
+    repo = Repo.init(tmp_path, default_branch=b"main")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Test")
+    porcelain.add(repo, paths=[str(readme)])
+    porcelain.commit(repo, message=b"Initial commit")
+
+    main_sha = repo.refs[b"refs/heads/main"]
+    repo.refs[b"refs/heads/branch_a"] = main_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: a")
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a")
+    porcelain.add(repo, paths=[str(file_a)])
+    porcelain.commit(repo, message=msg_a.encode())
+
+    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+
+    # branch_b from branch_a
+    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    trailers_b = Trailers(parent_branch="branch_a")
+    msg_b = trailers_b.apply_to("feat: b")
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b")
+    porcelain.add(repo, paths=[str(file_b)])
+    porcelain.commit(repo, message=msg_b.encode())
+
+    branch_b_sha = repo.refs[b"refs/heads/branch_b"]
+
+    # branch_d from branch_b
+    repo.refs[b"refs/heads/branch_d"] = branch_b_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_d")
+    trailers_d = Trailers(parent_branch="branch_b")
+    msg_d = trailers_d.apply_to("feat: d")
+    file_d = tmp_path / "d.txt"
+    file_d.write_text("d")
+    porcelain.add(repo, paths=[str(file_d)])
+    porcelain.commit(repo, message=msg_d.encode())
+
+    # branch_e from branch_b (another fork!)
+    repo.refs[b"refs/heads/branch_e"] = branch_b_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_e")
+    trailers_e = Trailers(parent_branch="branch_b")
+    msg_e = trailers_e.apply_to("feat: e")
+    file_e = tmp_path / "e.txt"
+    file_e.write_text("e")
+    porcelain.add(repo, paths=[str(file_e)])
+    porcelain.commit(repo, message=msg_e.encode())
+
+    # branch_c from branch_a
+    repo.refs[b"refs/heads/branch_c"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    trailers_c = Trailers(parent_branch="branch_a")
+    msg_c = trailers_c.apply_to("feat: c")
+    file_c = tmp_path / "c.txt"
+    file_c.write_text("c")
+    porcelain.add(repo, paths=[str(file_c)])
+    porcelain.commit(repo, message=msg_c.encode())
+
+    # Switch to main
+    porcelain.switch(repo, "main")
+
+    # Run top, select branch_b which has another fork (branch_d, branch_e)
+    result = runner.invoke(app, ["top"], input="branch_b\n")
+
+    assert result.exit_code == 0
+    assert "Multiple children" in result.output
+    assert "Switched to 'branch_b'" in result.output
+    # Should hit another fork and tell user to run again
+    assert "Run 'sc top' again" in result.output

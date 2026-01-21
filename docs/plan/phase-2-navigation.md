@@ -19,9 +19,10 @@ sc up      # Go to child
 - If no children → warning "Already at top of stack"
 
 **Tests:**
-- [ ] Move up in simple stack
-- [ ] At top (warning)
-- [ ] Multiple children (prompt)
+- [x] Move up in simple stack
+- [x] At top (warning)
+- [x] Multiple children (prompt)
+- [x] Working directory updated correctly
 
 ---
 
@@ -39,9 +40,10 @@ sc down    # Go to parent
 - If parent is trunk → warning "Already at bottom of stack"
 
 **Tests:**
-- [ ] Move down in simple stack
-- [ ] At bottom (warning)
-- [ ] On untracked branch (error or warning)
+- [x] Move down in simple stack
+- [x] At bottom (warning)
+- [x] On untracked branch (error or warning)
+- [x] Working directory updated correctly
 
 ---
 
@@ -58,9 +60,10 @@ sc top     # Top of stack
 - If multiple paths, follow longest or prompt
 
 **Tests:**
-- [ ] Jump to top
-- [ ] Already at top
-- [ ] Branching stack (multiple tops)
+- [x] Jump to top
+- [x] Already at top
+- [x] Branching stack (multiple tops)
+- [x] Working directory updated correctly
 
 ---
 
@@ -77,15 +80,21 @@ sc bottom  # First branch above trunk
 - Checkout that branch
 
 **Tests:**
-- [ ] Jump to bottom
-- [ ] Already at bottom
-- [ ] On trunk (warning)
+- [x] Jump to bottom
+- [x] Already at bottom
+- [x] On trunk (error - not tracked)
+- [x] Working directory updated correctly
 
 ---
 
 ## Checklist
 
-- [ ] Implement `sc up`
-- [ ] Implement `sc down`
-- [ ] Implement `sc top`
-- [ ] Implement `sc bottom`
+- [x] Implement `sc up`
+- [x] Implement `sc down`
+- [x] Implement `sc top`
+- [x] Implement `sc bottom`
+
+## Notes
+
+- Uses `switch_branch()` (via `porcelain.switch()`) to properly update working directory
+- `set_head_to_branch()` exists for `create` command where staged changes must be preserved
