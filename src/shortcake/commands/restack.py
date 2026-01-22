@@ -23,6 +23,7 @@ class RestackResult:
 
     restacked_branches: list[str]
     conflict_branch: str | None = None
+    current_branch_untracked: bool = False
 
 
 def _needs_restack(repo: Repo, branch: str, parent: str) -> bool:
@@ -286,6 +287,11 @@ def _restack(repo: Repo, dry_run: bool = False, sync: bool = False) -> RestackRe
     if git.is_rebase_in_progress(repo):
         raise RestackError("Git rebase in progress. Complete or abort it first.")
 
+    # Check if current branch is tracked (has Shortcake-Parent trailer)
+    all_branches = set(git.get_all_local_branches(repo))
+    current_branch_parent = git.get_branch_parent(repo, current_branch, all_branches)
+    is_current_untracked = current_branch_parent is None
+
     # Get stack in topological order
     stack_branches = _get_stack_in_order(repo, current_branch)
 
@@ -323,7 +329,9 @@ def _restack(repo: Repo, dry_run: bool = False, sync: bool = False) -> RestackRe
     plan = _plan_restack(repo, stack_branches)
 
     if not plan:
-        return RestackResult(restacked_branches=[])
+        return RestackResult(
+            restacked_branches=[], current_branch_untracked=is_current_untracked
+        )
 
     # Dry run - just show plan
     if dry_run:
@@ -404,7 +412,13 @@ def restack(
 
     if not result.restacked_branches:
         if not dry_run:
-            typer.echo("Everything up to date.")
+            if result.current_branch_untracked:
+                typer.echo(
+                    "Current branch is not tracked (no Shortcake-Parent trailer). "
+                    "Nothing to restack."
+                )
+            else:
+                typer.echo("Everything up to date.")
     else:
         if not dry_run:
             typer.echo(

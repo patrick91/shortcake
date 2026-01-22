@@ -566,6 +566,20 @@ def test_cli_restack_detached_head(
     assert "detached HEAD" in result.output
 
 
+def test_cli_restack_untracked_branch(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI restack from an untracked branch shows informative message."""
+    monkeypatch.chdir(tmp_path)
+
+    # We're on main which has no Shortcake-Parent trailer
+    result = runner.invoke(app, ["restack"])
+
+    assert result.exit_code == 0
+    assert "not tracked" in result.output
+    assert "Nothing to restack" in result.output
+
+
 def test_cli_continue_nothing_in_progress(
     temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
