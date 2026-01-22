@@ -29,8 +29,7 @@ def _abort(repo: Repo) -> AbortResult:
     Raises AbortError on failure, returns AbortResult on success.
     """
     # Check if restack is in progress
-    state = RestackState.load(repo)
-    if state is None:
+    if (state := RestackState.load(repo)) is None:
         raise AbortError("No restack in progress.")
 
     # If git rebase is in progress, abort it first
