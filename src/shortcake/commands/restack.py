@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from typing import Annotated
 
 import typer
+from dulwich import porcelain
 from dulwich.repo import Repo
 
 from shortcake import _git as git
@@ -180,26 +181,33 @@ def _check_remote_divergence(repo: Repo, branches: list[str]) -> list[str]:
     return diverged
 
 
-def _fetch_remote(repo_path: str) -> bool:
+def _fetch_remote(repo: Repo) -> bool:
     """Fetch from origin. Returns True if successful."""
-    result = subprocess.run(
-        ["git", "fetch", "origin"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0
+    try:
+        porcelain.fetch(repo, "origin", quiet=True)
+        return True
+    except Exception:
+        return False
 
 
-def _fast_forward_branch(repo_path: str, branch: str) -> bool:
+def _fast_forward_branch(repo: Repo, branch: str) -> bool:
     """Fast-forward branch to origin. Returns True if successful."""
-    result = subprocess.run(
-        ["git", "fetch", "origin", f"{branch}:{branch}"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0
+    try:
+        # Fetch the specific branch from origin and update local ref
+        porcelain.fetch(
+            repo,
+            "origin",
+            quiet=True,
+        )
+        # Update local branch to match remote
+        remote_ref = f"refs/remotes/origin/{branch}".encode()
+        local_ref = f"refs/heads/{branch}".encode()
+        remote_sha = repo.refs.get(remote_ref)
+        if remote_sha:
+            repo.refs[local_ref] = remote_sha
+        return True
+    except Exception:
+        return False
 
 
 def _restack(repo: Repo, dry_run: bool = False, sync: bool = False) -> RestackResult:
@@ -229,7 +237,7 @@ def _restack(repo: Repo, dry_run: bool = False, sync: bool = False) -> RestackRe
     # Optional sync with remote
     if sync:
         typer.echo("Fetching from origin...")
-        _fetch_remote(repo_path)
+        _fetch_remote(repo)
 
     # Get stack in topological order
     stack_branches = _get_stack_in_order(repo, current_branch)
