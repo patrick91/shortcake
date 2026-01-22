@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,12 @@ from shortcake.commands.restack import (
 )
 
 runner = CliRunner()
+
+
+def strip_ansi(text: str) -> str:
+    """Remove ANSI escape codes from text."""
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
+
 
 # ============================================================================
 # Fixtures
@@ -807,10 +814,11 @@ def test_fast_forward_branch(tmp_path: Path) -> None:
 
 def test_cli_restack_help() -> None:
     """Test CLI restack --help."""
-    result = runner.invoke(app, ["restack", "--help"], color=False)
+    result = runner.invoke(app, ["restack", "--help"])
     assert result.exit_code == 0
-    assert "--dry-run" in result.output
-    assert "--sync" in result.output
+    output = strip_ansi(result.output)
+    assert "--dry-run" in output
+    assert "--sync" in output
 
 
 def test_cli_continue_help() -> None:
