@@ -55,8 +55,10 @@ def _get_stack_in_order(repo: Repo, start: str) -> list[str]:
     stack_root = start
     while True:
         parent = git.get_branch_parent(repo, stack_root, all_branches)
-        if parent is None:
+        if parent is None:  # pragma: no cover
             # stack_root's parent has no trailer - stack_root is the stack root
+            # Note: This is defensive code. If we reach here, it means the
+            # parent changed between the check at line 51 and now.
             break
         if parent not in all_branches:
             # parent exists in trailer but not as a local branch
@@ -113,16 +115,20 @@ def _plan_restack(repo: Repo, branches: list[str]) -> list[RestackStep]:
             branch_head = git.get_branch_head(repo, branch)
             parent_head = git.get_branch_head(repo, parent)
             merge_base = git.get_merge_base(repo, branch_head, parent_head)
-            if merge_base is not None:
-                plan.append(
-                    RestackStep(
-                        branch=branch,
-                        onto=parent,
-                        # dulwich returns SHA as 40 ASCII hex bytes, decode to string
-                        merge_base=merge_base.decode(),
-                    )
+            if merge_base is None:
+                raise RestackError(
+                    f"Cannot restack '{branch}': no common history with parent "
+                    f"'{parent}'. The branches may have unrelated histories."
                 )
-                needs_restack_set.add(branch)
+            plan.append(
+                RestackStep(
+                    branch=branch,
+                    onto=parent,
+                    # dulwich returns SHA as 40 ASCII hex bytes, decode to string
+                    merge_base=merge_base.decode(),
+                )
+            )
+            needs_restack_set.add(branch)
 
     return plan
 
@@ -145,9 +151,11 @@ def _rebase_branch(
         capture_output=True,
         text=True,
     )
+    # Use stderr if available, otherwise fall back to stdout for error info
+    error_output = result.stderr if result.stderr else result.stdout
     return RebaseResult(
         success=result.returncode == 0,
-        error_output=result.stderr,
+        error_output=error_output,
     )
 
 
@@ -251,12 +259,12 @@ def _fast_forward_branch(repo: Repo, branch: str) -> bool:
     Note: This only updates the ref, not the worktree. Only call this for
     branches that are NOT currently checked out.
     """
+    remote_ref = f"refs/remotes/origin/{branch}".encode()
+    local_ref = f"refs/heads/{branch}".encode()
+    if remote_ref not in repo.refs:
+        return False  # No remote ref to fast-forward to
     try:
-        remote_ref = f"refs/remotes/origin/{branch}".encode()
-        local_ref = f"refs/heads/{branch}".encode()
-        remote_sha = repo.refs.get(remote_ref)
-        if remote_sha is None:
-            return False  # No remote ref to fast-forward to
+        remote_sha = repo.refs[remote_ref]
         repo.refs[local_ref] = remote_sha
         return True
     except Exception:
