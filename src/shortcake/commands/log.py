@@ -1,0 +1,86 @@
+from dataclasses import dataclass
+
+import typer
+from dulwich.repo import Repo
+
+from shortcake import _git as git
+
+
+@dataclass
+class LogResult:
+    commits: list[tuple[str, str]]  # (short_sha, first_line_of_message)
+    branch: str
+    parent: str | None
+
+
+def _log(repo: Repo) -> LogResult:
+    """Get commits on current branch between parent and HEAD."""
+    current = git.get_current_branch(repo)
+    if current is None:
+        raise ValueError("Cannot log in detached HEAD state")
+
+    all_branches = set(git.get_all_local_branches(repo))
+    parent = git.get_branch_parent(repo, current, all_branches)
+
+    head_sha = repo.head()
+    if parent:
+        parent_sha = git.get_branch_head(repo, parent)
+        commit_shas = git.get_commits_between(repo, head_sha, parent_sha)
+    else:
+        # Untracked branch - show commits to default branch or just HEAD
+        default = git.get_default_branch(repo)
+        if default and default != current:
+            parent_sha = git.get_branch_head(repo, default)
+            commit_shas = git.get_commits_between(repo, head_sha, parent_sha)
+        else:
+            commit_shas = [head_sha]  # Just show HEAD
+
+    commits = []
+    for sha in commit_shas:
+        short_sha = sha[:7].decode()
+        message = git.get_commit_message(repo, sha).split("\n")[0]
+        commits.append((short_sha, message))
+
+    return LogResult(commits=commits, branch=current, parent=parent)
+
+
+def _render_log(result: LogResult) -> str:
+    """Render log result as a tree with pipes."""
+    lines: list[str] = []
+
+    # Header: current branch
+    lines.append(f"◉ {result.branch}")
+    lines.append("│")
+
+    # Commits
+    for short_sha, message in result.commits:
+        lines.append(f"● {short_sha} {message}")
+        lines.append("│")
+
+    # Parent branch at bottom
+    if result.parent:
+        lines.append(f"◯ {result.parent}")
+    else:
+        # Remove trailing pipe if no parent to show
+        if lines and lines[-1] == "│":
+            lines.pop()
+
+    return "\n".join(lines)
+
+
+def log() -> None:
+    """Show commits on current branch."""
+    repo = git.open_repo()
+
+    current = git.get_current_branch(repo)
+    if current is None:
+        typer.echo("Error: Cannot log in detached HEAD state", err=True)
+        raise typer.Exit(1)
+
+    result = _log(repo)
+
+    if not result.commits:
+        typer.echo("No commits on this branch.")
+        return
+
+    typer.echo(_render_log(result))
