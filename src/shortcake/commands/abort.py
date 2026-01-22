@@ -5,6 +5,7 @@ from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
+from shortcake._git import RebaseFailure
 from shortcake._restack_state import RestackState
 
 
@@ -21,15 +22,6 @@ class AbortResult:
     restored_branches: list[str]
 
 
-def _abort_rebase(repo: Repo) -> bool:
-    """Abort an in-progress rebase. Returns True if successful."""
-    try:
-        git.rebase_abort(repo)
-        return True
-    except Exception:
-        return False
-
-
 def _abort(repo: Repo) -> AbortResult:
     """
     Abort an in-progress restack and restore original state.
@@ -44,7 +36,9 @@ def _abort(repo: Repo) -> AbortResult:
     # If git rebase is in progress, abort it first
     if git.is_rebase_in_progress(repo):
         typer.echo("Aborting in-progress rebase...")
-        if not _abort_rebase(repo):
+        try:
+            git.rebase_abort(repo)
+        except RebaseFailure:
             typer.echo(
                 "Warning: Failed to abort git rebase. You may need to run "
                 "'git rebase --abort' manually.",
