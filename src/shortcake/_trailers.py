@@ -30,3 +30,33 @@ class Trailers:
             return message
         result = porcelain.interpret_trailers(message, trailers=trailers)
         return result.decode()
+
+
+def strip_trailers(message: str) -> str:
+    """Remove Shortcake trailer block from message for editing.
+
+    Returns the message with the trailing Shortcake-Parent trailer removed,
+    so users don't see or accidentally modify it in the editor.
+    """
+    lines = message.rstrip().split("\n")
+
+    # Find the last non-empty line that's a Shortcake trailer
+    trailer_start = None
+    for i in range(len(lines) - 1, -1, -1):
+        line = lines[i]
+        if line.startswith(f"{TRAILER_KEY}: "):
+            trailer_start = i
+        elif line.strip() == "":
+            # Found blank line before trailers, include it in removal
+            if trailer_start is not None:
+                trailer_start = i
+            break
+        else:
+            # Non-trailer, non-blank line - stop searching
+            break
+
+    if trailer_start is None:
+        return message
+
+    # Return message without the trailer block
+    return "\n".join(lines[:trailer_start]).rstrip()
