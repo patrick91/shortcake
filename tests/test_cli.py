@@ -1366,3 +1366,130 @@ def test_cli_help_includes_modify(
     result = runner.invoke(app, ["--help"])
 
     assert "modify" in result.output
+
+
+# ============================================================================
+# Log CLI tests
+# ============================================================================
+
+
+def test_cli_log_basic(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI log command shows commits with tree format."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["log"])
+
+    assert result.exit_code == 0
+    assert "◉ feature" in result.output
+    assert "●" in result.output
+    assert "Add feature" in result.output
+
+
+def test_cli_log_tracked_branch(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI log on tracked branch shows parent."""
+    monkeypatch.chdir(tmp_path)
+
+    # First adopt the branch
+    runner.invoke(app, ["adopt"])
+
+    result = runner.invoke(app, ["log"])
+
+    assert result.exit_code == 0
+    assert "◉ feature" in result.output
+    assert "Add feature" in result.output
+    assert "◯ main" in result.output
+
+
+def test_cli_log_detached_head(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI log error in detached HEAD state."""
+    monkeypatch.chdir(tmp_path)
+
+    # Detach HEAD
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    del temp_repo.refs[b"HEAD"]
+    temp_repo.refs[b"HEAD"] = main_sha
+
+    result = runner.invoke(app, ["log"])
+
+    assert result.exit_code == 1
+    assert "detached HEAD" in result.output
+
+
+def test_cli_log_no_commits(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI log when no commits on branch relative to parent (after merge)."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create feature branch with one commit
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    file1 = tmp_path / "file1.txt"
+    file1.write_text("content")
+    porcelain.add(temp_repo, paths=[str(file1)])
+    porcelain.commit(temp_repo, message=b"Feature commit")
+
+    # Adopt the branch
+    runner.invoke(app, ["adopt"])
+
+    # Simulate merge: fast-forward main to feature's head
+    feature_sha = temp_repo.refs[b"refs/heads/feature"]
+    temp_repo.refs[b"refs/heads/main"] = feature_sha
+
+    result = runner.invoke(app, ["log"])
+
+    assert result.exit_code == 0
+    assert "No commits on this branch" in result.output
+
+
+def test_cli_log_multiple_commits(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI log with multiple commits shows tree format."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create feature branch with multiple commits
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    # First commit
+    file1 = tmp_path / "file1.txt"
+    file1.write_text("content1")
+    porcelain.add(temp_repo, paths=[str(file1)])
+    porcelain.commit(temp_repo, message=b"First commit")
+
+    # Second commit
+    file2 = tmp_path / "file2.txt"
+    file2.write_text("content2")
+    porcelain.add(temp_repo, paths=[str(file2)])
+    porcelain.commit(temp_repo, message=b"Second commit")
+
+    # Adopt and log
+    runner.invoke(app, ["adopt"])
+    result = runner.invoke(app, ["log"])
+
+    assert result.exit_code == 0
+    assert "◉ feature" in result.output
+    assert "● " in result.output  # Commit bullets
+    assert "First commit" in result.output
+    assert "Second commit" in result.output
+    assert "◯ main" in result.output
+    assert "│" in result.output  # Pipe connectors
+
+
+def test_cli_help_includes_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test CLI help includes log command."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["--help"])
+
+    assert "log" in result.output
