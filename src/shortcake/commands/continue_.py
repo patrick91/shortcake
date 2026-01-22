@@ -66,8 +66,7 @@ def _continue(repo: Repo) -> ContinueResult:
     Raises ContinueError on failure, returns ContinueResult on success.
     """
     # Check if restack is in progress
-    state = RestackState.load(repo)
-    if state is None:
+    if (state := RestackState.load(repo)) is None:
         raise ContinueError("No restack in progress.")
 
     # Check if current step still needs to be done (user may have manually aborted)
