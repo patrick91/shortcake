@@ -334,8 +334,8 @@ def _porcelain_rebase_start(
     try:
         sig = inspect.signature(rebase_fn)
         params = sig.parameters
-    except (TypeError, ValueError):
-        params = {}
+    except (TypeError, ValueError):  # pragma: no cover - version-dependent
+        params = {}  # pragma: no cover
 
     kwargs: dict[str, object] = {}
     if "upstream" in params:
@@ -366,10 +366,11 @@ def _porcelain_rebase_start(
         if "upstream" in params or "upstream_ref" in params:
             rebase_fn(repo, **kwargs)
             return
-        if onto is not None:
-            rebase_fn(repo, upstream, onto, **kwargs)
-        else:
-            rebase_fn(repo, upstream, **kwargs)
+        # Positional fallback for older dulwich versions
+        if onto is not None:  # pragma: no cover - version-dependent
+            rebase_fn(repo, upstream, onto, **kwargs)  # pragma: no cover
+        else:  # pragma: no cover - version-dependent
+            rebase_fn(repo, upstream, **kwargs)  # pragma: no cover
     except TypeError as e:  # pragma: no cover - version-dependent fallback
         raise RebaseFailure(str(e) or "Dulwich rebase failed") from e
 
@@ -394,8 +395,8 @@ def _porcelain_rebase_control(
     try:
         sig = inspect.signature(rebase_fn)
         params = sig.parameters
-    except (TypeError, ValueError):
-        params = {}
+    except (TypeError, ValueError):  # pragma: no cover - version-dependent
+        params = {}  # pragma: no cover
 
     kwargs: dict[str, object] = {}
     if abort:
@@ -410,8 +411,8 @@ def _porcelain_rebase_control(
             kwargs["continue_rebase"] = True
         elif "continue_" in params:
             kwargs["continue_"] = True
-        elif "continue" in params:
-            kwargs["continue"] = True
+        elif "continue" in params:  # pragma: no cover - reserved word param
+            kwargs["continue"] = True  # pragma: no cover
         else:
             raise RebaseFailure(
                 "Dulwich rebase continue is unavailable in this version."
