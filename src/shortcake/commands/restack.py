@@ -126,15 +126,28 @@ def _plan_restack(repo: Repo, branches: list[str]) -> list[RestackStep]:
     return plan
 
 
-def _rebase_branch(repo_path: str, branch: str, onto: str, merge_base: str) -> bool:
-    """Rebase branch onto target. Returns True if successful, False if conflict."""
+@dataclass
+class RebaseResult:
+    """Result of a rebase operation."""
+
+    success: bool
+    error_output: str = ""
+
+
+def _rebase_branch(
+    repo_path: str, branch: str, onto: str, merge_base: str
+) -> RebaseResult:
+    """Rebase branch onto target."""
     result = subprocess.run(
         ["git", "rebase", "--onto", onto, merge_base, branch],
         cwd=repo_path,
         capture_output=True,
         text=True,
     )
-    return result.returncode == 0
+    return RebaseResult(
+        success=result.returncode == 0,
+        error_output=result.stderr,
+    )
 
 
 def _get_conflict_files(repo_path: str) -> list[str]:
@@ -165,8 +178,23 @@ def _show_conflict_message(branch: str, onto: str, conflict_files: list[str]) ->
     typer.echo("Or abort with: sc abort")
 
 
+def _show_rebase_error(branch: str, onto: str, error_output: str) -> None:
+    """Display rebase error message (non-conflict failure)."""
+    typer.echo(f"\nFailed to rebase '{branch}' onto '{onto}'.\n", err=True)
+    if error_output:
+        typer.echo("Git error:", err=True)
+        for line in error_output.strip().split("\n"):
+            typer.echo(f"  {line}", err=True)
+        typer.echo()
+    typer.echo("Abort with: sc abort", err=True)
+
+
 def _check_remote_divergence(repo: Repo, branches: list[str]) -> list[str]:
-    """Return branches that have diverged from their remote."""
+    """Return branches that have truly diverged from their remote.
+
+    True divergence means both local and remote have commits the other doesn't.
+    Local-only commits (ahead) or remote-only commits (behind) are not divergence.
+    """
     diverged = []
     for branch in branches:
         remote_ref = f"origin/{branch}"
@@ -175,8 +203,15 @@ def _check_remote_divergence(repo: Repo, branches: list[str]) -> list[str]:
             continue
 
         local_sha = git.get_branch_head(repo, branch)
-        # Check if diverged: not equal and not simply behind (fast-forward)
-        if local_sha != remote_sha and not git.is_ancestor(repo, local_sha, remote_sha):
+        if local_sha == remote_sha:
+            continue
+
+        # Check for true divergence: neither is ancestor of the other
+        local_is_behind = git.is_ancestor(repo, local_sha, remote_sha)
+        remote_is_behind = git.is_ancestor(repo, remote_sha, local_sha)
+
+        if not local_is_behind and not remote_is_behind:
+            # Both have unique commits = true divergence
             diverged.append(branch)
     return diverged
 
@@ -190,15 +225,28 @@ def _fetch_remote(repo: Repo) -> bool:
         return False
 
 
+def _get_behind_branches(repo: Repo, branches: list[str]) -> list[str]:
+    """Return branches that are behind their remote (can be fast-forwarded)."""
+    behind = []
+    for branch in branches:
+        remote_ref = f"origin/{branch}"
+        remote_sha = git.get_remote_ref(repo, remote_ref)
+        if remote_sha is None:
+            continue
+
+        local_sha = git.get_branch_head(repo, branch)
+        if local_sha == remote_sha:
+            continue
+
+        # Behind means local is ancestor of remote
+        if git.is_ancestor(repo, local_sha, remote_sha):
+            behind.append(branch)
+    return behind
+
+
 def _fast_forward_branch(repo: Repo, branch: str) -> bool:
-    """Fast-forward branch to origin. Returns True if successful."""
+    """Fast-forward branch to match origin. Returns True if successful."""
     try:
-        # Fetch the specific branch from origin and update local ref
-        porcelain.fetch(
-            repo,
-            "origin",
-            quiet=True,
-        )
         # Update local branch to match remote
         remote_ref = f"refs/remotes/origin/{branch}".encode()
         local_ref = f"refs/heads/{branch}".encode()
@@ -234,13 +282,19 @@ def _restack(repo: Repo, dry_run: bool = False, sync: bool = False) -> RestackRe
     if git.is_rebase_in_progress(repo):
         raise RestackError("Git rebase in progress. Complete or abort it first.")
 
+    # Get stack in topological order
+    stack_branches = _get_stack_in_order(repo, current_branch)
+
     # Optional sync with remote
     if sync:
         typer.echo("Fetching from origin...")
         _fetch_remote(repo)
 
-    # Get stack in topological order
-    stack_branches = _get_stack_in_order(repo, current_branch)
+        # Fast-forward branches that are behind
+        behind = _get_behind_branches(repo, stack_branches)
+        for branch in behind:
+            typer.echo(f"Fast-forwarding '{branch}'...")
+            _fast_forward_branch(repo, branch)
 
     # Check for divergence
     diverged = _check_remote_divergence(repo, stack_branches)
@@ -248,9 +302,8 @@ def _restack(repo: Repo, dry_run: bool = False, sync: bool = False) -> RestackRe
         typer.echo(
             f"Warning: Branches diverged from remote: {', '.join(diverged)}", err=True
         )
-        typer.echo("Run 'git pull --rebase' on each diverged branch first.", err=True)
         typer.echo(
-            "Or use 'sc restack --sync' to auto-fetch and fast-forward.", err=True
+            "Run 'git rebase origin/<branch>' on each diverged branch first.", err=True
         )
         raise RestackError("Cannot restack with diverged branches")
 
@@ -290,11 +343,15 @@ def _restack(repo: Repo, dry_run: bool = False, sync: bool = False) -> RestackRe
         state.save(repo)
 
         typer.echo(f"Rebasing '{step.branch}' onto '{step.onto}'...")
-        success = _rebase_branch(repo_path, step.branch, step.onto, step.merge_base)
+        result = _rebase_branch(repo_path, step.branch, step.onto, step.merge_base)
 
-        if not success:
-            conflict_files = _get_conflict_files(repo_path)
-            _show_conflict_message(step.branch, step.onto, conflict_files)
+        if not result.success:
+            # Check if this is a conflict or other error
+            if git.is_rebase_in_progress(repo):
+                conflict_files = _get_conflict_files(repo_path)
+                _show_conflict_message(step.branch, step.onto, conflict_files)
+            else:
+                _show_rebase_error(step.branch, step.onto, result.error_output)
             return RestackResult(
                 restacked_branches=restacked, conflict_branch=step.branch
             )
