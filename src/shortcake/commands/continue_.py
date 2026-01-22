@@ -72,6 +72,16 @@ def _continue(repo: Repo) -> ContinueResult:
 
     # Check if current step still needs to be done (user may have manually aborted)
     current_step = state.plan[state.current_index]
+
+    # Check if parent branch still exists (may have been deleted during resolution)
+    if not git.branch_exists(repo, current_step.onto):
+        raise ContinueError(
+            f"Parent branch '{current_step.onto}' no longer exists. "
+            f"It may have been deleted during conflict resolution. "
+            f"Run 'sc abort' to cancel and restore original state, "
+            f"then recreate the parent branch or update the Shortcake-Parent trailer."
+        )
+
     if _needs_restack(repo, current_step.branch, current_step.onto):
         raise ContinueError(
             f"Branch '{current_step.branch}' was not rebased onto "
@@ -85,6 +95,15 @@ def _continue(repo: Repo) -> ContinueResult:
         step = state.plan[i]
         state.current_index = i
         state.save(repo)
+
+        # Check if parent branch still exists
+        if not git.branch_exists(repo, step.onto):
+            raise ContinueError(
+                f"Parent branch '{step.onto}' no longer exists. "
+                f"It may have been deleted during conflict resolution. "
+                f"Run 'sc abort' to cancel and restore original state, "
+                f"then recreate the parent branch or update Shortcake-Parent."
+            )
 
         typer.echo(f"Rebasing '{step.branch}' onto '{step.onto}'...")
         result = _rebase_branch(repo.path, step.branch, step.onto, step.merge_base)
