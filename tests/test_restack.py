@@ -1093,7 +1093,6 @@ def test_continue_rebase_function_error(
     temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Test _continue_rebase returns False when git returns non-zero."""
-    import subprocess
 
     def mock_run(*args, **kwargs):
         return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
@@ -1205,14 +1204,8 @@ def test_restack_with_diverged_branches(
     porcelain.add(temp_repo, paths=[str(sibling_file)])
     sibling_sha = porcelain.commit(temp_repo, message=b"Sibling commit on remote")
 
-    # Use git checkout to properly switch back to branch_a
-    import subprocess
-
-    subprocess.run(
-        ["git", "checkout", "branch_a"],
-        cwd=tmp_path,
-        capture_output=True,
-    )
+    # Switch back to branch_a
+    porcelain.switch(temp_repo, "branch_a")
 
     # Set up diverged remote ref
     temp_repo.refs[b"refs/remotes/origin/branch_a"] = sibling_sha
@@ -1331,17 +1324,11 @@ def test_integration_restack_continue_with_real_conflict(
     """Integration test: restack creates conflict, resolve it, then continue."""
     monkeypatch.chdir(tmp_path)
 
-    # Ensure git config is set (needed for CI)
-    subprocess.run(
-        ["git", "config", "user.email", "test@example.com"],
-        cwd=tmp_path,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test User"],
-        cwd=tmp_path,
-        check=True,
-    )
+    # Ensure user identity is set
+    config = temp_repo.get_config()
+    config.set((b"user",), b"email", b"test@example.com")
+    config.set((b"user",), b"name", b"Test User")
+    config.write_to_path()
 
     # Create branch_a from main with a file
     main_sha = temp_repo.refs[b"refs/heads/main"]
@@ -1372,7 +1359,7 @@ def test_integration_restack_continue_with_real_conflict(
 
     # Resolve the conflict manually
     conflict_file.write_text("resolved content")
-    subprocess.run(["git", "add", str(conflict_file)], cwd=tmp_path, check=True)
+    porcelain.add(temp_repo, paths=[str(conflict_file)])
 
     # Continue the restack
     result = runner.invoke(app, ["continue"])
@@ -1389,17 +1376,11 @@ def test_integration_restack_abort_with_real_conflict(
     """Integration test: restack creates conflict, then abort restores state."""
     monkeypatch.chdir(tmp_path)
 
-    # Ensure git config is set (needed for CI)
-    subprocess.run(
-        ["git", "config", "user.email", "test@example.com"],
-        cwd=tmp_path,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test User"],
-        cwd=tmp_path,
-        check=True,
-    )
+    # Ensure user identity is set
+    config = temp_repo.get_config()
+    config.set((b"user",), b"email", b"test@example.com")
+    config.set((b"user",), b"name", b"Test User")
+    config.write_to_path()
 
     # Create branch_a from main with a file
     main_sha = temp_repo.refs[b"refs/heads/main"]

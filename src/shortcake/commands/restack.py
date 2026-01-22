@@ -1,5 +1,5 @@
-import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -141,33 +141,23 @@ class RebaseResult:
     error_output: str = ""
 
 
-def _rebase_branch(
-    repo_path: str, branch: str, onto: str, merge_base: str
-) -> RebaseResult:
+def _rebase_branch(repo: Repo, branch: str, onto: str, merge_base: str) -> RebaseResult:
     """Rebase branch onto target."""
-    result = subprocess.run(
-        ["git", "rebase", "--onto", onto, merge_base, branch],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-    )
-    # Use stderr if available, otherwise fall back to stdout for error info
-    error_output = result.stderr if result.stderr else result.stdout
-    return RebaseResult(
-        success=result.returncode == 0,
-        error_output=error_output,
-    )
+    try:
+        git.rebase_branch(repo, branch, onto, merge_base)
+        return RebaseResult(success=True)
+    except Exception as e:
+        return RebaseResult(success=False, error_output=str(e))
 
 
-def _get_conflict_files(repo_path: str) -> list[str]:
+def _get_conflict_files(repo: Repo | str) -> list[str]:
     """Get list of files with conflicts."""
-    result = subprocess.run(
-        ["git", "diff", "--name-only", "--diff-filter=U"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout.strip().split("\n") if result.stdout.strip() else []
+    try:
+        if isinstance(repo, Repo):
+            return git.get_conflict_files(repo)
+        return git.get_conflict_files(git.open_repo(Path(repo)))
+    except Exception:
+        return []
 
 
 def _show_conflict_message(branch: str, onto: str, conflict_files: list[str]) -> None:
@@ -277,8 +267,6 @@ def _restack(repo: Repo, dry_run: bool = False, sync: bool = False) -> RestackRe
 
     Raises RestackError on failure, returns RestackResult on success.
     """
-    repo_path = repo.path
-
     # Check preconditions
     current_branch = git.get_current_branch(repo)
     if current_branch is None:
@@ -371,12 +359,12 @@ def _restack(repo: Repo, dry_run: bool = False, sync: bool = False) -> RestackRe
         state.save(repo)
 
         typer.echo(f"Rebasing '{step.branch}' onto '{step.onto}'...")
-        result = _rebase_branch(repo_path, step.branch, step.onto, step.merge_base)
+        result = _rebase_branch(repo, step.branch, step.onto, step.merge_base)
 
         if not result.success:
             # Check if this is a conflict or other error
             if git.is_rebase_in_progress(repo):
-                conflict_files = _get_conflict_files(repo_path)
+                conflict_files = _get_conflict_files(repo)
                 _show_conflict_message(step.branch, step.onto, conflict_files)
             else:
                 _show_rebase_error(step.branch, step.onto, result.error_output)
@@ -390,7 +378,7 @@ def _restack(repo: Repo, dry_run: bool = False, sync: bool = False) -> RestackRe
     state.delete(repo)
 
     # Return to original branch
-    git.switch_branch(repo, current_branch)
+    git.switch_branch(repo, current_branch, force=True)
 
     return RestackResult(restacked_branches=restacked)
 

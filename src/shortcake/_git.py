@@ -1,3 +1,4 @@
+import inspect
 import subprocess
 import time
 from pathlib import Path
@@ -104,9 +105,9 @@ def set_head_to_branch(repo: Repo, branch: str) -> None:
     repo.refs.set_symbolic_ref(b"HEAD", f"refs/heads/{branch}".encode())
 
 
-def switch_branch(repo: Repo, branch: str) -> None:
+def switch_branch(repo: Repo, branch: str, force: bool = False) -> None:
     """Switch to branch, updating working directory and index."""
-    porcelain.switch(repo, branch)
+    porcelain.switch(repo, branch, force=force)
 
 
 def has_staged_changes(repo: Repo) -> bool:
@@ -257,10 +258,286 @@ def get_merge_base(repo: Repo, commit1: bytes, commit2: bytes) -> bytes | None:
     return bases[0] if bases else None
 
 
+def get_rebase_commits(
+    repo: Repo, head: bytes | str, merge_base: bytes | str
+) -> list[bytes]:
+    """Get commits to rebase in chronological order (oldest first)."""
+    head_bytes = head.encode() if isinstance(head, str) else head
+    merge_base_bytes = (
+        merge_base.encode() if isinstance(merge_base, str) else merge_base
+    )
+
+    if head_bytes == merge_base_bytes:
+        return []
+
+    commits: list[bytes] = []
+    current = repo[head_bytes]
+    while current.id != merge_base_bytes:
+        commits.append(current.id)
+        if not current.parents:
+            break
+        current = repo[current.parents[0]]
+
+    return list(reversed(commits))
+
+
 def is_rebase_in_progress(repo: Repo) -> bool:
     """Check if git rebase is in progress."""
     git_dir = Path(repo.controldir())
-    return (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists()
+    return (
+        (git_dir / "rebase-merge").exists()
+        or (git_dir / "rebase-apply").exists()
+        or (git_dir / "CHERRY_PICK_HEAD").exists()
+    )
+
+
+def get_cherry_pick_head(repo: Repo) -> bytes | None:
+    """Return current CHERRY_PICK_HEAD, if any."""
+    head_path = Path(repo.controldir()) / "CHERRY_PICK_HEAD"
+    if not head_path.exists():
+        return None
+    data = head_path.read_bytes().strip()
+    return data or None
+
+
+class RebaseFailure(RuntimeError):
+    """Raised when a dulwich rebase operation fails."""
+
+
+def _decode_path(path: object) -> str:
+    if isinstance(path, bytes):
+        return path.decode()
+    return str(path)
+
+
+def _normalize_paths(value: object) -> list[str]:
+    paths: list[str] = []
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        for sub in value.values():
+            paths.extend(_normalize_paths(sub))
+    elif isinstance(value, list | tuple | set):
+        for sub in value:
+            paths.extend(_normalize_paths(sub))
+    else:
+        paths.append(_decode_path(value))
+    return sorted({p for p in paths if p})
+
+
+def _porcelain_rebase_start(
+    repo: Repo, upstream: str, onto: str | None, branch: str | None
+) -> None:
+    if not hasattr(porcelain, "rebase"):
+        raise RebaseFailure("Dulwich rebase is unavailable in this version.")
+    rebase_fn = porcelain.rebase
+    try:
+        sig = inspect.signature(rebase_fn)
+        params = sig.parameters
+    except (TypeError, ValueError):
+        params = {}
+
+    kwargs: dict[str, object] = {}
+    if "upstream" in params:
+        kwargs["upstream"] = upstream
+    elif "upstream_ref" in params:
+        kwargs["upstream_ref"] = upstream
+
+    if onto is not None:
+        if "onto" in params:
+            kwargs["onto"] = onto
+        elif "onto_name" in params:
+            kwargs["onto_name"] = onto
+        elif params:
+            raise RebaseFailure(
+                "Dulwich rebase does not support --onto in this version."
+            )
+
+    if branch is not None:
+        if "branch" in params:
+            kwargs["branch"] = branch
+        elif "branch_name" in params:
+            kwargs["branch_name"] = branch
+        else:
+            if get_current_branch(repo) != branch:
+                switch_branch(repo, branch)
+
+    try:
+        if "upstream" in params or "upstream_ref" in params:
+            rebase_fn(repo, **kwargs)
+            return
+        if onto is not None:
+            rebase_fn(repo, upstream, onto, **kwargs)
+        else:
+            rebase_fn(repo, upstream, **kwargs)
+    except TypeError as e:  # pragma: no cover - version-dependent fallback
+        raise RebaseFailure(str(e) or "Dulwich rebase failed") from e
+
+
+def _porcelain_rebase_control(
+    repo: Repo, *, abort: bool, continue_rebase: bool
+) -> None:
+    if abort and continue_rebase:
+        raise RebaseFailure("Cannot abort and continue a rebase at the same time.")
+
+    if abort and hasattr(porcelain, "rebase_abort"):
+        porcelain.rebase_abort(repo)
+        return
+    if continue_rebase and hasattr(porcelain, "rebase_continue"):
+        porcelain.rebase_continue(repo)
+        return
+
+    if not hasattr(porcelain, "rebase"):
+        raise RebaseFailure("Dulwich rebase is unavailable in this version.")
+
+    rebase_fn = porcelain.rebase
+    try:
+        sig = inspect.signature(rebase_fn)
+        params = sig.parameters
+    except (TypeError, ValueError):
+        params = {}
+
+    kwargs: dict[str, object] = {}
+    if abort:
+        if "abort" in params:
+            kwargs["abort"] = True
+        elif "abort_rebase" in params:
+            kwargs["abort_rebase"] = True
+        else:
+            raise RebaseFailure("Dulwich rebase abort is unavailable in this version.")
+    if continue_rebase:
+        if "continue_rebase" in params:
+            kwargs["continue_rebase"] = True
+        elif "continue_" in params:
+            kwargs["continue_"] = True
+        elif "continue" in params:
+            kwargs["continue"] = True
+        else:
+            raise RebaseFailure(
+                "Dulwich rebase continue is unavailable in this version."
+            )
+
+    rebase_fn(repo, **kwargs)
+
+
+def rebase_branch(repo: Repo, branch: str, onto: str, upstream: str) -> None:
+    """Rebase branch onto target using dulwich cherry-pick."""
+    try:
+        head = get_branch_head(repo, branch)
+        commits = get_rebase_commits(repo, head, upstream)
+        switch_branch(repo, branch)
+        porcelain.reset(repo, mode="hard", treeish=onto)
+        for commit in commits:
+            porcelain.cherry_pick(repo, commit)
+    except Exception as e:
+        raise RebaseFailure(str(e) or "Dulwich rebase failed") from e
+
+
+def rebase_continue(repo: Repo) -> None:
+    """Continue an in-progress rebase using dulwich."""
+    try:
+        if get_cherry_pick_head(repo) is not None:
+            porcelain.cherry_pick(repo, None, continue_=True)
+        else:
+            _porcelain_rebase_control(repo, abort=False, continue_rebase=True)
+    except Exception as e:
+        raise RebaseFailure(str(e) or "Dulwich rebase continue failed") from e
+
+
+def rebase_abort(repo: Repo) -> None:
+    """Abort an in-progress rebase using dulwich."""
+    try:
+        if get_cherry_pick_head(repo) is not None:
+            porcelain.cherry_pick(repo, None, abort=True)
+        else:
+            _porcelain_rebase_control(repo, abort=True, continue_rebase=False)
+    except Exception as e:
+        raise RebaseFailure(str(e) or "Dulwich rebase abort failed") from e
+
+
+def cherry_pick(repo: Repo, commit: bytes) -> None:
+    """Cherry-pick a commit onto the current branch."""
+    porcelain.cherry_pick(repo, commit)
+
+
+def get_conflict_files(repo: Repo) -> list[str]:
+    """Best-effort list of conflict files for an in-progress merge/rebase."""
+    try:
+        status = porcelain.status(repo)
+    except Exception:
+        status = None
+
+    if status is not None:
+        for attr in ("unmerged", "conflicted", "conflicts"):
+            if hasattr(status, attr):
+                paths = _normalize_paths(getattr(status, attr))
+                if paths:
+                    return paths
+        staged = getattr(status, "staged", None)
+        unstaged = getattr(status, "unstaged", None)
+        for container in (staged, unstaged):
+            if isinstance(container, dict):
+                for key in ("unmerged", "conflicted", "conflicts"):
+                    if key in container:
+                        paths = _normalize_paths(container[key])
+                        if paths:
+                            return paths
+        if unstaged:
+            paths = _normalize_paths(unstaged)
+            if paths:
+                return paths
+
+    try:
+        index = repo.open_index()
+    except Exception:
+        return []
+
+    for method_name in ("iterconflicts", "conflicts"):
+        method = getattr(index, method_name, None)
+        if callable(method):
+            try:
+                conflicts = method()
+            except TypeError:
+                continue
+            paths = set()
+            for item in conflicts:
+                if isinstance(item, tuple):
+                    paths.add(_decode_path(item[0]))
+                else:
+                    paths.add(_decode_path(item))
+            if paths:
+                return sorted(paths)
+
+    items = None
+    items_fn = getattr(index, "items", None)
+    if callable(items_fn):
+        items = items_fn()
+    else:
+        items_fn = getattr(index, "iteritems", None)
+        if callable(items_fn):
+            items = items_fn()
+
+    if items is None:
+        return []
+
+    paths = set()
+    for item in items:
+        try:
+            key, entry = item
+        except (TypeError, ValueError):
+            continue
+        path = key
+        stage = None
+        if isinstance(key, tuple) and len(key) == 2 and isinstance(key[1], int):
+            path, stage = key
+        else:
+            flags = getattr(entry, "flags", None)
+            if isinstance(flags, int):
+                stage = (flags >> 12) & 0x3
+        if stage:
+            paths.add(_decode_path(path))
+
+    return sorted(paths)
 
 
 def has_uncommitted_changes(repo: Repo) -> bool:
