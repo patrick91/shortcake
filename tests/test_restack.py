@@ -1792,3 +1792,867 @@ def test_fast_forward_branch_exception(
 
     result = _fast_forward_branch(repo_with_stack, "branch_a")
     assert result is False
+
+
+# ============================================================================
+# Coverage Tests: continue_.py edge cases
+# ============================================================================
+
+
+def test_apply_remaining_commits_commit_not_found(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _apply_remaining_commits when 'after' commit is not in list."""
+    from shortcake.commands.continue_ import _apply_remaining_commits
+
+    branch_a_sha = git.get_branch_head(repo_with_stack, "branch_a")
+    main_sha = git.get_branch_head(repo_with_stack, "main")
+
+    # Use a fake 'after' SHA that won't be found
+    fake_after = b"0" * 40
+
+    result = _apply_remaining_commits(
+        repo_with_stack,
+        "branch_a",
+        main_sha.decode(),
+        branch_a_sha.decode(),
+        fake_after,
+    )
+    # Should start from beginning (start_index=0) since commit not found
+    assert result.success is True
+
+
+def test_apply_remaining_commits_cherry_pick_fails(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _apply_remaining_commits handles cherry-pick failure."""
+    from shortcake.commands.continue_ import _apply_remaining_commits
+
+    # Create branch_a with multiple commits
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+
+    file_a1 = tmp_path / "a1.txt"
+    file_a1.write_text("content 1")
+    porcelain.add(temp_repo, paths=[str(file_a1)])
+    porcelain.commit(temp_repo, message=b"commit 1")
+
+    file_a2 = tmp_path / "a2.txt"
+    file_a2.write_text("content 2")
+    porcelain.add(temp_repo, paths=[str(file_a2)])
+    porcelain.commit(temp_repo, message=b"commit 2")
+    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # Mock cherry_pick to fail
+    def mock_cherry_pick(repo, commit):
+        raise RuntimeError("Cherry-pick failed")
+
+    monkeypatch.setattr(git, "cherry_pick", mock_cherry_pick)
+
+    result = _apply_remaining_commits(
+        temp_repo,
+        "branch_a",
+        main_sha.decode(),
+        branch_a_sha.decode(),
+        None,
+    )
+    assert result.success is False
+    assert "Cherry-pick failed" in (result.error_output or "")
+
+
+def test_continue_apply_remaining_fails_not_rebase(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test continue shows error when apply_remaining fails, no rebase."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create branch_a
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers = Trailers(parent_branch="main")
+    porcelain.commit(temp_repo, message=trailers.apply_to("feat: a").encode())
+    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # Create rebase-merge to simulate rebase in progress
+    rebase_dir = Path(temp_repo.controldir()) / "rebase-merge"
+    rebase_dir.mkdir()
+
+    # Create CHERRY_PICK_HEAD
+    cherry_pick_path = Path(temp_repo.controldir()) / "CHERRY_PICK_HEAD"
+    cherry_pick_path.write_bytes(branch_a_sha)
+
+    # Create state
+    state = RestackState(
+        version=STATE_VERSION,
+        original_branch="branch_a",
+        plan=[
+            RestackStep(branch="branch_a", onto="main", merge_base=main_sha.decode()),
+        ],
+        current_index=0,
+        original_refs={
+            "branch_a": branch_a_sha.decode(),
+        },
+    )
+    state.save(temp_repo)
+
+    # Mock _continue_rebase to succeed (meaning rebase continued)
+    monkeypatch.setattr(
+        "shortcake.commands.continue_._continue_rebase", lambda repo: True
+    )
+
+    # Mock _apply_remaining_commits to fail without creating rebase state
+    def mock_apply(repo, branch, merge_base, original_head, after):
+        from shortcake.commands.restack import RebaseResult
+
+        return RebaseResult(success=False, error_output="Some error")
+
+    monkeypatch.setattr(
+        "shortcake.commands.continue_._apply_remaining_commits", mock_apply
+    )
+
+    # Make sure is_rebase_in_progress returns False after mocked apply
+    call_count = [0]
+
+    def mock_is_rebase(repo):
+        call_count[0] += 1
+        # First call - in progress, after - not in progress
+        return call_count[0] == 1
+
+    monkeypatch.setattr(git, "is_rebase_in_progress", mock_is_rebase)
+
+    result = runner.invoke(app, ["continue"])
+
+    # Should show error (not conflict message)
+    assert result.exit_code == 1
+    assert "Failed to rebase" in result.output or "error" in result.output.lower()
+
+
+def test_continue_remaining_branch_rebase_not_conflict(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test continue handles rebase error (not conflict) in remaining branches."""
+    monkeypatch.chdir(tmp_path)
+
+    branch_a_sha = git.get_branch_head(repo_with_stack, "branch_a")
+    branch_b_sha = git.get_branch_head(repo_with_stack, "branch_b")
+    main_sha = git.get_branch_head(repo_with_stack, "main")
+
+    # Create state with multiple branches - start at index 0 which is already done
+    state = RestackState(
+        version=STATE_VERSION,
+        original_branch="branch_b",
+        plan=[
+            RestackStep(
+                branch="branch_a",
+                onto="main",
+                merge_base=main_sha.decode(),
+            ),
+            RestackStep(
+                branch="branch_b",
+                onto="branch_a",
+                merge_base=branch_a_sha.decode(),
+            ),
+        ],
+        current_index=0,
+        original_refs={
+            "branch_a": branch_a_sha.decode(),
+            "branch_b": branch_b_sha.decode(),
+        },
+    )
+    state.save(repo_with_stack)
+
+    # Mock _rebase_branch to fail without conflict
+    def mock_rebase(repo, branch, onto, merge_base):
+        from shortcake.commands.restack import RebaseResult
+
+        return RebaseResult(success=False, error_output="fatal: error")
+
+    monkeypatch.setattr("shortcake.commands.continue_._rebase_branch", mock_rebase)
+    # Also mock is_rebase_in_progress to return False (not a conflict)
+    monkeypatch.setattr(
+        "shortcake.commands.continue_.git.is_rebase_in_progress", lambda repo: False
+    )
+
+    result = runner.invoke(app, ["continue"])
+
+    assert result.exit_code == 1
+    # Should show the error message
+    assert "Failed to rebase" in result.output
+
+
+# ============================================================================
+# Coverage Tests: _porcelain_rebase functions
+# ============================================================================
+
+
+def test_porcelain_rebase_control_both_flags() -> None:
+    """Test _porcelain_rebase_control raises when both abort and continue."""
+    from shortcake._git import RebaseFailure, _porcelain_rebase_control
+
+    with pytest.raises(RebaseFailure, match="Cannot abort and continue"):
+        _porcelain_rebase_control(None, abort=True, continue_rebase=True)
+
+
+def test_porcelain_rebase_start_no_rebase_function(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_start raises when dulwich has no rebase."""
+    from shortcake._git import RebaseFailure, _porcelain_rebase_start
+
+    # Remove rebase function
+    monkeypatch.delattr(porcelain, "rebase", raising=False)
+
+    with pytest.raises(RebaseFailure, match="unavailable"):
+        _porcelain_rebase_start(temp_repo, "main", None, None)
+
+
+def test_porcelain_rebase_control_no_rebase_function(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_control raises when dulwich has no rebase."""
+    from shortcake._git import RebaseFailure, _porcelain_rebase_control
+
+    # Remove rebase functions
+    monkeypatch.delattr(porcelain, "rebase", raising=False)
+    monkeypatch.delattr(porcelain, "rebase_abort", raising=False)
+    monkeypatch.delattr(porcelain, "rebase_continue", raising=False)
+
+    with pytest.raises(RebaseFailure, match="unavailable"):
+        _porcelain_rebase_control(temp_repo, abort=True, continue_rebase=False)
+
+
+def test_porcelain_rebase_control_uses_rebase_abort(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_control uses rebase_abort if available."""
+    from shortcake._git import _porcelain_rebase_control
+
+    called = [False]
+
+    def mock_rebase_abort(repo):
+        called[0] = True
+
+    monkeypatch.setattr(porcelain, "rebase_abort", mock_rebase_abort, raising=False)
+
+    _porcelain_rebase_control(temp_repo, abort=True, continue_rebase=False)
+    assert called[0] is True
+
+
+def test_porcelain_rebase_control_uses_rebase_continue(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_control uses rebase_continue if available."""
+    from shortcake._git import _porcelain_rebase_control
+
+    called = [False]
+
+    def mock_rebase_continue(repo):
+        called[0] = True
+
+    monkeypatch.setattr(
+        porcelain, "rebase_continue", mock_rebase_continue, raising=False
+    )
+
+    _porcelain_rebase_control(temp_repo, abort=False, continue_rebase=True)
+    assert called[0] is True
+
+
+def test_porcelain_rebase_start_with_upstream_ref_param(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_start with upstream_ref parameter variant."""
+    from shortcake._git import _porcelain_rebase_start
+
+    called_with = [None]
+
+    def mock_rebase(repo, **kwargs):
+        called_with[0] = kwargs
+
+    # Create a mock with upstream_ref parameter
+    import inspect
+
+    mock_rebase.__signature__ = inspect.Signature(
+        parameters=[
+            inspect.Parameter("repo", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("upstream_ref", inspect.Parameter.KEYWORD_ONLY),
+        ]
+    )
+
+    monkeypatch.setattr(porcelain, "rebase", mock_rebase)
+
+    _porcelain_rebase_start(temp_repo, "main", None, None)
+    assert called_with[0] == {"upstream_ref": "main"}
+
+
+def test_porcelain_rebase_start_with_onto_name_param(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_start with onto_name parameter variant."""
+    from shortcake._git import _porcelain_rebase_start
+
+    called_with = [None]
+
+    def mock_rebase(repo, **kwargs):
+        called_with[0] = kwargs
+
+    import inspect
+
+    mock_rebase.__signature__ = inspect.Signature(
+        parameters=[
+            inspect.Parameter("repo", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("upstream", inspect.Parameter.KEYWORD_ONLY),
+            inspect.Parameter("onto_name", inspect.Parameter.KEYWORD_ONLY),
+        ]
+    )
+
+    monkeypatch.setattr(porcelain, "rebase", mock_rebase)
+
+    _porcelain_rebase_start(temp_repo, "main", "target", None)
+    assert called_with[0] == {"upstream": "main", "onto_name": "target"}
+
+
+def test_porcelain_rebase_start_with_branch_name_param(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_start with branch_name parameter variant."""
+    from shortcake._git import _porcelain_rebase_start
+
+    called_with = [None]
+
+    def mock_rebase(repo, **kwargs):
+        called_with[0] = kwargs
+
+    import inspect
+
+    mock_rebase.__signature__ = inspect.Signature(
+        parameters=[
+            inspect.Parameter("repo", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("upstream", inspect.Parameter.KEYWORD_ONLY),
+            inspect.Parameter("branch_name", inspect.Parameter.KEYWORD_ONLY),
+        ]
+    )
+
+    monkeypatch.setattr(porcelain, "rebase", mock_rebase)
+
+    _porcelain_rebase_start(temp_repo, "main", None, "feature")
+    assert called_with[0] == {"upstream": "main", "branch_name": "feature"}
+
+
+def test_porcelain_rebase_start_switches_branch(
+    repo_with_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_start switches branch when needed."""
+    from shortcake._git import _porcelain_rebase_start
+
+    # Start on feature branch
+    assert git.get_current_branch(repo_with_feature) == "feature"
+
+    called = [False]
+
+    def mock_rebase(repo, **kwargs):
+        called[0] = True
+
+    import inspect
+
+    # Signature without branch parameter
+    mock_rebase.__signature__ = inspect.Signature(
+        parameters=[
+            inspect.Parameter("repo", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("upstream", inspect.Parameter.KEYWORD_ONLY),
+        ]
+    )
+
+    monkeypatch.setattr(porcelain, "rebase", mock_rebase)
+
+    # Request rebase on main (different from current)
+    _porcelain_rebase_start(repo_with_feature, "feature", None, "main")
+
+    # Should have switched to main
+    assert git.get_current_branch(repo_with_feature) == "main"
+    assert called[0] is True
+
+
+def test_porcelain_rebase_start_positional_args(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_start with positional argument style (no kwargs)."""
+    from shortcake._git import _porcelain_rebase_start
+
+    called_with = [None]
+
+    def mock_rebase(repo, upstream, onto=None, **kwargs):
+        called_with[0] = {"upstream": upstream, "onto": onto}
+
+    import inspect
+
+    # Signature with positional-only onto parameter (no upstream/onto keyword)
+    mock_rebase.__signature__ = inspect.Signature(
+        parameters=[
+            inspect.Parameter("repo", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("upstream", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("onto", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ]
+    )
+
+    monkeypatch.setattr(porcelain, "rebase", mock_rebase)
+
+    _porcelain_rebase_start(temp_repo, "main", "target", None)
+    # The function detects 'onto' in params and adds it as keyword arg
+    assert called_with[0] == {"upstream": "main", "onto": "target"}
+
+
+def test_porcelain_rebase_control_abort_param_variants(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_control with different abort parameter names."""
+    from shortcake._git import _porcelain_rebase_control
+
+    # Remove dedicated functions
+    monkeypatch.delattr(porcelain, "rebase_abort", raising=False)
+    monkeypatch.delattr(porcelain, "rebase_continue", raising=False)
+
+    called_with = [None]
+
+    def mock_rebase(repo, **kwargs):
+        called_with[0] = kwargs
+
+    import inspect
+
+    mock_rebase.__signature__ = inspect.Signature(
+        parameters=[
+            inspect.Parameter("repo", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("abort_rebase", inspect.Parameter.KEYWORD_ONLY),
+        ]
+    )
+
+    monkeypatch.setattr(porcelain, "rebase", mock_rebase)
+
+    _porcelain_rebase_control(temp_repo, abort=True, continue_rebase=False)
+    assert called_with[0] == {"abort_rebase": True}
+
+
+def test_porcelain_rebase_control_continue_param_variants(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_control with different continue parameter names."""
+    from shortcake._git import _porcelain_rebase_control
+
+    # Remove dedicated functions
+    monkeypatch.delattr(porcelain, "rebase_abort", raising=False)
+    monkeypatch.delattr(porcelain, "rebase_continue", raising=False)
+
+    called_with = [None]
+
+    def mock_rebase(repo, **kwargs):
+        called_with[0] = kwargs
+
+    import inspect
+
+    mock_rebase.__signature__ = inspect.Signature(
+        parameters=[
+            inspect.Parameter("repo", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("continue_", inspect.Parameter.KEYWORD_ONLY),
+        ]
+    )
+
+    monkeypatch.setattr(porcelain, "rebase", mock_rebase)
+
+    _porcelain_rebase_control(temp_repo, abort=False, continue_rebase=True)
+    assert called_with[0] == {"continue_": True}
+
+
+def test_porcelain_rebase_control_no_continue_param(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_control raises when no continue param available."""
+    from shortcake._git import RebaseFailure, _porcelain_rebase_control
+
+    # Remove dedicated functions
+    monkeypatch.delattr(porcelain, "rebase_abort", raising=False)
+    monkeypatch.delattr(porcelain, "rebase_continue", raising=False)
+
+    def mock_rebase(repo, **kwargs):
+        pass
+
+    import inspect
+
+    # No continue parameter at all
+    mock_rebase.__signature__ = inspect.Signature(
+        parameters=[
+            inspect.Parameter("repo", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ]
+    )
+
+    monkeypatch.setattr(porcelain, "rebase", mock_rebase)
+
+    with pytest.raises(RebaseFailure, match="continue is unavailable"):
+        _porcelain_rebase_control(temp_repo, abort=False, continue_rebase=True)
+
+
+def test_porcelain_rebase_control_no_abort_param(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_control raises when no abort param available."""
+    from shortcake._git import RebaseFailure, _porcelain_rebase_control
+
+    # Remove dedicated functions
+    monkeypatch.delattr(porcelain, "rebase_abort", raising=False)
+    monkeypatch.delattr(porcelain, "rebase_continue", raising=False)
+
+    def mock_rebase(repo, **kwargs):
+        pass
+
+    import inspect
+
+    # No abort parameter at all
+    mock_rebase.__signature__ = inspect.Signature(
+        parameters=[
+            inspect.Parameter("repo", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ]
+    )
+
+    monkeypatch.setattr(porcelain, "rebase", mock_rebase)
+
+    with pytest.raises(RebaseFailure, match="abort is unavailable"):
+        _porcelain_rebase_control(temp_repo, abort=True, continue_rebase=False)
+
+
+def test_porcelain_rebase_start_onto_not_supported(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_start raises when onto not supported."""
+    from shortcake._git import RebaseFailure, _porcelain_rebase_start
+
+    def mock_rebase(repo, **kwargs):
+        pass
+
+    import inspect
+
+    # Has upstream but no onto parameter
+    mock_rebase.__signature__ = inspect.Signature(
+        parameters=[
+            inspect.Parameter("repo", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("upstream", inspect.Parameter.KEYWORD_ONLY),
+        ]
+    )
+
+    monkeypatch.setattr(porcelain, "rebase", mock_rebase)
+
+    with pytest.raises(RebaseFailure, match="does not support --onto"):
+        _porcelain_rebase_start(temp_repo, "main", "target", None)
+
+
+def test_porcelain_rebase_control_signature_error(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_control handles signature inspection error."""
+    from shortcake._git import RebaseFailure, _porcelain_rebase_control
+
+    # Remove dedicated functions
+    monkeypatch.delattr(porcelain, "rebase_abort", raising=False)
+    monkeypatch.delattr(porcelain, "rebase_continue", raising=False)
+
+    # Create a callable that raises on signature inspection
+    class BadCallable:
+        def __call__(self, *args, **kwargs):
+            pass
+
+    monkeypatch.setattr(porcelain, "rebase", BadCallable())
+
+    # Should fail to find the right parameters
+    with pytest.raises(RebaseFailure):
+        _porcelain_rebase_control(temp_repo, abort=True, continue_rebase=False)
+
+
+def test_porcelain_rebase_start_signature_error(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_start handles signature inspection error."""
+    from shortcake._git import _porcelain_rebase_start
+
+    called = [False]
+
+    # Create a callable that fails signature inspection (params will be {})
+    class BadCallable:
+        def __call__(self, repo, upstream, *args, **kwargs):
+            called[0] = True
+
+    monkeypatch.setattr(porcelain, "rebase", BadCallable())
+
+    # Should call without kwargs since params is empty
+    _porcelain_rebase_start(temp_repo, "main", None, None)
+    assert called[0] is True
+
+
+def test_porcelain_rebase_start_with_branch_param(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_start with branch parameter."""
+    from shortcake._git import _porcelain_rebase_start
+
+    called_with = [None]
+
+    def mock_rebase(repo, **kwargs):
+        called_with[0] = kwargs
+
+    import inspect
+
+    mock_rebase.__signature__ = inspect.Signature(
+        parameters=[
+            inspect.Parameter("repo", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("upstream", inspect.Parameter.KEYWORD_ONLY),
+            inspect.Parameter("branch", inspect.Parameter.KEYWORD_ONLY),
+        ]
+    )
+
+    monkeypatch.setattr(porcelain, "rebase", mock_rebase)
+
+    _porcelain_rebase_start(temp_repo, "main", None, "feature")
+    assert called_with[0] == {"upstream": "main", "branch": "feature"}
+
+
+def test_porcelain_rebase_start_positional_no_onto(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_start calls positional style without onto."""
+    from shortcake._git import _porcelain_rebase_start
+
+    called_with = [None]
+
+    def mock_rebase(repo, upstream, **kwargs):
+        called_with[0] = {"upstream": upstream, "kwargs": kwargs}
+
+    import inspect
+
+    # Signature without upstream/onto keywords - positional calling style
+    mock_rebase.__signature__ = inspect.Signature(
+        parameters=[
+            inspect.Parameter("repo", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("upstream", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ]
+    )
+
+    monkeypatch.setattr(porcelain, "rebase", mock_rebase)
+
+    _porcelain_rebase_start(temp_repo, "main", None, None)
+    assert called_with[0] == {"upstream": "main", "kwargs": {}}
+
+
+def test_porcelain_rebase_start_positional_with_onto(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_start calls positional style with onto."""
+    from shortcake._git import _porcelain_rebase_start
+
+    called_with = [None]
+
+    def mock_rebase(repo, upstream, onto, **kwargs):
+        called_with[0] = {"upstream": upstream, "onto": onto, "kwargs": kwargs}
+
+    import inspect
+
+    # Signature without upstream keyword but with positional onto
+    mock_rebase.__signature__ = inspect.Signature(
+        parameters=[
+            inspect.Parameter("repo", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("upstream", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+            inspect.Parameter("onto", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        ]
+    )
+
+    monkeypatch.setattr(porcelain, "rebase", mock_rebase)
+
+    _porcelain_rebase_start(temp_repo, "main", "target", None)
+    # The function detects 'onto' in params and uses keyword style
+    assert called_with[0]["upstream"] == "main"
+    assert called_with[0]["onto"] == "target"
+
+
+def test_porcelain_rebase_control_continue_keyword(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _porcelain_rebase_control with 'continue' parameter (Python reserved)."""
+    from shortcake._git import _porcelain_rebase_control
+
+    # Remove dedicated functions
+    monkeypatch.delattr(porcelain, "rebase_abort", raising=False)
+    monkeypatch.delattr(porcelain, "rebase_continue", raising=False)
+
+    called_with = [None]
+
+    def mock_rebase(repo, **kwargs):
+        called_with[0] = kwargs
+
+    import inspect
+
+    # Use 'continue' as parameter name (Python reserved word, but valid in signature)
+    params = [
+        inspect.Parameter("repo", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+    ]
+    # Can't actually add 'continue' as a parameter name in Python
+    # Instead test with the actual code path that checks for it
+
+    mock_rebase.__signature__ = inspect.Signature(parameters=params)
+
+    monkeypatch.setattr(porcelain, "rebase", mock_rebase)
+
+    # Will fail because no continue param available
+    from shortcake._git import RebaseFailure
+
+    with pytest.raises(RebaseFailure, match="continue is unavailable"):
+        _porcelain_rebase_control(temp_repo, abort=False, continue_rebase=True)
+
+
+def test_continue_apply_remaining_fails_with_conflict(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test continue shows conflict message when apply_remaining fails with conflict."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create branch_a
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers = Trailers(parent_branch="main")
+    porcelain.commit(temp_repo, message=trailers.apply_to("feat: a").encode())
+    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # Create rebase-merge directory to simulate rebase in progress
+    rebase_dir = Path(temp_repo.controldir()) / "rebase-merge"
+    rebase_dir.mkdir()
+
+    # Create CHERRY_PICK_HEAD
+    cherry_pick_path = Path(temp_repo.controldir()) / "CHERRY_PICK_HEAD"
+    cherry_pick_path.write_bytes(branch_a_sha)
+
+    # Create state
+    state = RestackState(
+        version=STATE_VERSION,
+        original_branch="branch_a",
+        plan=[
+            RestackStep(branch="branch_a", onto="main", merge_base=main_sha.decode()),
+        ],
+        current_index=0,
+        original_refs={
+            "branch_a": branch_a_sha.decode(),
+        },
+    )
+    state.save(temp_repo)
+
+    # Mock _continue_rebase to succeed (meaning rebase continued)
+    monkeypatch.setattr(
+        "shortcake.commands.continue_._continue_rebase", lambda repo: True
+    )
+
+    # Mock _apply_remaining_commits to fail
+    def mock_apply(repo, branch, merge_base, original_head, after):
+        from shortcake.commands.restack import RebaseResult
+
+        return RebaseResult(success=False, error_output="Conflict")
+
+    monkeypatch.setattr(
+        "shortcake.commands.continue_._apply_remaining_commits", mock_apply
+    )
+
+    # Keep is_rebase_in_progress returning True (conflict state)
+    monkeypatch.setattr(
+        "shortcake.commands.continue_.git.is_rebase_in_progress", lambda repo: True
+    )
+
+    result = runner.invoke(app, ["continue"])
+
+    # Should show conflict message
+    assert result.exit_code == 1
+    assert "Conflict" in result.output
+
+
+def test_continue_remaining_branch_conflict(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test continue shows conflict message when remaining branch hits conflict."""
+    from shortcake.commands import continue_ as continue_module
+
+    monkeypatch.chdir(tmp_path)
+
+    branch_a_sha = git.get_branch_head(repo_with_stack, "branch_a")
+    branch_b_sha = git.get_branch_head(repo_with_stack, "branch_b")
+    main_sha = git.get_branch_head(repo_with_stack, "main")
+
+    # Create state with multiple branches - start at index 0 which is already done
+    state = RestackState(
+        version=STATE_VERSION,
+        original_branch="branch_b",
+        plan=[
+            RestackStep(
+                branch="branch_a",
+                onto="main",
+                merge_base=main_sha.decode(),
+            ),
+            RestackStep(
+                branch="branch_b",
+                onto="branch_a",
+                merge_base=branch_a_sha.decode(),
+            ),
+        ],
+        current_index=0,
+        original_refs={
+            "branch_a": branch_a_sha.decode(),
+            "branch_b": branch_b_sha.decode(),
+        },
+    )
+    state.save(repo_with_stack)
+
+    # Track if we got to the loop
+    rebase_called = [False]
+
+    # Mock _rebase_branch to fail with conflict on branch_b
+    def mock_rebase(repo, branch, onto, merge_base):
+        from shortcake.commands.restack import RebaseResult
+
+        rebase_called[0] = True
+        # branch_b will fail with conflict
+        return RebaseResult(success=False, error_output="")
+
+    # Patch directly on the module object
+    monkeypatch.setattr(continue_module, "_rebase_branch", mock_rebase)
+
+    # Mock _needs_restack to return False (branch is up to date)
+    def mock_needs_restack(repo, branch, onto):
+        return False
+
+    monkeypatch.setattr(continue_module, "_needs_restack", mock_needs_restack)
+
+    # Track calls to is_rebase_in_progress
+    # First call should return False, second call returns True
+    call_count = [0]
+
+    def mock_is_rebase_in_progress(repo):
+        call_count[0] += 1
+        return call_count[0] > 1
+
+    monkeypatch.setattr(
+        continue_module.git, "is_rebase_in_progress", mock_is_rebase_in_progress
+    )
+
+    # Mock _get_conflict_files to return some files
+    def mock_get_conflict_files(path):
+        return ["file.txt"]
+
+    monkeypatch.setattr(continue_module, "_get_conflict_files", mock_get_conflict_files)
+
+    result = runner.invoke(app, ["continue"])
+
+    assert result.exit_code == 1
+    assert rebase_called[0], f"Mock not called. Output: {result.output}"
+    # Should show conflict message with the file
+    assert "Conflict" in result.output or "file.txt" in result.output
