@@ -48,9 +48,7 @@ def _abort(repo: Repo) -> AbortResult:
     # Restore original refs
     restored = []
     for branch, sha_hex in state.original_refs.items():
-        # dulwich expects 40 ASCII hex bytes, not raw SHA bytes
-        sha = sha_hex.encode()
-        git.update_branch(repo, branch, sha)
+        git.update_branch(repo, branch, sha_hex)
         restored.append(branch)
 
     # Clean up state

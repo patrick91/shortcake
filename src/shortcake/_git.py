@@ -77,9 +77,9 @@ def amend_commit_message(repo: Repo, sha: bytes, new_message: str) -> bytes:
     return new_commit.id
 
 
-def update_branch(repo: Repo, branch: str, sha: bytes) -> None:
-    """Update branch to point to commit."""
-    repo.refs[f"refs/heads/{branch}".encode()] = sha
+def update_branch(repo: Repo, branch: str, sha_hex: str) -> None:
+    """Update branch to point to commit (sha_hex is 40-char hex string)."""
+    repo.refs[f"refs/heads/{branch}".encode()] = sha_hex.encode()
 
 
 def get_all_local_branches(repo: Repo) -> list[str]:
