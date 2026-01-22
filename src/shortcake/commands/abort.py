@@ -1,7 +1,8 @@
-import subprocess
 from dataclasses import dataclass
 
 import typer
+from dulwich import porcelain
+from dulwich.porcelain import Error as DulwichError
 from dulwich.repo import Repo
 
 from shortcake import _git as git
@@ -22,15 +23,13 @@ class AbortResult:
     restored_branches: list[str]
 
 
-def _abort_rebase(repo_path: str) -> bool:
+def _abort_rebase(repo: Repo) -> bool:
     """Abort an in-progress rebase. Returns True if successful."""
-    result = subprocess.run(
-        ["git", "rebase", "--abort"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0
+    try:
+        porcelain.rebase(repo, upstream=b"", abort=True)
+        return True
+    except DulwichError:
+        return False
 
 
 def _abort(repo: Repo) -> AbortResult:
@@ -39,8 +38,6 @@ def _abort(repo: Repo) -> AbortResult:
 
     Raises AbortError on failure, returns AbortResult on success.
     """
-    repo_path = repo.path
-
     # Check if restack is in progress
     state = RestackState.load(repo)
     if state is None:
@@ -49,7 +46,7 @@ def _abort(repo: Repo) -> AbortResult:
     # If git rebase is in progress, abort it first
     if git.is_rebase_in_progress(repo):
         typer.echo("Aborting in-progress rebase...")
-        _abort_rebase(repo_path)
+        _abort_rebase(repo)
 
     # Restore original refs
     restored = []

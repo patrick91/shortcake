@@ -44,8 +44,6 @@ def _continue(repo: Repo) -> ContinueResult:
 
     Raises ContinueError on failure, returns ContinueResult on success.
     """
-    repo_path = repo.path
-
     # Check if restack is in progress
     state = RestackState.load(repo)
     if state is None:
@@ -56,7 +54,7 @@ def _continue(repo: Repo) -> ContinueResult:
         typer.echo("Continuing rebase...")
         if not _continue_rebase(repo):
             # Still has conflicts
-            conflict_files = _get_conflict_files(repo_path)
+            conflict_files = _get_conflict_files(repo.path)
             current_step = state.plan[state.current_index]
             _show_conflict_message(
                 current_step.branch, current_step.onto, conflict_files
@@ -73,10 +71,10 @@ def _continue(repo: Repo) -> ContinueResult:
         state.save(repo)
 
         typer.echo(f"Rebasing '{step.branch}' onto '{step.onto}'...")
-        success = _rebase_branch(repo_path, step.branch, step.onto, step.merge_base)
+        success = _rebase_branch(repo.path, step.branch, step.onto, step.merge_base)
 
         if not success:
-            conflict_files = _get_conflict_files(repo_path)
+            conflict_files = _get_conflict_files(repo.path)
             _show_conflict_message(step.branch, step.onto, conflict_files)
             return ContinueResult(
                 restacked_branches=restacked, conflict_branch=step.branch

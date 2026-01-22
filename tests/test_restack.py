@@ -660,9 +660,9 @@ def test_check_remote_divergence_no_remote(repo_with_stack: Repo) -> None:
     assert diverged == []
 
 
-def test_fetch_remote(tmp_path: Path) -> None:
-    """Test fetch remote - should fail gracefully on non-git directory."""
-    result = _fetch_remote(str(tmp_path))
+def test_fetch_remote(temp_repo: Repo) -> None:
+    """Test fetch remote - should fail gracefully when no remote exists."""
+    result = _fetch_remote(temp_repo)
     assert result is False
 
 
@@ -806,9 +806,10 @@ def test_get_stack_visited_branch(repo_with_fork: Repo) -> None:
     assert len(order) == len(set(order))
 
 
-def test_fast_forward_branch(tmp_path: Path) -> None:
-    """Test fast forward branch - should fail gracefully on non-git directory."""
-    result = _fast_forward_branch(str(tmp_path), "main")
+def test_fast_forward_branch(temp_repo: Repo) -> None:
+    """Test fast forward branch - should fail gracefully when no remote exists."""
+    result = _fast_forward_branch(temp_repo, "main")
+    # Returns False because there's no origin remote to fetch from
     assert result is False
 
 
