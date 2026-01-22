@@ -1,8 +1,7 @@
+import subprocess
 from dataclasses import dataclass
 
 import typer
-from dulwich import porcelain
-from dulwich.porcelain import Error as DulwichError
 from dulwich.repo import Repo
 
 from shortcake import _git as git
@@ -12,6 +11,7 @@ from shortcake.commands.restack import (
     _get_conflict_files,
     _rebase_branch,
     _show_conflict_message,
+    _show_rebase_error,
 )
 
 
@@ -29,13 +29,15 @@ class ContinueResult:
     conflict_branch: str | None = None
 
 
-def _continue_rebase(repo: Repo) -> bool:
+def _continue_rebase(repo_path: str) -> bool:
     """Continue an in-progress rebase. Returns True if successful."""
-    try:
-        porcelain.rebase(repo, upstream=b"", continue_rebase=True)
-        return True
-    except DulwichError:
-        return False
+    result = subprocess.run(
+        ["git", "rebase", "--continue"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
 
 
 def _continue(repo: Repo) -> ContinueResult:
@@ -52,7 +54,7 @@ def _continue(repo: Repo) -> ContinueResult:
     # If git rebase is in progress, continue it first
     if git.is_rebase_in_progress(repo):
         typer.echo("Continuing rebase...")
-        if not _continue_rebase(repo):
+        if not _continue_rebase(repo.path):
             # Still has conflicts
             conflict_files = _get_conflict_files(repo.path)
             current_step = state.plan[state.current_index]
@@ -71,11 +73,15 @@ def _continue(repo: Repo) -> ContinueResult:
         state.save(repo)
 
         typer.echo(f"Rebasing '{step.branch}' onto '{step.onto}'...")
-        success = _rebase_branch(repo.path, step.branch, step.onto, step.merge_base)
+        result = _rebase_branch(repo.path, step.branch, step.onto, step.merge_base)
 
-        if not success:
-            conflict_files = _get_conflict_files(repo.path)
-            _show_conflict_message(step.branch, step.onto, conflict_files)
+        if not result.success:
+            # Check if this is a conflict or other error
+            if git.is_rebase_in_progress(repo):
+                conflict_files = _get_conflict_files(repo.path)
+                _show_conflict_message(step.branch, step.onto, conflict_files)
+            else:
+                _show_rebase_error(step.branch, step.onto, result.error_output)
             return ContinueResult(
                 restacked_branches=restacked, conflict_branch=step.branch
             )

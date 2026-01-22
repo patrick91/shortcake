@@ -1,4 +1,5 @@
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -917,24 +918,24 @@ def test_continue_rebase_in_progress(
 
 def test_continue_rebase_function(temp_repo: Repo) -> None:
     """Test _continue_rebase function directly."""
-    # When no rebase is in progress, dulwich returns success (no-op).
-    # This is fine since _continue_rebase is only called after
+    # When no rebase is in progress, git rebase --continue returns failure.
+    # This is expected since _continue_rebase is only called after
     # checking is_rebase_in_progress.
-    result = _continue_rebase(temp_repo)
-    assert result is True
+    result = _continue_rebase(temp_repo.path)
+    assert result is False  # No rebase in progress = failure
 
 
 def test_continue_rebase_function_error(
     temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test _continue_rebase returns False when dulwich raises an error."""
-    from dulwich.porcelain import Error as DulwichError
+    """Test _continue_rebase returns False when git returns non-zero."""
+    import subprocess
 
-    def mock_rebase(*args, **kwargs):
-        raise DulwichError("Conflict during rebase")
+    def mock_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
 
-    monkeypatch.setattr("dulwich.porcelain.rebase", mock_rebase)
-    result = _continue_rebase(temp_repo)
+    monkeypatch.setattr("subprocess.run", mock_run)
+    result = _continue_rebase(temp_repo.path)
     assert result is False
 
 
@@ -967,30 +968,90 @@ def test_cli_restack_dry_run_shows_branches(
 def test_check_remote_divergence_with_diverged_branch(
     repo_with_stack: Repo, tmp_path: Path
 ) -> None:
-    """Test divergence detection when branch has diverged from remote."""
-    # Create a different commit to use as "remote" state
-    main_sha = git.get_branch_head(repo_with_stack, "main")
+    """Test divergence detection when branch has truly diverged from remote.
 
-    # Set up origin/branch_a pointing to a different commit (main)
-    # This simulates divergence where local and remote have different commits
+    True divergence means both local and remote have commits the other doesn't.
+    """
+    # Create a sibling branch from main (not branch_a)
+    main_sha = git.get_branch_head(repo_with_stack, "main")
+    repo_with_stack.refs[b"refs/heads/sibling"] = main_sha
+    repo_with_stack.refs.set_symbolic_ref(b"HEAD", b"refs/heads/sibling")
+
+    # Create a commit on sibling branch
+    sibling_file = tmp_path / "sibling.txt"
+    sibling_file.write_text("sibling content")
+    porcelain.add(repo_with_stack, paths=[str(sibling_file)])
+    sibling_sha = porcelain.commit(repo_with_stack, message=b"Sibling commit on remote")
+
+    # Switch back to branch_a
+    repo_with_stack.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+
+    # Set up origin/branch_a pointing to sibling commit
+    # Now local branch_a and origin/branch_a have diverged:
+    # - Local branch_a has commits sibling doesn't have
+    # - Sibling has commits branch_a doesn't have
+    repo_with_stack.refs[b"refs/remotes/origin/branch_a"] = sibling_sha
+
+    diverged = _check_remote_divergence(repo_with_stack, ["branch_a"])
+
+    # branch_a should be detected as diverged
+    assert "branch_a" in diverged
+
+
+def test_check_remote_divergence_allows_local_ahead(
+    repo_with_stack: Repo, tmp_path: Path
+) -> None:
+    """Test that local-ahead branches are NOT flagged as diverged."""
+    # Set origin/branch_a to main (which is an ancestor of branch_a)
+    # This simulates "local has unpushed commits" - not true divergence
+    main_sha = git.get_branch_head(repo_with_stack, "main")
     repo_with_stack.refs[b"refs/remotes/origin/branch_a"] = main_sha
 
     diverged = _check_remote_divergence(repo_with_stack, ["branch_a"])
 
-    # branch_a should be detected as diverged since local != remote
-    # and local is not an ancestor of remote
-    assert "branch_a" in diverged
+    # branch_a should NOT be detected as diverged (just local-ahead)
+    assert "branch_a" not in diverged
 
 
 def test_restack_with_diverged_branches(
-    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test restack fails with diverged branches."""
+    """Test restack fails with truly diverged branches."""
     monkeypatch.chdir(tmp_path)
 
+    # Create branch_a with a commit
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+
+    branch_a_file = tmp_path / "branch_a.txt"
+    branch_a_file.write_text("branch_a content")
+    porcelain.add(temp_repo, paths=[str(branch_a_file)])
+    porcelain.commit(
+        temp_repo,
+        message=b"feat: branch_a\n\nShortcake-Parent: main",
+    )
+
+    # Create a sibling branch from main for the "remote" commit
+    temp_repo.refs[b"refs/heads/sibling"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/sibling")
+
+    sibling_file = tmp_path / "sibling.txt"
+    sibling_file.write_text("sibling content")
+    porcelain.add(temp_repo, paths=[str(sibling_file)])
+    sibling_sha = porcelain.commit(temp_repo, message=b"Sibling commit on remote")
+
+    # Use git checkout to properly switch back to branch_a
+    import subprocess
+
+    subprocess.run(
+        ["git", "checkout", "branch_a"],
+        cwd=tmp_path,
+        capture_output=True,
+    )
+
     # Set up diverged remote ref
-    main_sha = git.get_branch_head(repo_with_stack, "main")
-    repo_with_stack.refs[b"refs/remotes/origin/branch_a"] = main_sha
+    temp_repo.refs[b"refs/remotes/origin/branch_a"] = sibling_sha
 
     result = runner.invoke(app, ["restack"])
 
@@ -1098,3 +1159,95 @@ def test_continue_conflict_in_remaining_branch(
     assert result.exit_code == 1
     # Should show conflict message
     assert "conflict" in result.output.lower() or "branch_b" in result.output
+
+
+def test_integration_restack_continue_with_real_conflict(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Integration test: restack creates conflict, resolve it, then continue."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create branch_a from main with a file
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+
+    conflict_file = tmp_path / "conflict.txt"
+    conflict_file.write_text("branch_a content")
+    porcelain.add(temp_repo, paths=[str(conflict_file)])
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: branch a")
+    porcelain.commit(temp_repo, message=message.encode())
+
+    # Add conflicting commit to main
+    porcelain.switch(temp_repo, "main")
+    conflict_file.write_text("main content - different!")
+    porcelain.add(temp_repo, paths=[str(conflict_file)])
+    porcelain.commit(temp_repo, message=b"chore: conflicting change on main")
+
+    # Switch back to branch_a and run restack (will hit conflict)
+    porcelain.switch(temp_repo, "branch_a")
+    result = runner.invoke(app, ["restack"])
+    assert result.exit_code == 1
+    assert "conflict" in result.output.lower()
+
+    # Verify rebase is in progress
+    assert git.is_rebase_in_progress(temp_repo)
+
+    # Resolve the conflict manually
+    conflict_file.write_text("resolved content")
+    subprocess.run(["git", "add", str(conflict_file)], cwd=tmp_path, check=True)
+
+    # Continue the restack
+    result = runner.invoke(app, ["continue"])
+    assert result.exit_code == 0
+    assert "completed" in result.output.lower()
+
+    # Verify rebase is no longer in progress
+    assert not git.is_rebase_in_progress(temp_repo)
+
+
+def test_integration_restack_abort_with_real_conflict(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Integration test: restack creates conflict, then abort restores state."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create branch_a from main with a file
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+
+    conflict_file = tmp_path / "conflict.txt"
+    conflict_file.write_text("branch_a content")
+    porcelain.add(temp_repo, paths=[str(conflict_file)])
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: branch a")
+    porcelain.commit(temp_repo, message=message.encode())
+    original_branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # Add conflicting commit to main
+    porcelain.switch(temp_repo, "main")
+    conflict_file.write_text("main content - different!")
+    porcelain.add(temp_repo, paths=[str(conflict_file)])
+    porcelain.commit(temp_repo, message=b"chore: conflicting change on main")
+
+    # Switch back to branch_a and run restack (will hit conflict)
+    porcelain.switch(temp_repo, "branch_a")
+    result = runner.invoke(app, ["restack"])
+    assert result.exit_code == 1
+    assert "conflict" in result.output.lower()
+
+    # Verify rebase is in progress
+    assert git.is_rebase_in_progress(temp_repo)
+
+    # Abort the restack
+    result = runner.invoke(app, ["abort"])
+    assert result.exit_code == 0
+    assert "aborted" in result.output.lower()
+
+    # Verify rebase is no longer in progress
+    assert not git.is_rebase_in_progress(temp_repo)
+
+    # Verify branch_a was restored to original SHA
+    assert temp_repo.refs[b"refs/heads/branch_a"] == original_branch_a_sha
