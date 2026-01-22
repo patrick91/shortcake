@@ -108,7 +108,7 @@ def _adopt(
         new_sha = _replay_commits(repo, commits[:-1], new_sha)
 
     # Update branch ref
-    git.update_branch(repo, branch, new_sha)
+    git.update_branch(repo, branch, new_sha.decode())
 
     return AdoptResult(branch, parent)
 
