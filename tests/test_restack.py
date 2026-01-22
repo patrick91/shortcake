@@ -703,11 +703,12 @@ def test_get_stack_in_order_with_nonlocal_parent(
 
 
 def test_continue_with_state(
-    repo_with_stack_behind: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test continue when state exists but no rebase in progress."""
+    """Test continue when state exists, rebase done, no rebase in progress."""
     monkeypatch.chdir(tmp_path)
 
+    # Use repo_with_stack (not _behind) - branches are already up to date
     # Create state as if restack completed current step
     state = RestackState(
         version=STATE_VERSION,
@@ -717,6 +718,33 @@ def test_continue_with_state(
         ],
         current_index=0,  # Already at last item
         original_refs={
+            "branch_a": git.get_branch_head(repo_with_stack, "branch_a").decode(),
+        },
+    )
+    state.save(repo_with_stack)
+
+    # Continue should complete (branch_a is already on main, no more work)
+    result = runner.invoke(app, ["continue"])
+
+    assert result.exit_code == 0
+    assert "completed" in result.output.lower()
+
+
+def test_continue_detects_aborted_rebase(
+    repo_with_stack_behind: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test continue detects when rebase was manually aborted."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create state but branch_a still needs rebasing (simulates manual abort)
+    state = RestackState(
+        version=STATE_VERSION,
+        original_branch="branch_b",
+        plan=[
+            RestackStep(branch="branch_a", onto="main", merge_base="abc123"),
+        ],
+        current_index=0,
+        original_refs={
             "branch_a": git.get_branch_head(
                 repo_with_stack_behind, "branch_a"
             ).decode(),
@@ -724,11 +752,14 @@ def test_continue_with_state(
     )
     state.save(repo_with_stack_behind)
 
-    # Continue should complete (no more branches to rebase)
+    # Continue should fail - branch_a wasn't rebased
     result = runner.invoke(app, ["continue"])
 
-    assert result.exit_code == 0
-    assert "completed" in result.output.lower()
+    assert result.exit_code == 1
+    assert (
+        "was not rebased" in result.output.lower()
+        or "manually aborted" in result.output.lower()
+    )
 
 
 def test_abort_with_rebase_in_progress(

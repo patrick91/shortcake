@@ -37,45 +37,45 @@ def _needs_restack(repo: Repo, branch: str, parent: str) -> bool:
 
 
 def _get_stack_in_order(repo: Repo, start: str) -> list[str]:
-    """Get tracked branches in topological order (parents before children).
+    """Get tracked branches in the current stack in topological order.
 
-    Starting from the given branch, walks up to find the stack root,
-    then returns all tracked branches in BFS order. The root (trunk) branch
-    is not included since it's untracked.
+    Starting from the given branch, walks up to find the stack root (first
+    tracked branch whose parent is untracked/trunk), then returns all branches
+    in that stack via BFS. Only includes branches in the same stack as start,
+    not sibling stacks under the same trunk.
     """
     all_branches = set(git.get_all_local_branches(repo))
 
-    # Walk up to find root (trunk or untracked branch)
-    root = start
-    trunk: str | None = None
+    # Check if start itself is untracked (trunk)
+    if git.get_branch_parent(repo, start, all_branches) is None:
+        return []
+
+    # Walk up to find stack root (first tracked branch whose parent is untracked)
+    stack_root = start
     while True:
-        parent = git.get_branch_parent(repo, root, all_branches)
+        parent = git.get_branch_parent(repo, stack_root, all_branches)
         if parent is None:
-            # root is untracked, it's the trunk
-            trunk = root
+            # stack_root's parent has no trailer - stack_root is the stack root
             break
         if parent not in all_branches:
-            # parent exists but not as a local branch
-            trunk = None
+            # parent exists in trailer but not as a local branch
+            # stack_root is the root of our stack
             break
-        root = parent
+        # Check if parent is the trunk (has no parent trailer itself)
+        parent_parent = git.get_branch_parent(repo, parent, all_branches)
+        if parent_parent is None:
+            # parent is trunk, so stack_root is the stack root
+            break
+        # Parent is tracked, continue walking up
+        stack_root = parent
 
-    # If root is the trunk (untracked), start from its children
-    if trunk is not None:
-        # Get children of trunk as starting points
-        children = git.get_branch_children(repo, trunk)
-        queue = children[:]
-    else:
-        queue = [root]
-
-    # BFS to get topological order
+    # BFS from stack_root to get topological order
     order = []
     visited: set[str] = set()
+    queue = [stack_root]
 
     while queue:
         branch = queue.pop(0)
-        # Defensive check: each branch can only have one parent (via Shortcake-Parent
-        # trailer), so duplicates are impossible in practice. Kept for safety.
         if branch in visited:  # pragma: no cover
             continue
         visited.add(branch)
@@ -245,14 +245,18 @@ def _get_behind_branches(repo: Repo, branches: list[str]) -> list[str]:
 
 
 def _fast_forward_branch(repo: Repo, branch: str) -> bool:
-    """Fast-forward branch to match origin. Returns True if successful."""
+    """Fast-forward branch to match origin. Returns True if successful, False otherwise.
+
+    Note: This only updates the ref, not the worktree. Only call this for
+    branches that are NOT currently checked out.
+    """
     try:
-        # Update local branch to match remote
         remote_ref = f"refs/remotes/origin/{branch}".encode()
         local_ref = f"refs/heads/{branch}".encode()
         remote_sha = repo.refs.get(remote_ref)
-        if remote_sha:
-            repo.refs[local_ref] = remote_sha
+        if remote_sha is None:
+            return False  # No remote ref to fast-forward to
+        repo.refs[local_ref] = remote_sha
         return True
     except Exception:
         return False
@@ -290,11 +294,19 @@ def _restack(repo: Repo, dry_run: bool = False, sync: bool = False) -> RestackRe
         typer.echo("Fetching from origin...")
         _fetch_remote(repo)
 
-        # Fast-forward branches that are behind
+        # Fast-forward branches that are behind (skip current - can't update worktree)
         behind = _get_behind_branches(repo, stack_branches)
         for branch in behind:
+            if branch == current_branch:
+                typer.echo(
+                    f"Skipping '{branch}' (checked out). "
+                    "Run 'git pull --rebase' to update.",
+                    err=True,
+                )
+                continue
             typer.echo(f"Fast-forwarding '{branch}'...")
-            _fast_forward_branch(repo, branch)
+            if not _fast_forward_branch(repo, branch):
+                typer.echo(f"Warning: Failed to fast-forward '{branch}'", err=True)
 
     # Check for divergence
     diverged = _check_remote_divergence(repo, stack_branches)

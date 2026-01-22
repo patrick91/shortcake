@@ -9,6 +9,7 @@ from shortcake._exceptions import ShortcakeError
 from shortcake._restack_state import RestackState
 from shortcake.commands.restack import (
     _get_conflict_files,
+    _needs_restack,
     _rebase_branch,
     _show_conflict_message,
     _show_rebase_error,
@@ -65,8 +66,17 @@ def _continue(repo: Repo) -> ContinueResult:
                 restacked_branches=[], conflict_branch=current_step.branch
             )
 
+    # Check if current step still needs to be done (user may have manually aborted)
+    current_step = state.plan[state.current_index]
+    if _needs_restack(repo, current_step.branch, current_step.onto):
+        raise ContinueError(
+            f"Branch '{current_step.branch}' was not rebased onto "
+            f"'{current_step.onto}'. The rebase may have been manually aborted. "
+            f"Run 'sc restack' to restart."
+        )
+
     # Continue with remaining branches
-    restacked = []
+    restacked = [current_step.branch]  # Current step completed
     for i in range(state.current_index + 1, len(state.plan)):
         step = state.plan[i]
         state.current_index = i
