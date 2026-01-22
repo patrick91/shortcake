@@ -807,7 +807,7 @@ def test_fast_forward_branch(tmp_path: Path) -> None:
 
 def test_cli_restack_help() -> None:
     """Test CLI restack --help."""
-    result = runner.invoke(app, ["restack", "--help"])
+    result = runner.invoke(app, ["restack", "--help"], color=False)
     assert result.exit_code == 0
     assert "--dry-run" in result.output
     assert "--sync" in result.output
