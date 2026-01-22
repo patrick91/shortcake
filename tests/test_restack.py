@@ -1167,6 +1167,18 @@ def test_integration_restack_continue_with_real_conflict(
     """Integration test: restack creates conflict, resolve it, then continue."""
     monkeypatch.chdir(tmp_path)
 
+    # Ensure git config is set (needed for CI)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=tmp_path,
+        check=True,
+    )
+
     # Create branch_a from main with a file
     main_sha = temp_repo.refs[b"refs/heads/main"]
     temp_repo.refs[b"refs/heads/branch_a"] = main_sha
@@ -1200,7 +1212,7 @@ def test_integration_restack_continue_with_real_conflict(
 
     # Continue the restack
     result = runner.invoke(app, ["continue"])
-    assert result.exit_code == 0
+    assert result.exit_code == 0, f"Continue failed: {result.output}"
     assert "completed" in result.output.lower()
 
     # Verify rebase is no longer in progress
@@ -1212,6 +1224,18 @@ def test_integration_restack_abort_with_real_conflict(
 ) -> None:
     """Integration test: restack creates conflict, then abort restores state."""
     monkeypatch.chdir(tmp_path)
+
+    # Ensure git config is set (needed for CI)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.com"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=tmp_path,
+        check=True,
+    )
 
     # Create branch_a from main with a file
     main_sha = temp_repo.refs[b"refs/heads/main"]
