@@ -7,7 +7,7 @@ from dulwich.repo import Repo
 from shortcake import _git as git
 from shortcake._trailers import Trailers, strip_trailers
 from shortcake.commands.adopt import _adopt
-from shortcake.commands.modify import _modify_amend, _modify_new
+from shortcake.commands.modify import _modify_amend, _modify_with_new_commit
 
 # strip_trailers tests
 
@@ -198,11 +198,13 @@ def test_modify_no_verify(repo_with_feature: Repo, tmp_path: Path) -> None:
     assert result.new_sha != result.old_sha
 
 
-# _modify_new tests
+# _modify_with_new_commit tests
 
 
-def test_modify_new_creates_commit(repo_with_feature: Repo, tmp_path: Path) -> None:
-    """Test _modify_new creates a new commit on top of HEAD."""
+def test_modify_with_new_commit_creates_commit(
+    repo_with_feature: Repo, tmp_path: Path
+) -> None:
+    """Test _modify_with_new_commit creates a new commit on top of HEAD."""
     _adopt(repo_with_feature)
 
     old_sha = repo_with_feature.head()
@@ -212,7 +214,7 @@ def test_modify_new_creates_commit(repo_with_feature: Repo, tmp_path: Path) -> N
     new_file.write_text("new feature content")
     porcelain.add(repo_with_feature, paths=[str(new_file)])
 
-    result = _modify_new(repo_with_feature, "feat: new commit")
+    result = _modify_with_new_commit(repo_with_feature, "feat: new commit")
 
     # New commit should have old_sha as parent
     new_commit = repo_with_feature[result.new_sha]
@@ -220,8 +222,10 @@ def test_modify_new_creates_commit(repo_with_feature: Repo, tmp_path: Path) -> N
     assert result.is_amend is False
 
 
-def test_modify_new_preserves_trailer(repo_with_feature: Repo, tmp_path: Path) -> None:
-    """Test that _modify_new preserves the Shortcake-Parent trailer."""
+def test_modify_with_new_commit_preserves_trailer(
+    repo_with_feature: Repo, tmp_path: Path
+) -> None:
+    """Test that _modify_with_new_commit preserves the Shortcake-Parent trailer."""
     _adopt(repo_with_feature)
 
     # Verify trailer exists before modify
@@ -235,7 +239,7 @@ def test_modify_new_preserves_trailer(repo_with_feature: Repo, tmp_path: Path) -
     new_file.write_text("content")
     porcelain.add(repo_with_feature, paths=[str(new_file)])
 
-    result = _modify_new(repo_with_feature, "feat: another commit")
+    result = _modify_with_new_commit(repo_with_feature, "feat: another commit")
 
     # Verify trailer is preserved in new commit
     new_message = git.get_commit_message(repo_with_feature, result.new_sha)
@@ -244,14 +248,16 @@ def test_modify_new_preserves_trailer(repo_with_feature: Repo, tmp_path: Path) -
     assert "feat: another commit" in new_message
 
 
-def test_modify_new_without_trailer(temp_repo: Repo, tmp_path: Path) -> None:
-    """Test _modify_new on commit without trailer."""
+def test_modify_with_new_commit_without_trailer(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test _modify_with_new_commit on commit without trailer."""
     # Stage a new file
     new_file = tmp_path / "file.txt"
     new_file.write_text("content")
     porcelain.add(temp_repo, paths=[str(new_file)])
 
-    result = _modify_new(temp_repo, "New commit")
+    result = _modify_with_new_commit(temp_repo, "New commit")
 
     # Should not add a trailer if there wasn't one
     new_message = git.get_commit_message(temp_repo, result.new_sha)

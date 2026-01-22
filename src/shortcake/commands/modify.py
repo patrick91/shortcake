@@ -49,7 +49,9 @@ def _modify_amend(repo: Repo, message: str, no_verify: bool = False) -> ModifyRe
     )
 
 
-def _modify_new(repo: Repo, message: str, no_verify: bool = False) -> ModifyResult:
+def _modify_with_new_commit(
+    repo: Repo, message: str, no_verify: bool = False
+) -> ModifyResult:
     """Create new commit, preserving Shortcake-Parent trailer from HEAD.
 
     Args:
@@ -126,7 +128,7 @@ def modify(
             typer.echo("Error: No staged changes to commit", err=True)
             raise typer.Exit(1)
 
-        _modify_new(repo, message, no_verify=no_verify)
+        _modify_with_new_commit(repo, message, no_verify=no_verify)
         typer.echo(f"Created commit on '{current}'")
     else:
         # Amend with staged changes, keep existing message
