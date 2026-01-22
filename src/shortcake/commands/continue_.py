@@ -1,3 +1,4 @@
+import os
 import subprocess
 from dataclasses import dataclass
 
@@ -32,11 +33,14 @@ class ContinueResult:
 
 def _continue_rebase(repo_path: str) -> bool:
     """Continue an in-progress rebase. Returns True if successful."""
+    # Set GIT_EDITOR to prevent git from trying to open an editor (fails on CI)
+    env = {**os.environ, "GIT_EDITOR": "true"}
     result = subprocess.run(
         ["git", "rebase", "--continue"],
         cwd=repo_path,
         capture_output=True,
         text=True,
+        env=env,
     )
     return result.returncode == 0
 
