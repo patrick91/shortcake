@@ -81,8 +81,9 @@ def modify(
 ) -> None:
     """Modify the current commit or create a new one.
 
+    Without flags: amend with staged changes (keeps existing message).
+    Use -e/--edit to amend and edit the message.
     Use -m/--message to create a new commit with the given message.
-    Without flags (or with -e/--edit), amends the current commit (opens editor).
     """
     repo = git.open_repo()
 
@@ -106,24 +107,37 @@ def modify(
             typer.echo(f"Error: Pre-commit hook failed:\n{error}", err=True)
             raise typer.Exit(1)
 
-    if edit or not message:
-        # Amend: open editor with current message
+    if edit:
+        # Amend with editor
         old_sha = repo.head()
         old_message = git.get_commit_message(repo, old_sha)
         editor_content = strip_trailers(old_message)
 
-        message = open_editor(editor_content)
-        if not message:
+        new_message = open_editor(editor_content)
+        if not new_message:
             typer.echo("Aborted: empty message.", err=True)
             raise typer.Exit(1)
 
-        _modify_amend(repo, message, no_verify=no_verify)
+        _modify_amend(repo, new_message, no_verify=no_verify)
         typer.echo(f"Amended commit on '{current}'")
-    else:
+    elif message:
         # New commit with -m message
         if not has_staged:
             typer.echo("Error: No staged changes to commit", err=True)
             raise typer.Exit(1)
 
-        _modify_new(repo, message, no_verify=no_verify)  # type: ignore
+        _modify_new(repo, message, no_verify=no_verify)
         typer.echo(f"Created commit on '{current}'")
+    else:
+        # Amend with staged changes, keep existing message
+        if not has_staged:
+            typer.echo("Error: No staged changes to amend", err=True)
+            raise typer.Exit(1)
+
+        old_sha = repo.head()
+        old_message = git.get_commit_message(repo, old_sha)
+        # Strip and reapply trailers to preserve them
+        clean_message = strip_trailers(old_message)
+
+        _modify_amend(repo, clean_message, no_verify=no_verify)
+        typer.echo(f"Amended commit on '{current}'")

@@ -1298,20 +1298,39 @@ def test_cli_modify_hook_failure(
     assert "Pre-commit hook failed" in result.output
 
 
-def test_cli_modify_no_flags_defaults_to_amend(
+def test_cli_modify_no_flags_amends_with_staged(
     repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test CLI modify with no flags defaults to amend with editor."""
-    from unittest.mock import patch
-
+    """Test CLI modify with no flags amends with staged changes."""
     monkeypatch.chdir(tmp_path)
 
-    with patch("shortcake.commands.modify.open_editor") as mock_editor:
-        mock_editor.return_value = "feat: amended via default"
-        result = runner.invoke(app, ["modify"])
+    old_sha = repo_with_feature.head()
+
+    # Stage a new file
+    new_file = tmp_path / "staged.txt"
+    new_file.write_text("staged content")
+    porcelain.add(repo_with_feature, paths=[str(new_file)])
+
+    result = runner.invoke(app, ["modify"])
 
     assert result.exit_code == 0
     assert "Amended commit on 'feature'" in result.output
+
+    # Verify commit was amended (new SHA, same parent)
+    new_sha = repo_with_feature.head()
+    assert new_sha != old_sha
+
+
+def test_cli_modify_no_flags_no_staged_error(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI modify with no flags requires staged changes."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["modify"])
+
+    assert result.exit_code == 1
+    assert "No staged changes to amend" in result.output
 
 
 def test_cli_modify_both_flags_error(
