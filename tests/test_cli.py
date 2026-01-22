@@ -1115,3 +1115,254 @@ def test_cli_top_fork_then_another_fork(
     assert "Switched to 'branch_b'" in result.output
     # Should hit another fork and tell user to run again
     assert "Run 'sc top' again" in result.output
+
+
+# ============================================================================
+# Modify CLI tests
+# ============================================================================
+
+
+def test_cli_modify_with_message_creates_new_commit(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI modify command with -m option creates new commit."""
+    monkeypatch.chdir(tmp_path)
+
+    # First adopt to add trailer
+    runner.invoke(app, ["adopt"])
+
+    old_sha = repo_with_feature.head()
+
+    # Stage a new file (required for -m)
+    new_file = tmp_path / "new.txt"
+    new_file.write_text("content")
+    porcelain.add(repo_with_feature, paths=[str(new_file)])
+
+    result = runner.invoke(app, ["modify", "-m", "feat: new commit"])
+
+    assert result.exit_code == 0
+    assert "Created commit on 'feature'" in result.output
+
+    # Verify old commit is parent of new commit
+    new_commit = repo_with_feature[repo_with_feature.head()]
+    assert old_sha in new_commit.parents
+
+
+def test_cli_modify_preserves_trailer(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI modify preserves Shortcake-Parent trailer."""
+    from shortcake._trailers import Trailers
+
+    monkeypatch.chdir(tmp_path)
+
+    # First adopt to add trailer
+    runner.invoke(app, ["adopt"])
+
+    # Stage a new file (required for -m)
+    new_file = tmp_path / "new.txt"
+    new_file.write_text("content")
+    porcelain.add(repo_with_feature, paths=[str(new_file)])
+
+    result = runner.invoke(app, ["modify", "-m", "feat: completely new message"])
+
+    assert result.exit_code == 0
+
+    # Verify trailer is still there
+    from shortcake import _git as git
+
+    head_sha = repo_with_feature.head()
+    message = git.get_commit_message(repo_with_feature, head_sha)
+    trailers = Trailers.from_message(message)
+    assert trailers.parent_branch == "main"
+
+
+def test_cli_modify_detached_head(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI modify error in detached HEAD state."""
+    monkeypatch.chdir(tmp_path)
+
+    # Detach HEAD
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    del temp_repo.refs[b"HEAD"]
+    temp_repo.refs[b"HEAD"] = main_sha
+
+    result = runner.invoke(app, ["modify", "-e"])
+
+    assert result.exit_code == 1
+    assert "detached HEAD" in result.output
+
+
+def test_cli_modify_interactive(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI modify with -e opens editor to amend."""
+    from unittest.mock import patch
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("shortcake.commands.modify.open_editor") as mock_editor:
+        mock_editor.return_value = "feat: edited message"
+        result = runner.invoke(app, ["modify", "-e"])
+
+    assert result.exit_code == 0
+    assert "Amended commit on 'feature'" in result.output
+
+
+def test_cli_modify_editor_aborted(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI modify with -e when editor is cancelled/empty."""
+    from unittest.mock import patch
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("shortcake.commands.modify.open_editor") as mock_editor:
+        mock_editor.return_value = None  # Editor cancelled/empty
+        result = runner.invoke(app, ["modify", "-e"])
+
+    assert result.exit_code == 1
+    assert "Aborted: empty message" in result.output
+
+
+def test_cli_modify_with_staged_changes(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI modify includes staged changes."""
+    monkeypatch.chdir(tmp_path)
+
+    # Stage a new file
+    new_file = tmp_path / "staged.txt"
+    new_file.write_text("staged content")
+    porcelain.add(repo_with_feature, paths=[str(new_file)])
+
+    result = runner.invoke(app, ["modify", "-m", "feat: with staged changes"])
+
+    assert result.exit_code == 0
+
+    # Verify file is in the commit
+    head_sha = repo_with_feature.head()
+    commit = repo_with_feature[head_sha]
+    tree = repo_with_feature[commit.tree]
+    files = [entry.path for entry in tree.items()]
+    assert b"staged.txt" in files
+
+
+def test_cli_modify_no_verify(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI modify with --no-verify skips hooks."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create a failing hook
+    hooks_dir = Path(repo_with_feature.controldir()) / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_path = hooks_dir / "pre-commit"
+    hook_path.write_text("#!/bin/sh\nexit 1\n")
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
+
+    # Stage a file to trigger hook check
+    new_file = tmp_path / "test.txt"
+    new_file.write_text("content")
+    porcelain.add(repo_with_feature, paths=[str(new_file)])
+
+    # With --no-verify, should succeed despite failing hook
+    result = runner.invoke(app, ["modify", "-m", "feat: test", "-n"])
+
+    assert result.exit_code == 0
+    assert "Created commit" in result.output
+
+
+def test_cli_modify_hook_failure(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI modify fails when pre-commit hook fails."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create a failing hook
+    hooks_dir = Path(repo_with_feature.controldir()) / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_path = hooks_dir / "pre-commit"
+    hook_path.write_text("#!/bin/sh\necho 'Hook failed!'\nexit 1\n")
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
+
+    # Stage a file to trigger hook check
+    new_file = tmp_path / "test.txt"
+    new_file.write_text("content")
+    porcelain.add(repo_with_feature, paths=[str(new_file)])
+
+    result = runner.invoke(app, ["modify", "-m", "feat: test"])
+
+    assert result.exit_code == 1
+    assert "Pre-commit hook failed" in result.output
+
+
+def test_cli_modify_no_flags_amends_with_staged(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI modify with no flags amends with staged changes."""
+    monkeypatch.chdir(tmp_path)
+
+    old_sha = repo_with_feature.head()
+
+    # Stage a new file
+    new_file = tmp_path / "staged.txt"
+    new_file.write_text("staged content")
+    porcelain.add(repo_with_feature, paths=[str(new_file)])
+
+    result = runner.invoke(app, ["modify"])
+
+    assert result.exit_code == 0
+    assert "Amended commit on 'feature'" in result.output
+
+    # Verify commit was amended (new SHA, same parent)
+    new_sha = repo_with_feature.head()
+    assert new_sha != old_sha
+
+
+def test_cli_modify_no_flags_no_staged_error(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI modify with no flags requires staged changes."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["modify"])
+
+    assert result.exit_code == 1
+    assert "No staged changes to amend" in result.output
+
+
+def test_cli_modify_both_flags_error(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI modify cannot use both -m and -e."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["modify", "-m", "message", "-e"])
+
+    assert result.exit_code == 1
+    assert "Cannot use both -m and -e" in result.output
+
+
+def test_cli_modify_message_no_staged_error(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI modify -m requires staged changes."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["modify", "-m", "feat: message"])
+
+    assert result.exit_code == 1
+    assert "No staged changes to commit" in result.output
+
+
+def test_cli_help_includes_modify(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI help includes modify command."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["--help"])
+
+    assert "modify" in result.output
