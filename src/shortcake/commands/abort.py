@@ -1,4 +1,3 @@
-import subprocess
 from dataclasses import dataclass
 
 import typer
@@ -22,15 +21,13 @@ class AbortResult:
     restored_branches: list[str]
 
 
-def _abort_rebase(repo_path: str) -> bool:
+def _abort_rebase(repo: Repo) -> bool:
     """Abort an in-progress rebase. Returns True if successful."""
-    result = subprocess.run(
-        ["git", "rebase", "--abort"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0
+    try:
+        git.rebase_abort(repo)
+        return True
+    except Exception:
+        return False
 
 
 def _abort(repo: Repo) -> AbortResult:
@@ -47,7 +44,7 @@ def _abort(repo: Repo) -> AbortResult:
     # If git rebase is in progress, abort it first
     if git.is_rebase_in_progress(repo):
         typer.echo("Aborting in-progress rebase...")
-        if not _abort_rebase(repo.path):
+        if not _abort_rebase(repo):
             typer.echo(
                 "Warning: Failed to abort git rebase. You may need to run "
                 "'git rebase --abort' manually.",
@@ -66,7 +63,7 @@ def _abort(repo: Repo) -> AbortResult:
     state.delete(repo)
 
     # Return to original branch
-    git.switch_branch(repo, state.original_branch)
+    git.switch_branch(repo, state.original_branch, force=True)
 
     return AbortResult(restored_branches=restored)
 
