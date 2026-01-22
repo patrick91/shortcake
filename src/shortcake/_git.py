@@ -244,3 +244,52 @@ def get_branch_children(repo: Repo, branch: str) -> list[str]:
         if parent == branch:
             children.append(potential_child)
     return sorted(children)
+
+
+def get_merge_base(repo: Repo, commit1: bytes, commit2: bytes) -> bytes | None:
+    """Get merge base of two commits using dulwich.
+
+    Returns the common ancestor of two commits, or None if no common ancestor.
+    """
+    from dulwich.graph import find_merge_base
+
+    bases = find_merge_base(repo, [commit1, commit2])
+    return bases[0] if bases else None
+
+
+def is_rebase_in_progress(repo: Repo) -> bool:
+    """Check if git rebase is in progress."""
+    git_dir = Path(repo.controldir())
+    return (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists()
+
+
+def has_uncommitted_changes(repo: Repo) -> bool:
+    """Check for uncommitted changes (staged or unstaged)."""
+    status = porcelain.status(repo)
+    return bool(
+        status.staged["add"]
+        or status.staged["modify"]
+        or status.staged["delete"]
+        or status.unstaged
+    )
+
+
+def is_ancestor(repo: Repo, maybe_ancestor: bytes, descendant: bytes) -> bool:
+    """Check if commit is ancestor of another.
+
+    Returns True if maybe_ancestor is reachable from descendant.
+    """
+    if maybe_ancestor == descendant:
+        return True
+
+    merge_base = get_merge_base(repo, maybe_ancestor, descendant)
+    return merge_base == maybe_ancestor
+
+
+def get_remote_ref(repo: Repo, remote_branch: str) -> bytes | None:
+    """Get SHA of remote ref like origin/branch_a."""
+    full_ref = f"refs/remotes/{remote_branch}".encode()
+    try:
+        return repo.refs[full_ref]
+    except KeyError:
+        return None
