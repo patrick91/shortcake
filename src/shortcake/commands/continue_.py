@@ -1,7 +1,8 @@
-import subprocess
 from dataclasses import dataclass
 
 import typer
+from dulwich import porcelain
+from dulwich.porcelain import Error as DulwichError
 from dulwich.repo import Repo
 
 from shortcake import _git as git
@@ -28,15 +29,13 @@ class ContinueResult:
     conflict_branch: str | None = None
 
 
-def _continue_rebase(repo_path: str) -> bool:
+def _continue_rebase(repo: Repo) -> bool:
     """Continue an in-progress rebase. Returns True if successful."""
-    result = subprocess.run(
-        ["git", "rebase", "--continue"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-    )
-    return result.returncode == 0
+    try:
+        porcelain.rebase(repo, upstream=b"", continue_rebase=True)
+        return True
+    except DulwichError:
+        return False
 
 
 def _continue(repo: Repo) -> ContinueResult:
@@ -55,7 +54,7 @@ def _continue(repo: Repo) -> ContinueResult:
     # If git rebase is in progress, continue it first
     if git.is_rebase_in_progress(repo):
         typer.echo("Continuing rebase...")
-        if not _continue_rebase(repo_path):
+        if not _continue_rebase(repo):
             # Still has conflicts
             conflict_files = _get_conflict_files(repo_path)
             current_step = state.plan[state.current_index]

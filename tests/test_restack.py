@@ -878,7 +878,7 @@ def test_continue_with_multiple_remaining_branches(
 def test_continue_rebase_in_progress(
     repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test continue when git rebase is in progress."""
+    """Test continue when git rebase is in progress but still has conflicts."""
     monkeypatch.chdir(tmp_path)
 
     branch_a_sha = git.get_branch_head(repo_with_stack, "branch_a")
@@ -901,18 +901,39 @@ def test_continue_rebase_in_progress(
     )
     state.save(repo_with_stack)
 
-    # Continue should try to continue the rebase (and fail since it's fake)
+    # Mock _continue_rebase to return False (simulating ongoing conflict)
+    monkeypatch.setattr(
+        "shortcake.commands.continue_._continue_rebase", lambda repo: False
+    )
+
+    # Continue should try to continue the rebase and fail
     result = runner.invoke(app, ["continue"])
 
-    # The rebase --continue will fail, showing conflict message
+    # The rebase continue will fail, showing conflict message
     assert result.exit_code == 1
     assert "Conflict" in result.output or "continuing" in result.output.lower()
 
 
-def test_continue_rebase_function(tmp_path: Path) -> None:
+def test_continue_rebase_function(temp_repo: Repo) -> None:
     """Test _continue_rebase function directly."""
-    # Should fail on non-git directory
-    result = _continue_rebase(str(tmp_path))
+    # When no rebase is in progress, dulwich returns success (no-op).
+    # This is fine since _continue_rebase is only called after
+    # checking is_rebase_in_progress.
+    result = _continue_rebase(temp_repo)
+    assert result is True
+
+
+def test_continue_rebase_function_error(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _continue_rebase returns False when dulwich raises an error."""
+    from dulwich.porcelain import Error as DulwichError
+
+    def mock_rebase(*args, **kwargs):
+        raise DulwichError("Conflict during rebase")
+
+    monkeypatch.setattr("dulwich.porcelain.rebase", mock_rebase)
+    result = _continue_rebase(temp_repo)
     assert result is False
 
 
