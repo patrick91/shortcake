@@ -73,7 +73,9 @@ def _get_stack_in_order(repo: Repo, start: str) -> list[str]:
 
     while queue:
         branch = queue.pop(0)
-        if branch in visited:
+        # Defensive check: each branch can only have one parent (via Shortcake-Parent
+        # trailer), so duplicates are impossible in practice. Kept for safety.
+        if branch in visited:  # pragma: no cover
             continue
         visited.add(branch)
         order.append(branch)
