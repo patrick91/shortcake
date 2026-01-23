@@ -15,10 +15,10 @@ from shortcake.commands.abort import AbortError, _abort
 from shortcake.commands.continue_ import ContinueError, _continue, _continue_rebase
 from shortcake.commands.restack import (
     RestackError,
-    _check_remote_divergence,
     _fast_forward_branch,
     _fetch_remote,
     _get_conflict_files,
+    _get_diverged_branches,
     _get_stack_in_order,
     _needs_restack,
     _plan_restack,
@@ -668,10 +668,10 @@ def test_show_conflict_message_no_files(capsys: pytest.CaptureFixture[str]) -> N
     assert "sc continue" in captured.out
 
 
-def test_check_remote_divergence_no_remote(repo_with_stack: Repo) -> None:
+def test_get_diverged_branches_no_remote(repo_with_stack: Repo) -> None:
     """Test divergence check with no remote refs."""
     branches = ["branch_a", "branch_b"]
-    diverged = _check_remote_divergence(repo_with_stack, branches)
+    diverged = _get_diverged_branches(repo_with_stack, branches)
     assert diverged == []
 
 
@@ -1128,7 +1128,7 @@ def test_cli_restack_dry_run_shows_branches(
     assert "onto" in result.output.lower()
 
 
-def test_check_remote_divergence_with_diverged_branch(
+def test_get_diverged_branches_with_diverged_branch(
     repo_with_stack: Repo, tmp_path: Path
 ) -> None:
     """Test divergence detection when branch has truly diverged from remote.
@@ -1155,13 +1155,13 @@ def test_check_remote_divergence_with_diverged_branch(
     # - Sibling has commits branch_a doesn't have
     repo_with_stack.refs[b"refs/remotes/origin/branch_a"] = sibling_sha
 
-    diverged = _check_remote_divergence(repo_with_stack, ["branch_a"])
+    diverged = _get_diverged_branches(repo_with_stack, ["branch_a"])
 
     # branch_a should be detected as diverged
     assert "branch_a" in diverged
 
 
-def test_check_remote_divergence_allows_local_ahead(
+def test_get_diverged_branches_allows_local_ahead(
     repo_with_stack: Repo, tmp_path: Path
 ) -> None:
     """Test that local-ahead branches are NOT flagged as diverged."""
@@ -1170,7 +1170,7 @@ def test_check_remote_divergence_allows_local_ahead(
     main_sha = git.get_branch_head(repo_with_stack, "main")
     repo_with_stack.refs[b"refs/remotes/origin/branch_a"] = main_sha
 
-    diverged = _check_remote_divergence(repo_with_stack, ["branch_a"])
+    diverged = _get_diverged_branches(repo_with_stack, ["branch_a"])
 
     # branch_a should NOT be detected as diverged (just local-ahead)
     assert "branch_a" not in diverged
@@ -1453,13 +1453,13 @@ def test_show_rebase_error_empty_output(capsys: pytest.CaptureFixture[str]) -> N
     assert "sc abort" in captured.err
 
 
-def test_check_remote_divergence_same_sha(repo_with_stack: Repo) -> None:
+def test_get_diverged_branches_same_sha(repo_with_stack: Repo) -> None:
     """Test divergence check when local and remote are the same."""
     # Set origin/branch_a to same SHA as local branch_a
     branch_a_sha = git.get_branch_head(repo_with_stack, "branch_a")
     repo_with_stack.refs[b"refs/remotes/origin/branch_a"] = branch_a_sha
 
-    diverged = _check_remote_divergence(repo_with_stack, ["branch_a"])
+    diverged = _get_diverged_branches(repo_with_stack, ["branch_a"])
     assert diverged == []
 
 

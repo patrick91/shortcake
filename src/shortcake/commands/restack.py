@@ -188,7 +188,7 @@ def _show_rebase_error(branch: str, onto: str, error_output: str) -> None:
     typer.echo("Abort with: sc abort", err=True)
 
 
-def _check_remote_divergence(repo: Repo, branches: list[str]) -> list[str]:
+def _get_diverged_branches(repo: Repo, branches: list[str]) -> list[str]:
     """Return branches that have truly diverged from their remote.
 
     True divergence means both local and remote have commits the other doesn't.
@@ -213,6 +213,33 @@ def _check_remote_divergence(repo: Repo, branches: list[str]) -> list[str]:
             # Both have unique commits = true divergence
             diverged.append(branch)
     return diverged
+
+
+def _rebase_onto_remote(repo: Repo, branch: str) -> RebaseResult:
+    """Rebase a diverged branch onto its remote counterpart.
+
+    This replays local commits on top of the remote branch.
+    """
+    remote_ref = f"origin/{branch}"
+    remote_sha = git.get_remote_ref(repo, remote_ref)
+    local_sha = git.get_branch_head(repo, branch)
+
+    if remote_sha is None:
+        return RebaseResult(success=False, error_output="No remote tracking branch")
+
+    # Find merge base between local and remote
+    merge_base = git.get_merge_base(repo, local_sha, remote_sha)
+    if merge_base is None:
+        return RebaseResult(
+            success=False, error_output="No common ancestor with remote"
+        )
+
+    # Rebase local commits onto remote
+    try:
+        git.rebase_branch(repo, branch, remote_ref, merge_base.decode())
+        return RebaseResult(success=True)
+    except Exception as e:
+        return RebaseResult(success=False, error_output=str(e))
 
 
 def _fetch_remote(repo: Repo) -> bool:
@@ -311,15 +338,41 @@ def _restack(repo: Repo, dry_run: bool = False, sync: bool = False) -> RestackRe
                 typer.echo(f"Warning: Failed to fast-forward '{branch}'", err=True)
 
     # Check for divergence
-    diverged = _check_remote_divergence(repo, stack_branches)
+    diverged = _get_diverged_branches(repo, stack_branches)
     if diverged:
-        typer.echo(
-            f"Warning: Branches diverged from remote: {', '.join(diverged)}", err=True
-        )
-        typer.echo(
-            "Run 'git rebase origin/<branch>' on each diverged branch first.", err=True
-        )
-        raise RestackError("Cannot restack with diverged branches")
+        if sync:
+            # Auto-rebase diverged branches onto their remote
+            for branch in diverged:
+                typer.echo(f"Rebasing '{branch}' onto 'origin/{branch}'...")
+                result = _rebase_onto_remote(repo, branch)
+                if not result.success:
+                    if git.is_rebase_in_progress(repo):
+                        conflict_files = _get_conflict_files(repo)
+                        _show_conflict_message(
+                            branch, f"origin/{branch}", conflict_files
+                        )
+                        return RestackResult(
+                            restacked_branches=[], conflict_branch=branch
+                        )
+                    else:
+                        typer.echo(
+                            f"Failed to rebase '{branch}' onto remote: "
+                            f"{result.error_output}",
+                            err=True,
+                        )
+                        raise RestackError(f"Cannot rebase '{branch}' onto remote")
+        else:
+            typer.echo(
+                f"Warning: Branches diverged from remote: {', '.join(diverged)}",
+                err=True,
+            )
+            typer.echo(
+                "Run 'git pull --rebase' on each diverged branch first.", err=True
+            )
+            typer.echo(
+                "Or use 'sc restack --sync' to auto-fetch and fast-forward.", err=True
+            )
+            raise RestackError("Cannot restack with diverged branches")
 
     # Build restack plan
     plan = _plan_restack(repo, stack_branches)
