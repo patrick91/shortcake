@@ -274,11 +274,11 @@ def test_cli_sync_dry_run(
 def test_cli_sync_force_deletes(
     repo_with_merged_branch: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test CLI sync --force deletes merged branches."""
+    """Test CLI sync --yes deletes merged branches."""
     monkeypatch.chdir(tmp_path)
     git.switch_branch(repo_with_merged_branch, "main")
 
-    result = runner.invoke(app, ["sync", "--force"])
+    result = runner.invoke(app, ["sync", "--yes"])
 
     assert result.exit_code == 0
     assert "Deleted branch feature" in result.output
@@ -417,7 +417,7 @@ def test_cli_sync_with_restack(
     """Test CLI sync shows restack output."""
     monkeypatch.chdir(tmp_path)
 
-    result = runner.invoke(app, ["sync", "--force"])
+    result = runner.invoke(app, ["sync", "--yes"])
 
     assert result.exit_code == 0
     assert "Deleted branch branch_a" in result.output
