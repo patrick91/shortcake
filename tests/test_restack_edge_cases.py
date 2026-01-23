@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from dulwich import porcelain
+from dulwich.errors import DulwichError
 from dulwich.repo import Repo
 from typer.testing import CliRunner
 
@@ -385,7 +386,7 @@ def test_fast_forward_branch_exception(
 
     def mock_setitem(self, key, value):
         if key == b"refs/heads/branch_a":
-            raise RuntimeError("Simulated failure")
+            raise DulwichError("Simulated failure")
         return original_setitem(self, key, value)
 
     monkeypatch.setattr(repo_with_stack.refs.__class__, "__setitem__", mock_setitem)

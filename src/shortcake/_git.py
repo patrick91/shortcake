@@ -3,6 +3,7 @@ import time
 from pathlib import Path
 
 from dulwich import porcelain
+from dulwich.errors import DulwichError
 from dulwich.graph import find_merge_base
 from dulwich.index import ConflictedIndexEntry
 from dulwich.objects import Commit
@@ -158,7 +159,7 @@ def run_precommit_hook(repo: Repo) -> tuple[bool, str | None]:
         if result.returncode != 0:
             return False, result.stdout or result.stderr
         return True, None
-    except Exception as e:
+    except (DulwichError, OSError, subprocess.SubprocessError) as e:
         return False, str(e)
 
 
@@ -262,7 +263,12 @@ def get_merge_base(repo: Repo, commit1: bytes, commit2: bytes) -> bytes | None:
 def get_rebase_commits(
     repo: Repo, head: bytes | str, merge_base: bytes | str
 ) -> list[bytes]:
-    """Get commits to rebase in chronological order (oldest first)."""
+    """Get commits to rebase in chronological order (oldest first).
+
+    Shortcake restack supports linear history only. If a merge commit is
+    encountered on the first-parent chain, or the merge base is not on that
+    chain, this raises a ValueError.
+    """
     head_bytes = head.encode() if isinstance(head, str) else head
     merge_base_bytes = (
         merge_base.encode() if isinstance(merge_base, str) else merge_base
@@ -273,13 +279,23 @@ def get_rebase_commits(
 
     commits: list[bytes] = []
     current = repo[head_bytes]
-    while current.id != merge_base_bytes:
+    while True:
+        if current.id == merge_base_bytes:
+            return list(reversed(commits))
+        if len(current.parents) > 1:
+            raise ValueError(
+                "Non-linear history detected (merge commit). "
+                "Shortcake restack supports linear stacks only."
+            )
         commits.append(current.id)
         if not current.parents:
             break
         current = repo[current.parents[0]]
 
-    return list(reversed(commits))
+    raise ValueError(
+        "Merge base not found on first-parent chain. "
+        "History may be non-linear or unrelated."
+    )
 
 
 def is_rebase_in_progress(repo: Repo) -> bool:
@@ -314,7 +330,7 @@ def rebase_branch(repo: Repo, branch: str, onto: str, upstream: str) -> None:
         porcelain.reset(repo, mode="hard", treeish=onto)
         for commit in commits:
             porcelain.cherry_pick(repo, commit)
-    except Exception as e:
+    except (DulwichError, OSError, ValueError, KeyError) as e:
         raise RebaseFailure(str(e) or "Dulwich rebase failed") from e
 
 
@@ -325,7 +341,7 @@ def rebase_continue(repo: Repo) -> None:
             porcelain.cherry_pick(repo, None, continue_=True)
         else:
             raise RebaseFailure("No cherry-pick in progress.")
-    except Exception as e:
+    except (DulwichError, OSError, ValueError, KeyError) as e:
         raise RebaseFailure(str(e) or "Rebase continue failed") from e
 
 
@@ -336,13 +352,16 @@ def rebase_abort(repo: Repo) -> None:
             porcelain.cherry_pick(repo, None, abort=True)
         else:
             raise RebaseFailure("No cherry-pick in progress.")
-    except Exception as e:
+    except (DulwichError, OSError, ValueError, KeyError) as e:
         raise RebaseFailure(str(e) or "Rebase abort failed") from e
 
 
 def cherry_pick(repo: Repo, commit: bytes) -> None:
     """Cherry-pick a commit onto the current branch."""
-    porcelain.cherry_pick(repo, commit)
+    try:
+        porcelain.cherry_pick(repo, commit)
+    except (DulwichError, OSError, ValueError, KeyError) as e:
+        raise RebaseFailure(str(e) or "Cherry-pick failed") from e
 
 
 def get_conflict_files(repo: Repo) -> list[str]:
@@ -352,7 +371,7 @@ def get_conflict_files(repo: Repo) -> list[str]:
     """
     try:
         index = repo.open_index()
-    except Exception:
+    except (DulwichError, OSError):
         return []
 
     paths = []
