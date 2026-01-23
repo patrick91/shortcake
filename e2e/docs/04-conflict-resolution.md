@@ -23,7 +23,7 @@ Go back to the parent and add a conflicting change:
 $ git checkout add-data-file
 $ echo "parent line" >> data.txt
 $ git add data.txt && git commit -m "Add parent line"
-[add-data-file 5fbccb8] Add parent line
+[add-data-file 6470462] Add parent line
  1 file changed, 1 insertion(+)
 ```
 
@@ -37,9 +37,6 @@ $ sc restack
 Rebasing 'extend-data-file' onto 'add-data-file'...
 
 Conflict while rebasing 'extend-data-file' onto 'add-data-file'.
-
-Fix conflicts in the following files:
-  data.txt
 
 Then:
   1. Stage your changes:     git add <files>
@@ -77,16 +74,13 @@ If you want to discard changes instead, use `sc abort`. First recreate a conflic
 $ git checkout add-data-file
 $ echo "another change" >> data.txt
 $ git add data.txt && git commit -m "Another change"
-[add-data-file e4a72b1] Another change
+[add-data-file 3de1560] Another change
  1 file changed, 1 insertion(+)
 $ git checkout extend-data-file
 $ sc restack
 Rebasing 'extend-data-file' onto 'add-data-file'...
 
 Conflict while rebasing 'extend-data-file' onto 'add-data-file'.
-
-Fix conflicts in the following files:
-  data.txt
 
 Then:
   1. Stage your changes:     git add <files>
