@@ -264,7 +264,10 @@ def get_branch_parent(repo: Repo, branch: str, all_branches: set[str]) -> str | 
         message = get_commit_message(repo, commit_sha)
         trailers = Trailers.from_message(message)
         if trailers.parent_branch is not None:
-            return trailers.parent_branch
+            # A branch cannot be its own parent (can happen if merged commits
+            # with trailers end up in the trunk)
+            if trailers.parent_branch != branch:
+                return trailers.parent_branch
 
         # Add parents to visit
         commit = repo[commit_sha]
@@ -459,3 +462,55 @@ def get_remote_ref(repo: Repo, remote_branch: str) -> bytes | None:
         return repo.refs[full_ref]
     except KeyError:
         return None
+
+
+def delete_branch(repo: Repo, branch: str) -> None:
+    """Delete a local branch."""
+    ref = f"refs/heads/{branch}".encode()
+    if ref in repo.refs:
+        del repo.refs[ref]
+
+
+def has_remote(repo: Repo, remote_name: str = "origin") -> bool:
+    """Check if a remote is configured."""
+    config = repo.get_config()
+    try:
+        config.get((b"remote", remote_name.encode()), b"url")
+        return True
+    except KeyError:
+        return False
+
+
+def fetch_and_fast_forward_trunk(repo: Repo, trunk: str) -> tuple[bool, str | None]:
+    """Fetch from origin and fast-forward trunk.
+
+    Returns (success, new_sha_short) where new_sha_short is the short SHA
+    if trunk was fast-forwarded, or None if already up to date or failed.
+    """
+    # Check if origin remote exists before trying to fetch
+    if not has_remote(repo, "origin"):
+        return True, None  # No remote configured, nothing to do
+
+    try:
+        porcelain.fetch(repo, "origin", quiet=True)
+    except DULWICH_IO_ERRORS:
+        return False, None
+
+    remote_ref = f"refs/remotes/origin/{trunk}".encode()
+    local_ref = f"refs/heads/{trunk}".encode()
+
+    if remote_ref not in repo.refs:
+        return True, None  # No remote ref, nothing to do
+
+    remote_sha = repo.refs[remote_ref]
+    local_sha = repo.refs[local_ref]
+
+    if local_sha == remote_sha:
+        return True, None  # Already up to date
+
+    # Check if we can fast-forward (local is ancestor of remote)
+    if not is_ancestor(repo, local_sha, remote_sha):
+        return False, None  # Diverged, can't fast-forward
+
+    repo.refs[local_ref] = remote_sha
+    return True, remote_sha[:7].decode()
