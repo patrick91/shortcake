@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Annotated
 
@@ -164,7 +165,7 @@ def _sync(
     repo: Repo,
     force: bool = False,
     dry_run: bool = False,
-    prompt_fn: callable | None = None,
+    prompt_fn: Callable[[str, str], bool] | None = None,
 ) -> SyncResult:
     """
     Sync with remote: update trunk, clean up merged branches, restack.
