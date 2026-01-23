@@ -60,9 +60,7 @@ def _get_merged_branches(
     return merged
 
 
-def _topological_sort_for_deletion(
-    repo: Repo, branches: list[str]
-) -> list[str]:
+def _topological_sort_for_deletion(repo: Repo, branches: list[str]) -> list[str]:
     """Sort branches so children come before parents (leaves first).
 
     This ensures we delete leaf branches before their parents.
