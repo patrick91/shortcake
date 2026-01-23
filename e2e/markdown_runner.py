@@ -346,8 +346,10 @@ def normalize_output(output: str) -> str:
         # Replace commit hashes in common formats:
         # [branch abc1234] message
         # abc1234 message (git log --oneline)
+        # ● abc1234 message (sc log output)
         line = re.sub(r"\[(\S+)\s+[a-f0-9]{7,}\]", r"[\1 <HASH>]", line)
         line = re.sub(r"^[a-f0-9]{7,}\s+", "<HASH> ", line)
+        line = re.sub(r"^(● )[a-f0-9]{7,}\s+", r"\1<HASH> ", line)
         normalized.append(line)
     return "\n".join(normalized)
 

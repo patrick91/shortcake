@@ -55,6 +55,37 @@ def adopt(branch: ..., parent: ...) -> None:
 - Test business logic via `_function()`, CLI via `CliRunner`
 - Use plain functions for tests, not test classes
 
+### E2E Tests
+
+E2E tests live in `e2e/docs/*.md` as executable markdown documentation.
+
+**When adding a new command**, create an E2E test file:
+- Add `e2e/docs/XX-command-name.md` with usage examples
+- Use ````console` blocks for commands and expected output
+- Tests run via `uv run python e2e/markdown_runner.py`
+
+Example structure:
+```markdown
+# Command Name
+
+Description of the command.
+
+## Setup
+
+\`\`\`console
+$ echo "setup" > file.txt && git add file.txt
+$ sc create -m "Setup branch"
+Created branch 'setup-branch' from 'main'
+\`\`\`
+
+## Basic Usage
+
+\`\`\`console
+$ sc command
+Expected output here
+\`\`\`
+```
+
 ## Tech Stack
 
 - **CLI**: Typer
