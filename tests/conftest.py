@@ -137,6 +137,92 @@ def repo_with_stack_behind(temp_repo: Repo, tmp_path: Path) -> Repo:
 
 
 @pytest.fixture
+def repo_with_merged_branch(temp_repo: Repo, tmp_path: Path) -> Repo:
+    """Repo with a tracked feature branch merged into main.
+
+    Creates: main → feature (tracked)
+    Then merges feature into main and adds a commit to main, so feature is merged.
+    """
+    # Create feature branch
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    # Commit on feature with trailer
+    file_a = tmp_path / "feature.txt"
+    file_a.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: add feature")
+    porcelain.commit(temp_repo, message=message.encode())
+    feature_sha = temp_repo.refs[b"refs/heads/feature"]
+
+    # Fast-forward main to feature (simulates merge)
+    temp_repo.refs[b"refs/heads/main"] = feature_sha
+
+    # Add another commit to main so it's ahead of feature
+    porcelain.switch(temp_repo, "main")
+    main_file = tmp_path / "main_after_merge.txt"
+    main_file.write_text("main after merge")
+    porcelain.add(temp_repo, paths=[str(main_file)])
+    porcelain.commit(temp_repo, message=b"chore: post-merge commit")
+
+    # Switch back to feature
+    porcelain.switch(temp_repo, "feature")
+
+    return temp_repo
+
+
+@pytest.fixture
+def repo_with_merged_and_children(temp_repo: Repo, tmp_path: Path) -> Repo:
+    """Repo where branch_a is merged but has child branch_b.
+
+    Creates: main → branch_a → branch_b
+    Then merges branch_a into main (with follow-up commit), so branch_a is merged.
+    """
+    # Create branch_a from main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+
+    # Commit on branch_a with trailer
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("branch a content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers_a = Trailers(parent_branch="main")
+    message_a = trailers_a.apply_to("feat: branch a")
+    porcelain.commit(temp_repo, message=message_a.encode())
+    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # Create branch_b from branch_a
+    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+
+    # Commit on branch_b with trailer
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("branch b content")
+    porcelain.add(temp_repo, paths=[str(file_b)])
+    trailers_b = Trailers(parent_branch="branch_a")
+    message_b = trailers_b.apply_to("feat: branch b")
+    porcelain.commit(temp_repo, message=message_b.encode())
+
+    # Fast-forward main to branch_a (simulates merge of branch_a)
+    temp_repo.refs[b"refs/heads/main"] = branch_a_sha
+
+    # Add commit to main so it's ahead of branch_a
+    porcelain.switch(temp_repo, "main")
+    main_file = tmp_path / "main_after_merge.txt"
+    main_file.write_text("main after merge")
+    porcelain.add(temp_repo, paths=[str(main_file)])
+    porcelain.commit(temp_repo, message=b"chore: post-merge commit")
+
+    # Switch to branch_b
+    porcelain.switch(temp_repo, "branch_b")
+
+    return temp_repo
+
+
+@pytest.fixture
 def repo_with_fork(temp_repo: Repo, tmp_path: Path) -> Repo:
     """Repo with forked stack: main → branch_a → (branch_b, branch_c)."""
     # Create branch_a from main
