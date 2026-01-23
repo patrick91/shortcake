@@ -3,8 +3,11 @@ import time
 from pathlib import Path
 
 from dulwich import porcelain
+from dulwich.graph import find_merge_base
 from dulwich.objects import Commit
 from dulwich.repo import Repo
+
+from shortcake._trailers import Trailers
 
 
 def open_repo(path: Path | None = None) -> Repo:
@@ -185,7 +188,6 @@ def get_branch_parent(repo: Repo, branch: str, all_branches: set[str]) -> str | 
     Returns:
         Parent branch name if found, None otherwise
     """
-    from shortcake._trailers import Trailers
 
     branch_head = get_branch_head(repo, branch)
 
@@ -251,7 +253,6 @@ def get_merge_base(repo: Repo, commit1: bytes, commit2: bytes) -> bytes | None:
 
     Returns the common ancestor of two commits, or None if no common ancestor.
     """
-    from dulwich.graph import find_merge_base
 
     bases = find_merge_base(repo, [commit1, commit2])
     return bases[0] if bases else None
