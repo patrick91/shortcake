@@ -276,8 +276,8 @@ def _sync(
 
 
 def sync(
-    force: Annotated[
-        bool, typer.Option("--force", "-f", help="Skip delete confirmations")
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Auto-confirm branch deletions")
     ] = False,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", "-n", help="Preview what would happen")
@@ -287,7 +287,7 @@ def sync(
     repo = git.open_repo()
 
     try:
-        result = _sync(repo, force=force, dry_run=dry_run)
+        result = _sync(repo, force=yes, dry_run=dry_run)
     except SyncError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from None
