@@ -47,6 +47,29 @@ def test_apply_remaining_commits_commit_not_found(
     assert result.success is True
 
 
+def test_apply_remaining_commits_get_rebase_commits_fails(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _apply_remaining_commits handles get_rebase_commits error."""
+    from shortcake.commands.continue_ import _apply_remaining_commits
+
+    # Mock get_rebase_commits to raise ValueError (e.g., non-linear history)
+    def mock_get_rebase_commits(repo, head, merge_base):
+        raise ValueError("Non-linear history detected")
+
+    monkeypatch.setattr(git, "get_rebase_commits", mock_get_rebase_commits)
+
+    result = _apply_remaining_commits(
+        temp_repo,
+        "main",
+        "abc123",
+        "def456",
+        None,
+    )
+    assert result.success is False
+    assert "Non-linear history" in (result.error_output or "")
+
+
 def test_apply_remaining_commits_cherry_pick_fails(
     temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
