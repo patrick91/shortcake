@@ -173,9 +173,7 @@ def test_sync_prompt_fn_accept(repo_with_merged_branch: Repo, tmp_path: Path) ->
     assert "feature" in result.deleted_branches
 
 
-def test_sync_error_uncommitted_changes(
-    repo_with_stack: Repo, tmp_path: Path
-) -> None:
+def test_sync_error_uncommitted_changes(repo_with_stack: Repo, tmp_path: Path) -> None:
     """Test sync fails with uncommitted changes."""
     # Create uncommitted changes
     test_file = tmp_path / "uncommitted.txt"
@@ -329,9 +327,7 @@ def test_cli_sync_user_accepts(
 # Additional tests for coverage
 
 
-def test_sync_error_rebase_in_progress(
-    repo_with_stack: Repo, tmp_path: Path
-) -> None:
+def test_sync_error_rebase_in_progress(repo_with_stack: Repo, tmp_path: Path) -> None:
     """Test sync fails when rebase is in progress."""
     # Create CHERRY_PICK_HEAD to simulate rebase in progress
     cherry_pick_path = tmp_path / ".git" / "CHERRY_PICK_HEAD"
@@ -433,9 +429,7 @@ def test_sync_fetch_failure(
     monkeypatch.chdir(tmp_path)
 
     # Mock fetch_and_fast_forward_trunk to return failure
-    with patch.object(
-        git, "fetch_and_fast_forward_trunk", return_value=(False, None)
-    ):
+    with patch.object(git, "fetch_and_fast_forward_trunk", return_value=(False, None)):
         result = runner.invoke(app, ["sync"])
 
     assert result.exit_code == 0
@@ -480,14 +474,10 @@ def test_cli_sync_conflict_exit(
     # Create a mock result with conflict
     mock_result = SyncResult(
         trunk_updated=False,
-        restack_result=RestackResult(
-            restacked_branches=[], conflict_branch="branch_a"
-        ),
+        restack_result=RestackResult(restacked_branches=[], conflict_branch="branch_a"),
     )
 
-    with patch(
-        "shortcake.commands.sync._sync", return_value=mock_result
-    ):
+    with patch("shortcake.commands.sync._sync", return_value=mock_result):
         result = runner.invoke(app, ["sync"])
 
     assert result.exit_code == 1
@@ -517,9 +507,7 @@ def test_reparent_branch_same_commit(temp_repo: Repo, tmp_path: Path) -> None:
     child_file.write_text("child content")
     porcelain.add(temp_repo, paths=[str(child_file)])
     child_trailers = Trailers(parent_branch="feature")
-    porcelain.commit(
-        temp_repo, message=child_trailers.apply_to("feat: child").encode()
-    )
+    porcelain.commit(temp_repo, message=child_trailers.apply_to("feat: child").encode())
 
     # Fast-forward feature to child's commit so they're the same
     child_sha = temp_repo.refs[b"refs/heads/child"]
