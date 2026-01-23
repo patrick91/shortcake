@@ -261,7 +261,7 @@ def test_run_precommit_hook_exception(temp_repo: Repo, tmp_path: Path) -> None:
     hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
 
     # Mock subprocess.run to raise an exception
-    with patch("shortcake._git.subprocess.run") as mock_run:
+    with patch("shortcake._git._core.subprocess.run") as mock_run:
         mock_run.side_effect = OSError("Permission denied")
         success, error = git.run_precommit_hook(temp_repo)
 
