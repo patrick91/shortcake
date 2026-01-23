@@ -23,22 +23,20 @@ Fetching from origin...
 Everything up to date.
 ```
 
-## Divergence Detection
+## Auto-Rebase on Divergence
 
-When a branch has diverged from remote (both have unique commits), restack warns:
+When a branch has diverged from remote (both have unique commits), restack auto-rebases:
 
 ```console
 $ echo "local change" >> feature.py && git add feature.py && git commit -m "Local change"
-[add-feature 5ce08a0] Local change
+[add-feature 956eb06] Local change
  1 file changed, 1 insertion(+)
 $ # remote: force-push add-feature
 $ git fetch origin
 $ sc restack --sync
 Fetching from origin...
-Warning: Branches diverged from remote: add-feature
-Run 'git pull --rebase' on each diverged branch first.
-Or use 'sc restack --sync' to auto-fetch and fast-forward.
-Error: Cannot restack with diverged branches
+Rebasing 'add-feature' onto 'origin/add-feature'...
+Everything up to date.
 ```
 
 ## Fixing Divergence
@@ -47,6 +45,7 @@ Rebase onto the remote branch to incorporate the remote changes:
 
 ```console
 $ git rebase origin/add-feature
+Current branch add-feature is up to date.
 $ sc restack --sync
 Fetching from origin...
 Everything up to date.
