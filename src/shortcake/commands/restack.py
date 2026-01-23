@@ -4,12 +4,14 @@ from typing import Annotated
 
 import typer
 from dulwich import porcelain
-from dulwich.errors import DulwichError
 from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
+
+RESTACK_READ_ERRORS = git.DULWICH_IO_ERRORS + (ValueError,)
+RESTACK_REF_ERRORS = git.DULWICH_IO_ERRORS + (KeyError,)
 
 
 class RestackError(ShortcakeError):
@@ -157,7 +159,7 @@ def _get_conflict_files(repo: Repo | str) -> list[str]:
         if isinstance(repo, Repo):
             return git.get_conflict_files(repo)
         return git.get_conflict_files(git.open_repo(Path(repo)))
-    except (DulwichError, OSError, ValueError):
+    except RESTACK_READ_ERRORS:
         return []
 
 
@@ -248,7 +250,7 @@ def _fetch_remote(repo: Repo) -> bool:
     try:
         porcelain.fetch(repo, "origin", quiet=True)
         return True
-    except (DulwichError, OSError, ValueError):
+    except RESTACK_READ_ERRORS:
         return False
 
 
@@ -285,7 +287,7 @@ def _fast_forward_branch(repo: Repo, branch: str) -> bool:
         remote_sha = repo.refs[remote_ref]
         repo.refs[local_ref] = remote_sha
         return True
-    except (DulwichError, OSError, KeyError):
+    except RESTACK_REF_ERRORS:
         return False
 
 

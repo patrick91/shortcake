@@ -3,13 +3,59 @@ import time
 from pathlib import Path
 
 from dulwich import porcelain
-from dulwich.errors import DulwichError
+from dulwich.errors import (
+    ApplyDeltaError,
+    CommitError,
+    FileFormatException,
+    GitProtocolError,
+    HangupException,
+    HookError,
+    MissingCommitError,
+    NotBlobError,
+    NotCommitError,
+    NotGitRepository,
+    NotTagError,
+    NotTreeError,
+    ObjectFormatException,
+    PackedRefsException,
+    RefFormatError,
+    SendPackError,
+    UnexpectedCommandError,
+    WorkingTreeModifiedError,
+    WrongObjectException,
+)
 from dulwich.graph import find_merge_base
 from dulwich.index import ConflictedIndexEntry
 from dulwich.objects import Commit
 from dulwich.repo import Repo
 
 from shortcake._trailers import Trailers
+
+DULWICH_ERRORS = (
+    ApplyDeltaError,
+    CommitError,
+    FileFormatException,
+    GitProtocolError,
+    HangupException,
+    HookError,
+    MissingCommitError,
+    NotBlobError,
+    NotCommitError,
+    NotGitRepository,
+    NotTagError,
+    NotTreeError,
+    ObjectFormatException,
+    PackedRefsException,
+    RefFormatError,
+    SendPackError,
+    UnexpectedCommandError,
+    WorkingTreeModifiedError,
+    WrongObjectException,
+)
+
+DULWICH_HOOK_ERRORS = DULWICH_ERRORS + (OSError, subprocess.SubprocessError)
+DULWICH_REBASE_ERRORS = DULWICH_ERRORS + (OSError, ValueError, KeyError)
+DULWICH_IO_ERRORS = DULWICH_ERRORS + (OSError,)
 
 
 def open_repo(path: Path | None = None) -> Repo:
@@ -159,7 +205,7 @@ def run_precommit_hook(repo: Repo) -> tuple[bool, str | None]:
         if result.returncode != 0:
             return False, result.stdout or result.stderr
         return True, None
-    except (DulwichError, OSError, subprocess.SubprocessError) as e:
+    except DULWICH_HOOK_ERRORS as e:
         return False, str(e)
 
 
@@ -330,7 +376,7 @@ def rebase_branch(repo: Repo, branch: str, onto: str, upstream: str) -> None:
         porcelain.reset(repo, mode="hard", treeish=onto)
         for commit in commits:
             porcelain.cherry_pick(repo, commit)
-    except (DulwichError, OSError, ValueError, KeyError) as e:
+    except DULWICH_REBASE_ERRORS as e:
         raise RebaseFailure(str(e) or "Dulwich rebase failed") from e
 
 
@@ -341,7 +387,7 @@ def rebase_continue(repo: Repo) -> None:
             porcelain.cherry_pick(repo, None, continue_=True)
         else:
             raise RebaseFailure("No cherry-pick in progress.")
-    except (DulwichError, OSError, ValueError, KeyError) as e:
+    except DULWICH_REBASE_ERRORS as e:
         raise RebaseFailure(str(e) or "Rebase continue failed") from e
 
 
@@ -352,7 +398,7 @@ def rebase_abort(repo: Repo) -> None:
             porcelain.cherry_pick(repo, None, abort=True)
         else:
             raise RebaseFailure("No cherry-pick in progress.")
-    except (DulwichError, OSError, ValueError, KeyError) as e:
+    except DULWICH_REBASE_ERRORS as e:
         raise RebaseFailure(str(e) or "Rebase abort failed") from e
 
 
@@ -360,7 +406,7 @@ def cherry_pick(repo: Repo, commit: bytes) -> None:
     """Cherry-pick a commit onto the current branch."""
     try:
         porcelain.cherry_pick(repo, commit)
-    except (DulwichError, OSError, ValueError, KeyError) as e:
+    except DULWICH_REBASE_ERRORS as e:
         raise RebaseFailure(str(e) or "Cherry-pick failed") from e
 
 
@@ -371,7 +417,7 @@ def get_conflict_files(repo: Repo) -> list[str]:
     """
     try:
         index = repo.open_index()
-    except (DulwichError, OSError):
+    except DULWICH_IO_ERRORS:
         return []
 
     paths = []
