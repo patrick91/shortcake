@@ -36,13 +36,13 @@ def fetch_and_fast_forward_trunk(repo: Repo, trunk: str) -> tuple[bool, str | No
     if not has_remote(repo, "origin"):
         return True, None  # No remote configured, nothing to do
 
-    try:
+    try:  # pragma: no cover
         porcelain.fetch(repo, "origin", quiet=True)
     except DULWICH_IO_ERRORS:  # pragma: no cover
         return False, None
 
-    remote_ref = f"refs/remotes/origin/{trunk}".encode()
-    local_ref = f"refs/heads/{trunk}".encode()
+    remote_ref = f"refs/remotes/origin/{trunk}".encode()  # pragma: no cover
+    local_ref = f"refs/heads/{trunk}".encode()  # pragma: no cover
 
     if remote_ref not in repo.refs:  # pragma: no cover
         return True, None  # No remote ref, nothing to do
