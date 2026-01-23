@@ -382,6 +382,49 @@ def test_abort_restores_original(repo_with_stack_behind: Repo) -> None:
     assert not RestackState.exists(repo_with_stack_behind)
 
 
+def test_abort_with_invalid_sha(
+    repo_with_stack_behind: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Abort handles invalid SHA gracefully with warning."""
+    original_a = git.get_branch_head(repo_with_stack_behind, "branch_a")
+    original_b = git.get_branch_head(repo_with_stack_behind, "branch_b")
+
+    # Create state
+    state = RestackState(
+        version=STATE_VERSION,
+        original_branch="branch_b",
+        plan=[
+            RestackStep(branch="branch_a", onto="main", merge_base="abc123"),
+            RestackStep(branch="branch_b", onto="branch_a", merge_base="def456"),
+        ],
+        current_index=0,
+        original_refs={
+            "branch_a": original_a.decode(),
+            "branch_b": original_b.decode(),
+        },
+    )
+    state.save(repo_with_stack_behind)
+
+    # Mock update_branch to raise KeyError for branch_b (simulating deleted commit)
+    original_update = git.update_branch
+
+    def mock_update_branch(repo: Repo, branch: str, sha_hex: str) -> None:
+        if branch == "branch_b":
+            raise KeyError(sha_hex)
+        original_update(repo, branch, sha_hex)
+
+    monkeypatch.setattr(git, "update_branch", mock_update_branch)
+
+    result = _abort(repo_with_stack_behind)
+
+    # branch_a should be restored, branch_b should fail gracefully
+    assert "branch_a" in result.restored_branches
+    assert "branch_b" not in result.restored_branches
+
+    # State should still be deleted
+    assert not RestackState.exists(repo_with_stack_behind)
+
+
 # ============================================================================
 # Unit Tests: RestackState
 # ============================================================================

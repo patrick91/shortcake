@@ -34,12 +34,34 @@ class ContinueResult:
 def _apply_remaining_commits(
     repo: Repo, branch: str, merge_base: str, original_head: str, after: bytes | None
 ) -> RebaseResult:
+    """Apply remaining commits after a conflict resolution.
+
+    After resolving a cherry-pick conflict, this function applies any commits
+    that come after the resolved commit in the rebase sequence.
+
+    Args:
+        repo: The git repository
+        branch: Branch being rebased (for error context)
+        merge_base: The merge base SHA (commits after this are rebased)
+        original_head: Original branch head before rebase started
+        after: The commit that was just resolved (skip commits up to and including this)
+
+    Returns:
+        RebaseResult indicating success or failure with error details
+    """
     commits = git.get_rebase_commits(repo, original_head, merge_base)
     start_index = 0
     if after is not None:
         try:
             start_index = commits.index(after) + 1
         except ValueError:
+            # Resolved commit not in list - state may be inconsistent.
+            # Start from beginning; already-applied commits will fail safely.
+            typer.echo(
+                "Warning: Could not find resolved commit in rebase sequence. "
+                "Attempting to continue from the beginning.",
+                err=True,
+            )
             start_index = 0
     for commit in commits[start_index:]:
         try:
