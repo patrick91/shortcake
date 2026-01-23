@@ -49,7 +49,10 @@ def _apply_remaining_commits(
     Returns:
         RebaseResult indicating success or failure with error details
     """
-    commits = git.get_rebase_commits(repo, original_head, merge_base)
+    try:
+        commits = git.get_rebase_commits(repo, original_head, merge_base)
+    except (ValueError, KeyError) as e:
+        return RebaseResult(success=False, error_output=str(e))
     start_index = 0
     if after is not None:
         try:
@@ -66,7 +69,7 @@ def _apply_remaining_commits(
     for commit in commits[start_index:]:
         try:
             git.cherry_pick(repo, commit)
-        except Exception as e:
+        except git.RebaseFailure as e:
             return RebaseResult(success=False, error_output=str(e))
     return RebaseResult(success=True)
 
@@ -77,7 +80,7 @@ def _continue_rebase(repo: Repo | str | Path) -> bool:
         repo_obj = repo if isinstance(repo, Repo) else git.open_repo(Path(repo))
         git.rebase_continue(repo_obj)
         return True
-    except Exception:
+    except git.RebaseFailure:
         return False
 
 
@@ -143,7 +146,7 @@ def _continue(repo: Repo) -> ContinueResult:
         raise ContinueError(
             f"Branch '{current_step.branch}' was not rebased onto "
             f"'{current_step.onto}'. The rebase may have been manually aborted. "
-            f"Run 'sc restack' to restart."
+            "Run 'sc abort' to clean up, then 'sc restack' to restart."
         )
 
     # Continue with remaining branches

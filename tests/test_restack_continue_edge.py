@@ -47,6 +47,29 @@ def test_apply_remaining_commits_commit_not_found(
     assert result.success is True
 
 
+def test_apply_remaining_commits_get_rebase_commits_fails(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _apply_remaining_commits handles get_rebase_commits error."""
+    from shortcake.commands.continue_ import _apply_remaining_commits
+
+    # Mock get_rebase_commits to raise ValueError (e.g., non-linear history)
+    def mock_get_rebase_commits(repo, head, merge_base):
+        raise ValueError("Non-linear history detected")
+
+    monkeypatch.setattr(git, "get_rebase_commits", mock_get_rebase_commits)
+
+    result = _apply_remaining_commits(
+        temp_repo,
+        "main",
+        "abc123",
+        "def456",
+        None,
+    )
+    assert result.success is False
+    assert "Non-linear history" in (result.error_output or "")
+
+
 def test_apply_remaining_commits_cherry_pick_fails(
     temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -71,7 +94,7 @@ def test_apply_remaining_commits_cherry_pick_fails(
 
     # Mock cherry_pick to fail
     def mock_cherry_pick(repo, commit):
-        raise RuntimeError("Cherry-pick failed")
+        raise git.RebaseFailure("Cherry-pick failed")
 
     monkeypatch.setattr(git, "cherry_pick", mock_cherry_pick)
 
@@ -437,9 +460,9 @@ def test_rebase_onto_remote_with_exception(
     branch_a_sha = git.get_branch_head(repo_with_stack, "branch_a")
     repo_with_stack.refs[b"refs/remotes/origin/branch_a"] = branch_a_sha
 
-    # Mock rebase_branch to raise an exception
+    # Mock rebase_branch to raise a rebase failure
     def mock_rebase_branch(*args, **kwargs):
-        raise RuntimeError("Rebase failed")
+        raise git.RebaseFailure("Rebase failed")
 
     monkeypatch.setattr(git, "rebase_branch", mock_rebase_branch)
 
@@ -539,7 +562,7 @@ def test_restack_sync_auto_rebase_with_failure(
 
     # Mock rebase to fail
     def mock_rebase_branch(*args, **kwargs):
-        raise RuntimeError("Rebase failed")
+        raise git.RebaseFailure("Rebase failed")
 
     monkeypatch.setattr(git, "rebase_branch", mock_rebase_branch)
 
@@ -604,7 +627,7 @@ def test_restack_sync_auto_rebase_with_conflict(
 
     # Mock rebase to fail
     def mock_rebase_branch(*args, **kwargs):
-        raise RuntimeError("Conflict during rebase")
+        raise git.RebaseFailure("Conflict during rebase")
 
     monkeypatch.setattr(git, "rebase_branch", mock_rebase_branch)
 

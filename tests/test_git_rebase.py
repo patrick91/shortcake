@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 from dulwich import porcelain
+from dulwich.errors import CommitError
 from dulwich.repo import Repo
 
 from shortcake import _git as git
@@ -42,7 +43,7 @@ def test_rebase_continue_generic_exception(
 
     def mock_cherry_pick(repo, commit, continue_=False, abort=False):
         if continue_:
-            raise RuntimeError("Something went wrong")
+            raise CommitError("Something went wrong")
 
     monkeypatch.setattr(porcelain, "cherry_pick", mock_cherry_pick)
 
@@ -63,7 +64,7 @@ def test_rebase_abort_generic_exception(
 
     def mock_cherry_pick(repo, commit, continue_=False, abort=False):
         if abort:
-            raise RuntimeError("Abort failed badly")
+            raise CommitError("Abort failed badly")
 
     monkeypatch.setattr(porcelain, "cherry_pick", mock_cherry_pick)
 
