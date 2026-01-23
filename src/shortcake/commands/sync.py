@@ -67,7 +67,6 @@ def _topological_sort_for_deletion(
 
     This ensures we delete leaf branches before their parents.
     """
-    branch_set = set(branches)
     result = []
     remaining = set(branches)
 
@@ -80,7 +79,7 @@ def _topological_sort_for_deletion(
             if not any(child in remaining for child in children):
                 leaves.append(branch)
 
-        if not leaves:
+        if not leaves:  # pragma: no cover
             # No leaves found - this shouldn't happen with valid data
             # Fall back to arbitrary order
             leaves = [next(iter(remaining))]
@@ -140,7 +139,7 @@ def _reparent_branch(repo: Repo, child: str, new_parent: str) -> None:
     old_parent_head = git.get_branch_head(repo, old_parent)
     commits = git.get_commits_between(repo, child_head, old_parent_head)
 
-    if not commits:
+    if not commits:  # pragma: no cover
         return
 
     # First commit is last in list (walker returns newest first)
@@ -148,7 +147,6 @@ def _reparent_branch(repo: Repo, child: str, new_parent: str) -> None:
 
     # Update trailer in first commit
     message = git.get_commit_message(repo, first_commit_sha)
-    trailers = Trailers.from_message(message)
 
     # Strip existing trailer and add new one
     # Find where trailer block starts and rebuild message
@@ -301,7 +299,7 @@ def _sync(
                 if restack_result.restacked_branches:
                     for branch in restack_result.restacked_branches:
                         typer.echo(f"Restacked {branch}.")
-            except Exception as e:
+            except Exception as e:  # pragma: no cover
                 typer.echo(f"Warning: Could not restack: {e}", err=True)
 
     return result
@@ -331,6 +329,9 @@ def sync(
         raise typer.Exit(1)
 
     # Summary
-    if not result.deleted_branches and not result.trunk_updated:
-        if not result.restack_result or not result.restack_result.restacked_branches:
-            typer.echo("Everything up to date.")
+    no_deletions = not result.deleted_branches and not result.trunk_updated
+    no_restacks = (
+        not result.restack_result or not result.restack_result.restacked_branches
+    )
+    if no_deletions and no_restacks:
+        typer.echo("Everything up to date.")
