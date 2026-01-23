@@ -16,7 +16,7 @@ def test_get_conflict_files_index_exception(
     """Test get_conflict_files handles index open exception."""
 
     def mock_open_index():
-        raise RuntimeError("Index failed")
+        raise OSError("Index failed")
 
     monkeypatch.setattr(temp_repo, "open_index", mock_open_index)
 

@@ -4,6 +4,7 @@ from typing import Annotated
 
 import typer
 from dulwich import porcelain
+from dulwich.errors import DulwichError
 from dulwich.repo import Repo
 
 from shortcake import _git as git
@@ -146,7 +147,7 @@ def _rebase_branch(repo: Repo, branch: str, onto: str, merge_base: str) -> Rebas
     try:
         git.rebase_branch(repo, branch, onto, merge_base)
         return RebaseResult(success=True)
-    except Exception as e:
+    except git.RebaseFailure as e:
         return RebaseResult(success=False, error_output=str(e))
 
 
@@ -156,7 +157,7 @@ def _get_conflict_files(repo: Repo | str) -> list[str]:
         if isinstance(repo, Repo):
             return git.get_conflict_files(repo)
         return git.get_conflict_files(git.open_repo(Path(repo)))
-    except Exception:
+    except (DulwichError, OSError, ValueError):
         return []
 
 
@@ -238,7 +239,7 @@ def _rebase_onto_remote(repo: Repo, branch: str) -> RebaseResult:
     try:
         git.rebase_branch(repo, branch, remote_ref, merge_base.decode())
         return RebaseResult(success=True)
-    except Exception as e:
+    except git.RebaseFailure as e:
         return RebaseResult(success=False, error_output=str(e))
 
 
@@ -247,7 +248,7 @@ def _fetch_remote(repo: Repo) -> bool:
     try:
         porcelain.fetch(repo, "origin", quiet=True)
         return True
-    except Exception:
+    except (DulwichError, OSError, ValueError):
         return False
 
 
@@ -284,7 +285,7 @@ def _fast_forward_branch(repo: Repo, branch: str) -> bool:
         remote_sha = repo.refs[remote_ref]
         repo.refs[local_ref] = remote_sha
         return True
-    except Exception:
+    except (DulwichError, OSError, KeyError):
         return False
 
 
