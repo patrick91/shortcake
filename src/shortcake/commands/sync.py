@@ -28,38 +28,6 @@ class SyncResult:
     restack_result: RestackResult | None = None
 
 
-def _get_tracked_branches(repo: Repo) -> list[str]:
-    """Get all tracked branches (those with Shortcake-Parent trailer)."""
-    all_branches = set(git.get_all_local_branches(repo))
-    tracked = []
-    for branch in all_branches:
-        parent = git.get_branch_parent(repo, branch, all_branches)
-        if parent is not None:
-            tracked.append(branch)
-    return sorted(tracked)
-
-
-def _is_merged(repo: Repo, branch: str, trunk: str) -> bool:
-    """Check if branch is merged into trunk.
-
-    A branch is merged if its head is an ancestor of trunk head.
-    """
-    branch_head = git.get_branch_head(repo, branch)
-    trunk_head = git.get_branch_head(repo, trunk)
-    return git.is_ancestor(repo, branch_head, trunk_head)
-
-
-def _get_merged_branches(
-    repo: Repo, tracked_branches: list[str], trunk: str
-) -> list[str]:
-    """Get tracked branches that are merged into trunk."""
-    merged = []
-    for branch in tracked_branches:
-        if _is_merged(repo, branch, trunk):
-            merged.append(branch)
-    return merged
-
-
 def _topological_sort_for_deletion(repo: Repo, branches: list[str]) -> list[str]:
     """Sort branches so children come before parents (leaves first).
 
@@ -238,8 +206,8 @@ def _sync(
 
     # 2. Detect merged branches
     typer.echo("Checking for merged branches...")
-    tracked_branches = _get_tracked_branches(repo)
-    merged_branches = _get_merged_branches(repo, tracked_branches, trunk)
+    tracked_branches = git.get_tracked_branches(repo)
+    merged_branches = git.get_merged_branches(repo, tracked_branches, trunk)
 
     if merged_branches:
         # Sort for deletion (leaves first)

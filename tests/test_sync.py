@@ -9,15 +9,17 @@ from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake import _git as git
+from shortcake._git._stack import (
+    get_merged_branches,
+    get_tracked_branches,
+    is_merged,
+)
 from shortcake._trailers import Trailers
 from shortcake.cli import app
 from shortcake.commands.restack import RestackResult
 from shortcake.commands.sync import (
     SyncError,
     SyncResult,
-    _get_merged_branches,
-    _get_tracked_branches,
-    _is_merged,
     _reparent_branch,
     _sync,
     _topological_sort_for_deletion,
@@ -31,7 +33,7 @@ runner = CliRunner()
 
 def test_get_tracked_branches(repo_with_stack: Repo) -> None:
     """Test getting tracked branches."""
-    tracked = _get_tracked_branches(repo_with_stack)
+    tracked = get_tracked_branches(repo_with_stack)
     assert "branch_a" in tracked
     assert "branch_b" in tracked
     assert "main" not in tracked
@@ -39,31 +41,31 @@ def test_get_tracked_branches(repo_with_stack: Repo) -> None:
 
 def test_get_tracked_branches_no_tracked(temp_repo: Repo) -> None:
     """Test with no tracked branches."""
-    tracked = _get_tracked_branches(temp_repo)
+    tracked = get_tracked_branches(temp_repo)
     assert tracked == []
 
 
 def test_is_merged_true(repo_with_merged_branch: Repo) -> None:
     """Test detecting merged branch."""
-    assert _is_merged(repo_with_merged_branch, "feature", "main")
+    assert is_merged(repo_with_merged_branch, "feature", "main")
 
 
 def test_is_merged_false(repo_with_tracked_feature: Repo) -> None:
     """Test non-merged branch."""
-    assert not _is_merged(repo_with_tracked_feature, "feature", "main")
+    assert not is_merged(repo_with_tracked_feature, "feature", "main")
 
 
 def test_get_merged_branches(repo_with_merged_branch: Repo) -> None:
     """Test getting merged branches."""
-    tracked = _get_tracked_branches(repo_with_merged_branch)
-    merged = _get_merged_branches(repo_with_merged_branch, tracked, "main")
+    tracked = get_tracked_branches(repo_with_merged_branch)
+    merged = get_merged_branches(repo_with_merged_branch, tracked, "main")
     assert "feature" in merged
 
 
 def test_get_merged_branches_with_children(repo_with_merged_and_children: Repo) -> None:
     """Test getting merged branches when one has children."""
-    tracked = _get_tracked_branches(repo_with_merged_and_children)
-    merged = _get_merged_branches(repo_with_merged_and_children, tracked, "main")
+    tracked = get_tracked_branches(repo_with_merged_and_children)
+    merged = get_merged_branches(repo_with_merged_and_children, tracked, "main")
     assert "branch_a" in merged
     assert "branch_b" not in merged
 
