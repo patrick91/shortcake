@@ -3,8 +3,12 @@ import time
 from pathlib import Path
 
 from dulwich import porcelain
+from dulwich.graph import find_merge_base
+from dulwich.index import ConflictedIndexEntry
 from dulwich.objects import Commit
 from dulwich.repo import Repo
+
+from shortcake._trailers import Trailers
 
 
 def open_repo(path: Path | None = None) -> Repo:
@@ -76,9 +80,9 @@ def amend_commit_message(repo: Repo, sha: bytes, new_message: str) -> bytes:
     return new_commit.id
 
 
-def update_branch(repo: Repo, branch: str, sha: bytes) -> None:
-    """Update branch to point to commit."""
-    repo.refs[f"refs/heads/{branch}".encode()] = sha
+def update_branch(repo: Repo, branch: str, sha_hex: str) -> None:
+    """Update branch to point to commit (sha_hex is 40-char hex string)."""
+    repo.refs[f"refs/heads/{branch}".encode()] = sha_hex.encode()
 
 
 def get_all_local_branches(repo: Repo) -> list[str]:
@@ -104,9 +108,9 @@ def set_head_to_branch(repo: Repo, branch: str) -> None:
     repo.refs.set_symbolic_ref(b"HEAD", f"refs/heads/{branch}".encode())
 
 
-def switch_branch(repo: Repo, branch: str) -> None:
+def switch_branch(repo: Repo, branch: str, force: bool = False) -> None:
     """Switch to branch, updating working directory and index."""
-    porcelain.switch(repo, branch)
+    porcelain.switch(repo, branch, force=force)
 
 
 def has_staged_changes(repo: Repo) -> bool:
@@ -185,7 +189,6 @@ def get_branch_parent(repo: Repo, branch: str, all_branches: set[str]) -> str | 
     Returns:
         Parent branch name if found, None otherwise
     """
-    from shortcake._trailers import Trailers
 
     branch_head = get_branch_head(repo, branch)
 
@@ -244,3 +247,149 @@ def get_branch_children(repo: Repo, branch: str) -> list[str]:
         if parent == branch:
             children.append(potential_child)
     return sorted(children)
+
+
+def get_merge_base(repo: Repo, commit1: bytes, commit2: bytes) -> bytes | None:
+    """Get merge base of two commits using dulwich.
+
+    Returns the common ancestor of two commits, or None if no common ancestor.
+    """
+
+    bases = find_merge_base(repo, [commit1, commit2])
+    return bases[0] if bases else None
+
+
+def get_rebase_commits(
+    repo: Repo, head: bytes | str, merge_base: bytes | str
+) -> list[bytes]:
+    """Get commits to rebase in chronological order (oldest first)."""
+    head_bytes = head.encode() if isinstance(head, str) else head
+    merge_base_bytes = (
+        merge_base.encode() if isinstance(merge_base, str) else merge_base
+    )
+
+    if head_bytes == merge_base_bytes:
+        return []
+
+    commits: list[bytes] = []
+    current = repo[head_bytes]
+    while current.id != merge_base_bytes:
+        commits.append(current.id)
+        if not current.parents:
+            break
+        current = repo[current.parents[0]]
+
+    return list(reversed(commits))
+
+
+def is_rebase_in_progress(repo: Repo) -> bool:
+    """Check if git rebase is in progress."""
+    git_dir = Path(repo.controldir())
+    return (
+        (git_dir / "rebase-merge").exists()
+        or (git_dir / "rebase-apply").exists()
+        or (git_dir / "CHERRY_PICK_HEAD").exists()
+    )
+
+
+def get_cherry_pick_head(repo: Repo) -> bytes | None:
+    """Return current CHERRY_PICK_HEAD, if any."""
+    head_path = Path(repo.controldir()) / "CHERRY_PICK_HEAD"
+    if not head_path.exists():
+        return None
+    data = head_path.read_bytes().strip()
+    return data or None
+
+
+class RebaseFailure(RuntimeError):
+    """Raised when a dulwich rebase operation fails."""
+
+
+def rebase_branch(repo: Repo, branch: str, onto: str, upstream: str) -> None:
+    """Rebase branch onto target using dulwich cherry-pick."""
+    try:
+        head = get_branch_head(repo, branch)
+        commits = get_rebase_commits(repo, head, upstream)
+        switch_branch(repo, branch)
+        porcelain.reset(repo, mode="hard", treeish=onto)
+        for commit in commits:
+            porcelain.cherry_pick(repo, commit)
+    except Exception as e:
+        raise RebaseFailure(str(e) or "Dulwich rebase failed") from e
+
+
+def rebase_continue(repo: Repo) -> None:
+    """Continue an in-progress cherry-pick rebase."""
+    try:
+        if get_cherry_pick_head(repo) is not None:
+            porcelain.cherry_pick(repo, None, continue_=True)
+        else:
+            raise RebaseFailure("No cherry-pick in progress.")
+    except Exception as e:
+        raise RebaseFailure(str(e) or "Rebase continue failed") from e
+
+
+def rebase_abort(repo: Repo) -> None:
+    """Abort an in-progress cherry-pick rebase."""
+    try:
+        if get_cherry_pick_head(repo) is not None:
+            porcelain.cherry_pick(repo, None, abort=True)
+        else:
+            raise RebaseFailure("No cherry-pick in progress.")
+    except Exception as e:
+        raise RebaseFailure(str(e) or "Rebase abort failed") from e
+
+
+def cherry_pick(repo: Repo, commit: bytes) -> None:
+    """Cherry-pick a commit onto the current branch."""
+    porcelain.cherry_pick(repo, commit)
+
+
+def get_conflict_files(repo: Repo) -> list[str]:
+    """Get list of files with conflicts from the index.
+
+    Returns empty list if no conflicts found or on any error.
+    """
+    try:
+        index = repo.open_index()
+    except Exception:
+        return []
+
+    paths = []
+    for path, entry in index.items():
+        if isinstance(entry, ConflictedIndexEntry):
+            paths.append(path.decode())
+
+    return sorted(paths)
+
+
+def has_uncommitted_changes(repo: Repo) -> bool:
+    """Check for uncommitted changes (staged or unstaged)."""
+    status = porcelain.status(repo)
+    return bool(
+        status.staged["add"]
+        or status.staged["modify"]
+        or status.staged["delete"]
+        or status.unstaged
+    )
+
+
+def is_ancestor(repo: Repo, maybe_ancestor: bytes, descendant: bytes) -> bool:
+    """Check if commit is ancestor of another.
+
+    Returns True if maybe_ancestor is reachable from descendant.
+    """
+    if maybe_ancestor == descendant:
+        return True
+
+    merge_base = get_merge_base(repo, maybe_ancestor, descendant)
+    return merge_base == maybe_ancestor
+
+
+def get_remote_ref(repo: Repo, remote_branch: str) -> bytes | None:
+    """Get SHA of remote ref like origin/branch_a."""
+    full_ref = f"refs/remotes/{remote_branch}".encode()
+    try:
+        return repo.refs[full_ref]
+    except KeyError:
+        return None
