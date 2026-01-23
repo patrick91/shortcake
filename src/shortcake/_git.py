@@ -263,11 +263,10 @@ def get_branch_parent(repo: Repo, branch: str, all_branches: set[str]) -> str | 
 
         message = get_commit_message(repo, commit_sha)
         trailers = Trailers.from_message(message)
-        if trailers.parent_branch is not None:
-            # A branch cannot be its own parent (can happen if merged commits
-            # with trailers end up in the trunk)
-            if trailers.parent_branch != branch:
-                return trailers.parent_branch
+        # A branch cannot be its own parent (can happen if merged commits
+        # with trailers end up in the trunk)
+        if trailers.parent_branch is not None and trailers.parent_branch != branch:
+            return trailers.parent_branch
 
         # Add parents to visit
         commit = repo[commit_sha]
