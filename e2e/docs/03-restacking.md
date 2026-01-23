@@ -55,13 +55,10 @@ Rebasing 'add-repository-layer' onto 'add-database-schema'...
 Restacked 1 branch(es) successfully.
 ```
 
-Verify the stack is now up to date:
+Verify the child branch now includes the parent's changes:
 
 ```console
-$ sc ls
-◉ add-repository-layer (current)
-│
-◯ add-database-schema
-│
-◯ main
+$ cat schema.sql
+CREATE TABLE users;
+CREATE TABLE posts;
 ```

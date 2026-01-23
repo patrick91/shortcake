@@ -33,6 +33,14 @@ class CodeBlock:
 
 
 @dataclass
+class TestEnv:
+    """Test environment with repo and optional remote."""
+
+    repo_dir: Path
+    remote_dir: Path | None = None
+
+
+@dataclass
 class TestResult:
     """Result of running a code block."""
 
@@ -105,7 +113,7 @@ def parse_console_block(lines: list[str]) -> list[tuple[str, str]]:
     return commands
 
 
-def setup_test_repo() -> Path:
+def setup_test_repo() -> TestEnv:
     """Create a fresh git repo for testing."""
     repo_dir = Path(tempfile.mkdtemp(prefix="shortcake_test_"))
 
@@ -140,19 +148,178 @@ def setup_test_repo() -> Path:
         check=True,
     )
 
-    return repo_dir
+    return TestEnv(repo_dir=repo_dir)
 
 
-def run_command(cmd: str, cwd: Path) -> str:
-    """Run a shell command and return output."""
-    # Handle special reset command
-    if cmd.strip() == "# reset":
+def setup_remote(env: TestEnv) -> None:
+    """Create a bare remote and push main to it."""
+    remote_dir = Path(tempfile.mkdtemp(prefix="shortcake_remote_"))
+
+    # Create bare repo
+    subprocess.run(
+        ["git", "init", "--bare"],
+        cwd=remote_dir,
+        capture_output=True,
+        check=True,
+    )
+
+    # Add remote to local repo
+    subprocess.run(
+        ["git", "remote", "add", "origin", str(remote_dir)],
+        cwd=env.repo_dir,
+        capture_output=True,
+        check=True,
+    )
+
+    # Push main
+    subprocess.run(
+        ["git", "push", "-u", "origin", "main"],
+        cwd=env.repo_dir,
+        capture_output=True,
+        check=True,
+    )
+
+    env.remote_dir = remote_dir
+
+
+def update_remote_main(env: TestEnv) -> None:
+    """Simulate remote main advancing by committing directly to remote.
+
+    Creates a temp clone of the remote, commits, and pushes.
+    """
+    if env.remote_dir is None:
+        return
+
+    temp_clone = Path(tempfile.mkdtemp(prefix="shortcake_clone_"))
+    try:
+        subprocess.run(
+            ["git", "clone", str(env.remote_dir), "."],
+            cwd=temp_clone,
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "remote@example.com"],
+            cwd=temp_clone,
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Remote User"],
+            cwd=temp_clone,
+            capture_output=True,
+            check=True,
+        )
+        # Create a commit on main
+        (temp_clone / "remote_change.txt").write_text("Remote change\n")
+        subprocess.run(
+            ["git", "add", "remote_change.txt"],
+            cwd=temp_clone,
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "commit", "-m", "Remote commit on main"],
+            cwd=temp_clone,
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "push", "origin", "main"],
+            cwd=temp_clone,
+            capture_output=True,
+            check=True,
+        )
+    finally:
+        shutil.rmtree(temp_clone, ignore_errors=True)
+
+
+def force_push_to_remote(env: TestEnv, branch: str) -> None:
+    """Simulate someone force-pushing a branch with different commits.
+
+    Creates a temp clone of the remote, makes a different commit on the branch,
+    and force pushes.
+    """
+    if env.remote_dir is None:
+        return
+
+    temp_clone = Path(tempfile.mkdtemp(prefix="shortcake_clone_"))
+    try:
+        subprocess.run(
+            ["git", "clone", str(env.remote_dir), "."],
+            cwd=temp_clone,
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.email", "remote@example.com"],
+            cwd=temp_clone,
+            capture_output=True,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Remote User"],
+            cwd=temp_clone,
+            capture_output=True,
+            check=True,
+        )
+        # Checkout the branch
+        subprocess.run(
+            ["git", "checkout", branch],
+            cwd=temp_clone,
+            capture_output=True,
+            check=True,
+        )
+        # Amend the last commit to create divergence
+        subprocess.run(
+            ["git", "commit", "--amend", "-m", "Force-pushed commit"],
+            cwd=temp_clone,
+            capture_output=True,
+            check=True,
+        )
+        # Force push
+        subprocess.run(
+            ["git", "push", "--force", "origin", branch],
+            cwd=temp_clone,
+            capture_output=True,
+            check=True,
+        )
+    finally:
+        shutil.rmtree(temp_clone, ignore_errors=True)
+
+
+def run_command(cmd: str, env: TestEnv) -> str:
+    """Run a shell command and return output.
+
+    Handles special meta-commands:
+    - # reset: No-op placeholder
+    - # setup: with-remote: Create bare remote and push main
+    - # remote: update-main: Simulate remote main advancing
+    - # remote: force-push <branch>: Simulate force-push to branch
+    """
+    cmd_stripped = cmd.strip()
+
+    # Handle special meta-commands
+    if cmd_stripped == "# reset":
+        return ""
+
+    if cmd_stripped == "# setup: with-remote":
+        setup_remote(env)
+        return ""
+
+    if cmd_stripped == "# remote: update-main":
+        update_remote_main(env)
+        return ""
+
+    if cmd_stripped.startswith("# remote: force-push "):
+        branch = cmd_stripped.replace("# remote: force-push ", "").strip()
+        force_push_to_remote(env, branch)
         return ""
 
     result = subprocess.run(
         cmd,
         shell=True,
-        cwd=cwd,
+        cwd=env.repo_dir,
         capture_output=True,
         text=True,
         env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
@@ -185,12 +352,12 @@ def normalize_output(output: str) -> str:
     return "\n".join(normalized)
 
 
-def run_code_block(block: CodeBlock, repo_dir: Path) -> list[TestResult]:
+def run_code_block(block: CodeBlock, env: TestEnv) -> list[TestResult]:
     """Run all commands in a code block, return results."""
     results = []
 
     for cmd, expected in block.commands:
-        actual = run_command(cmd, repo_dir)
+        actual = run_command(cmd, env)
 
         # Normalize both for comparison
         expected_norm = normalize_output(expected)
@@ -245,7 +412,7 @@ def run_markdown_file(
         return 0, 0
 
     # Each file gets a fresh repo
-    repo_dir = setup_test_repo()
+    env = setup_test_repo()
 
     try:
         passed = 0
@@ -253,7 +420,7 @@ def run_markdown_file(
         all_results = []
 
         for block in blocks:
-            results = run_code_block(block, repo_dir)
+            results = run_code_block(block, env)
             all_results.append(results)
 
             for result in results:
@@ -276,7 +443,9 @@ def run_markdown_file(
         return passed, failed
 
     finally:
-        shutil.rmtree(repo_dir, ignore_errors=True)
+        shutil.rmtree(env.repo_dir, ignore_errors=True)
+        if env.remote_dir is not None:
+            shutil.rmtree(env.remote_dir, ignore_errors=True)
 
 
 def indent(text: str, spaces: int) -> str:
