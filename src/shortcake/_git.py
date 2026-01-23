@@ -51,11 +51,12 @@ DULWICH_ERRORS = (
     UnexpectedCommandError,
     WorkingTreeModifiedError,
     WrongObjectException,
+    porcelain.Error,  # Cherry-pick conflict errors
 )
 
-DULWICH_HOOK_ERRORS = DULWICH_ERRORS + (OSError, subprocess.SubprocessError)
-DULWICH_REBASE_ERRORS = DULWICH_ERRORS + (OSError, ValueError, KeyError)
-DULWICH_IO_ERRORS = DULWICH_ERRORS + (OSError,)
+DULWICH_HOOK_ERRORS = (*DULWICH_ERRORS, OSError, subprocess.SubprocessError)
+DULWICH_REBASE_ERRORS = (*DULWICH_ERRORS, OSError, ValueError, KeyError)
+DULWICH_IO_ERRORS = (*DULWICH_ERRORS, OSError)
 
 
 def open_repo(path: Path | None = None) -> Repo:
