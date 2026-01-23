@@ -10,8 +10,8 @@ from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 
-RESTACK_READ_ERRORS = git.DULWICH_IO_ERRORS + (ValueError,)
-RESTACK_REF_ERRORS = git.DULWICH_IO_ERRORS + (KeyError,)
+RESTACK_READ_ERRORS = (*git.DULWICH_IO_ERRORS, ValueError)
+RESTACK_REF_ERRORS = (*git.DULWICH_IO_ERRORS, KeyError)
 
 
 class RestackError(ShortcakeError):
