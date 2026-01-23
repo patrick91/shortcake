@@ -304,6 +304,12 @@ class RebaseFailure(RuntimeError):
     """Raised when a dulwich rebase operation fails."""
 
 
+# Git index stage mask: bits 12-13 of the flags field indicate the merge stage
+# Stage 0 = normal, 1 = base, 2 = ours, 3 = theirs (non-zero = conflict)
+_INDEX_STAGE_MASK = 0x3
+_INDEX_STAGE_SHIFT = 12
+
+
 def _decode_path(path: object) -> str:
     if isinstance(path, bytes):
         return path.decode()
@@ -462,18 +468,40 @@ def cherry_pick(repo: Repo, commit: bytes) -> None:
 
 
 def get_conflict_files(repo: Repo) -> list[str]:
-    """Best-effort list of conflict files for an in-progress merge/rebase."""
+    """Best-effort list of conflict files for an in-progress merge/rebase.
+
+    Dulwich's API for detecting conflicts varies across versions, so this function
+    tries multiple approaches in order of preference:
+
+    1. porcelain.status() attributes: Check for 'unmerged', 'conflicted', or
+       'conflicts' attributes directly on the status object (newer dulwich)
+
+    2. Nested status dicts: Check inside status.staged/unstaged dicts for
+       conflict-related keys (some dulwich versions nest this info)
+
+    3. Index conflict methods: Try index.iterconflicts() or index.conflicts()
+       which some versions provide
+
+    4. Index stage inspection: Fall back to manually checking each index entry's
+       stage bits - non-zero stage indicates a merge conflict entry
+
+    Returns empty list if no conflicts found or on any error.
+    """
+    # Approach 1 & 2: Try porcelain.status() which may expose conflicts directly
     try:
         status = porcelain.status(repo)
     except Exception:
         status = None
 
     if status is not None:
+        # Approach 1: Direct attributes on status object
         for attr in ("unmerged", "conflicted", "conflicts"):
             if hasattr(status, attr):
                 paths = _normalize_paths(getattr(status, attr))
                 if paths:
                     return paths
+
+        # Approach 2: Nested inside staged/unstaged dicts
         staged = getattr(status, "staged", None)
         unstaged = getattr(status, "unstaged", None)
         for container in (staged, unstaged):
@@ -483,11 +511,14 @@ def get_conflict_files(repo: Repo) -> list[str]:
                         paths = _normalize_paths(container[key])
                         if paths:
                             return paths
+
+        # Fallback: unstaged files during conflict often indicate conflict files
         if unstaged:
             paths = _normalize_paths(unstaged)
             if paths:
                 return paths
 
+    # Approach 3: Try index conflict methods
     try:
         index = repo.open_index()
     except Exception:
@@ -509,6 +540,7 @@ def get_conflict_files(repo: Repo) -> list[str]:
             if paths:
                 return sorted(paths)
 
+    # Approach 4: Manual stage inspection - check each index entry's stage bits
     items = None
     items_fn = getattr(index, "items", None)
     if callable(items_fn):
@@ -529,12 +561,15 @@ def get_conflict_files(repo: Repo) -> list[str]:
             continue
         path = key
         stage = None
+        # Some versions use (path, stage) tuple as key
         if isinstance(key, tuple) and len(key) == 2 and isinstance(key[1], int):
             path, stage = key
         else:
+            # Others encode stage in the entry's flags field
             flags = getattr(entry, "flags", None)
             if isinstance(flags, int):
-                stage = (flags >> 12) & 0x3
+                stage = (flags >> _INDEX_STAGE_SHIFT) & _INDEX_STAGE_MASK
+        # Non-zero stage means this is a conflict entry (base/ours/theirs)
         if stage:
             paths.add(_decode_path(path))
 

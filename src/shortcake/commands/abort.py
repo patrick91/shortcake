@@ -47,8 +47,15 @@ def _abort(repo: Repo) -> AbortResult:
     # Restore original refs
     restored = []
     for branch, sha_hex in state.original_refs.items():
-        git.update_branch(repo, branch, sha_hex)
-        restored.append(branch)
+        try:
+            git.update_branch(repo, branch, sha_hex)
+            restored.append(branch)
+        except KeyError:
+            typer.echo(
+                f"Warning: Could not restore '{branch}' - "
+                f"commit {sha_hex[:8]} no longer exists.",
+                err=True,
+            )
 
     # Clean up state
     state.delete(repo)
