@@ -1,4 +1,3 @@
-import inspect
 import subprocess
 import time
 from pathlib import Path
@@ -331,102 +330,6 @@ def _normalize_paths(value: object) -> list[str]:
     return sorted({p for p in paths if p})
 
 
-def _porcelain_rebase_start(
-    repo: Repo, upstream: str, onto: str | None, branch: str | None
-) -> None:
-    if not hasattr(porcelain, "rebase"):
-        raise RebaseFailure("Dulwich rebase is unavailable in this version.")
-    rebase_fn = porcelain.rebase
-    try:
-        sig = inspect.signature(rebase_fn)
-        params = sig.parameters
-    except (TypeError, ValueError):  # pragma: no cover - version-dependent
-        params = {}  # pragma: no cover
-
-    kwargs: dict[str, object] = {}
-    if "upstream" in params:
-        kwargs["upstream"] = upstream
-    elif "upstream_ref" in params:
-        kwargs["upstream_ref"] = upstream
-
-    if onto is not None:
-        if "onto" in params:
-            kwargs["onto"] = onto
-        elif "onto_name" in params:
-            kwargs["onto_name"] = onto
-        elif params:
-            raise RebaseFailure(
-                "Dulwich rebase does not support --onto in this version."
-            )
-
-    if branch is not None:
-        if "branch" in params:
-            kwargs["branch"] = branch
-        elif "branch_name" in params:
-            kwargs["branch_name"] = branch
-        else:
-            if get_current_branch(repo) != branch:
-                switch_branch(repo, branch)
-
-    try:
-        if "upstream" in params or "upstream_ref" in params:
-            rebase_fn(repo, **kwargs)
-            return
-        # Positional fallback for older dulwich versions
-        if onto is not None:  # pragma: no cover - version-dependent
-            rebase_fn(repo, upstream, onto, **kwargs)  # pragma: no cover
-        else:  # pragma: no cover - version-dependent
-            rebase_fn(repo, upstream, **kwargs)  # pragma: no cover
-    except TypeError as e:  # pragma: no cover - version-dependent fallback
-        raise RebaseFailure(str(e) or "Dulwich rebase failed") from e
-
-
-def _porcelain_rebase_control(
-    repo: Repo, *, abort: bool, continue_rebase: bool
-) -> None:
-    if abort and continue_rebase:
-        raise RebaseFailure("Cannot abort and continue a rebase at the same time.")
-
-    if abort and hasattr(porcelain, "rebase_abort"):
-        porcelain.rebase_abort(repo)
-        return
-    if continue_rebase and hasattr(porcelain, "rebase_continue"):
-        porcelain.rebase_continue(repo)
-        return
-
-    if not hasattr(porcelain, "rebase"):
-        raise RebaseFailure("Dulwich rebase is unavailable in this version.")
-
-    rebase_fn = porcelain.rebase
-    try:
-        sig = inspect.signature(rebase_fn)
-        params = sig.parameters
-    except (TypeError, ValueError):  # pragma: no cover - version-dependent
-        params = {}  # pragma: no cover
-
-    kwargs: dict[str, object] = {}
-    if abort:
-        if "abort" in params:
-            kwargs["abort"] = True
-        elif "abort_rebase" in params:
-            kwargs["abort_rebase"] = True
-        else:
-            raise RebaseFailure("Dulwich rebase abort is unavailable in this version.")
-    if continue_rebase:
-        if "continue_rebase" in params:
-            kwargs["continue_rebase"] = True
-        elif "continue_" in params:
-            kwargs["continue_"] = True
-        elif "continue" in params:  # pragma: no cover - reserved word param
-            kwargs["continue"] = True  # pragma: no cover
-        else:
-            raise RebaseFailure(
-                "Dulwich rebase continue is unavailable in this version."
-            )
-
-    rebase_fn(repo, **kwargs)
-
-
 def rebase_branch(repo: Repo, branch: str, onto: str, upstream: str) -> None:
     """Rebase branch onto target using dulwich cherry-pick."""
     try:
@@ -441,25 +344,29 @@ def rebase_branch(repo: Repo, branch: str, onto: str, upstream: str) -> None:
 
 
 def rebase_continue(repo: Repo) -> None:
-    """Continue an in-progress rebase using dulwich."""
+    """Continue an in-progress cherry-pick rebase."""
     try:
         if get_cherry_pick_head(repo) is not None:
             porcelain.cherry_pick(repo, None, continue_=True)
         else:
-            _porcelain_rebase_control(repo, abort=False, continue_rebase=True)
+            raise RebaseFailure("No cherry-pick in progress.")
+    except RebaseFailure:
+        raise
     except Exception as e:
-        raise RebaseFailure(str(e) or "Dulwich rebase continue failed") from e
+        raise RebaseFailure(str(e) or "Rebase continue failed") from e
 
 
 def rebase_abort(repo: Repo) -> None:
-    """Abort an in-progress rebase using dulwich."""
+    """Abort an in-progress cherry-pick rebase."""
     try:
         if get_cherry_pick_head(repo) is not None:
             porcelain.cherry_pick(repo, None, abort=True)
         else:
-            _porcelain_rebase_control(repo, abort=True, continue_rebase=False)
+            raise RebaseFailure("No cherry-pick in progress.")
+    except RebaseFailure:
+        raise
     except Exception as e:
-        raise RebaseFailure(str(e) or "Dulwich rebase abort failed") from e
+        raise RebaseFailure(str(e) or "Rebase abort failed") from e
 
 
 def cherry_pick(repo: Repo, commit: bytes) -> None:

@@ -577,3 +577,50 @@ def test_get_conflict_files_index_conflicts_non_tuple(
 
     files = git.get_conflict_files(temp_repo)
     assert sorted(files) == ["conflict1.txt", "conflict2.txt"]
+
+
+# ============================================================================
+# Tests for rebase_continue and rebase_abort exception handling
+# ============================================================================
+
+
+def test_rebase_continue_generic_exception(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test rebase_continue wraps generic exceptions as RebaseFailure."""
+    from shortcake._git import RebaseFailure
+
+    # Create CHERRY_PICK_HEAD so it thinks a cherry-pick is in progress
+    head_path = Path(temp_repo.controldir()) / "CHERRY_PICK_HEAD"
+    head_sha = temp_repo.refs[b"refs/heads/main"]
+    head_path.write_bytes(head_sha)
+
+    def mock_cherry_pick(repo, commit, continue_=False, abort=False):
+        if continue_:
+            raise RuntimeError("Something went wrong")
+
+    monkeypatch.setattr(porcelain, "cherry_pick", mock_cherry_pick)
+
+    with pytest.raises(RebaseFailure, match="Something went wrong"):
+        git.rebase_continue(temp_repo)
+
+
+def test_rebase_abort_generic_exception(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test rebase_abort wraps generic exceptions as RebaseFailure."""
+    from shortcake._git import RebaseFailure
+
+    # Create CHERRY_PICK_HEAD so it thinks a cherry-pick is in progress
+    head_path = Path(temp_repo.controldir()) / "CHERRY_PICK_HEAD"
+    head_sha = temp_repo.refs[b"refs/heads/main"]
+    head_path.write_bytes(head_sha)
+
+    def mock_cherry_pick(repo, commit, continue_=False, abort=False):
+        if abort:
+            raise RuntimeError("Abort failed badly")
+
+    monkeypatch.setattr(porcelain, "cherry_pick", mock_cherry_pick)
+
+    with pytest.raises(RebaseFailure, match="Abort failed badly"):
+        git.rebase_abort(temp_repo)
