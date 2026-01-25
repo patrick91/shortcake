@@ -1,3 +1,5 @@
+"""Core git operations: repo, branches, commits, staging."""
+
 import subprocess
 import time
 from pathlib import Path
@@ -24,12 +26,9 @@ from dulwich.errors import (
     WorkingTreeModifiedError,
     WrongObjectException,
 )
-from dulwich.graph import find_merge_base
 from dulwich.index import ConflictedIndexEntry
 from dulwich.objects import Commit
 from dulwich.repo import Repo
-
-from shortcake._trailers import Trailers
 
 DULWICH_ERRORS = (
     ApplyDeltaError,
@@ -55,7 +54,6 @@ DULWICH_ERRORS = (
 )
 
 DULWICH_HOOK_ERRORS = (*DULWICH_ERRORS, OSError, subprocess.SubprocessError)
-DULWICH_REBASE_ERRORS = (*DULWICH_ERRORS, OSError, ValueError, KeyError)
 DULWICH_IO_ERRORS = (*DULWICH_ERRORS, OSError)
 
 
@@ -144,6 +142,13 @@ def create_branch(repo: Repo, name: str, sha: bytes) -> None:
     repo.refs[f"refs/heads/{name}".encode()] = sha
 
 
+def delete_branch(repo: Repo, branch: str) -> None:
+    """Delete a local branch."""
+    ref = f"refs/heads/{branch}".encode()
+    if ref in repo.refs:
+        del repo.refs[ref]
+
+
 def set_head_to_branch(repo: Repo, branch: str) -> None:
     """Set HEAD to branch without updating working directory.
 
@@ -222,193 +227,15 @@ def amend_commit(repo: Repo, message: str, no_verify: bool = False) -> bytes:
     )
 
 
-def get_branch_parent(repo: Repo, branch: str, all_branches: set[str]) -> str | None:
-    """
-    Get parent from Shortcake-Parent trailer in first commit.
-
-    Walks commits from branch head to find the first commit that has the trailer,
-    or until we reach a commit that's on another branch.
-
-    Args:
-        repo: The git repository
-        branch: The branch name to check
-        all_branches: Set of all branch names for determining boundaries
-
-    Returns:
-        Parent branch name if found, None otherwise
-    """
-
-    branch_head = get_branch_head(repo, branch)
-
-    # Get heads of other branches to know where to stop
-    other_branch_heads: set[bytes] = set()
-    for other_branch in all_branches:
-        if other_branch != branch:
-            other_branch_heads.add(get_branch_head(repo, other_branch))
-
-    # Walk commits from branch head
-    seen: set[bytes] = set()
-    to_visit = [branch_head]
-
-    while to_visit:
-        commit_sha = to_visit.pop(0)
-
-        if commit_sha in seen:
-            continue
-        seen.add(commit_sha)
-
-        # Stop if we've reached another branch's head
-        if commit_sha in other_branch_heads:
-            continue
-
-        message = get_commit_message(repo, commit_sha)
-        trailers = Trailers.from_message(message)
-        if trailers.parent_branch is not None:
-            return trailers.parent_branch
-
-        # Add parents to visit
-        commit = repo[commit_sha]
-        for parent_sha in commit.parents:
-            if parent_sha not in seen:
-                to_visit.append(parent_sha)
-
-    return None
-
-
-def get_branch_children(repo: Repo, branch: str) -> list[str]:
-    """
-    Get all branches whose parent is the given branch.
-
-    Args:
-        repo: The git repository
-        branch: The branch name to find children for
-
-    Returns:
-        Sorted list of branch names that have this branch as parent
-    """
-    all_branches = set(get_all_local_branches(repo))
-    children = []
-    for potential_child in all_branches:
-        if potential_child == branch:
-            continue
-        parent = get_branch_parent(repo, potential_child, all_branches)
-        if parent == branch:
-            children.append(potential_child)
-    return sorted(children)
-
-
-def get_merge_base(repo: Repo, commit1: bytes, commit2: bytes) -> bytes | None:
-    """Get merge base of two commits using dulwich.
-
-    Returns the common ancestor of two commits, or None if no common ancestor.
-    """
-
-    bases = find_merge_base(repo, [commit1, commit2])
-    return bases[0] if bases else None
-
-
-def get_rebase_commits(
-    repo: Repo, head: bytes | str, merge_base: bytes | str
-) -> list[bytes]:
-    """Get commits to rebase in chronological order (oldest first).
-
-    Shortcake restack supports linear history only. If a merge commit is
-    encountered on the first-parent chain, or the merge base is not on that
-    chain, this raises a ValueError.
-    """
-    head_bytes = head.encode() if isinstance(head, str) else head
-    merge_base_bytes = (
-        merge_base.encode() if isinstance(merge_base, str) else merge_base
+def has_uncommitted_changes(repo: Repo) -> bool:
+    """Check for uncommitted changes (staged or unstaged)."""
+    status = porcelain.status(repo)
+    return bool(
+        status.staged["add"]
+        or status.staged["modify"]
+        or status.staged["delete"]
+        or status.unstaged
     )
-
-    if head_bytes == merge_base_bytes:
-        return []
-
-    commits: list[bytes] = []
-    current = repo[head_bytes]
-    while True:
-        if current.id == merge_base_bytes:
-            return list(reversed(commits))
-        if len(current.parents) > 1:
-            raise ValueError(
-                "Non-linear history detected (merge commit). "
-                "Shortcake restack supports linear stacks only."
-            )
-        commits.append(current.id)
-        if not current.parents:
-            break
-        current = repo[current.parents[0]]
-
-    raise ValueError(
-        "Merge base not found on first-parent chain. "
-        "History may be non-linear or unrelated."
-    )
-
-
-def is_rebase_in_progress(repo: Repo) -> bool:
-    """Check if git rebase is in progress."""
-    git_dir = Path(repo.controldir())
-    return (
-        (git_dir / "rebase-merge").exists()
-        or (git_dir / "rebase-apply").exists()
-        or (git_dir / "CHERRY_PICK_HEAD").exists()
-    )
-
-
-def get_cherry_pick_head(repo: Repo) -> bytes | None:
-    """Return current CHERRY_PICK_HEAD, if any."""
-    head_path = Path(repo.controldir()) / "CHERRY_PICK_HEAD"
-    if not head_path.exists():
-        return None
-    data = head_path.read_bytes().strip()
-    return data or None
-
-
-class RebaseFailure(RuntimeError):
-    """Raised when a dulwich rebase operation fails."""
-
-
-def rebase_branch(repo: Repo, branch: str, onto: str, upstream: str) -> None:
-    """Rebase branch onto target using dulwich cherry-pick."""
-    try:
-        head = get_branch_head(repo, branch)
-        commits = get_rebase_commits(repo, head, upstream)
-        switch_branch(repo, branch)
-        porcelain.reset(repo, mode="hard", treeish=onto)
-        for commit in commits:
-            porcelain.cherry_pick(repo, commit)
-    except DULWICH_REBASE_ERRORS as e:
-        raise RebaseFailure(str(e) or "Dulwich rebase failed") from e
-
-
-def rebase_continue(repo: Repo) -> None:
-    """Continue an in-progress cherry-pick rebase."""
-    try:
-        if get_cherry_pick_head(repo) is not None:
-            porcelain.cherry_pick(repo, None, continue_=True)
-        else:
-            raise RebaseFailure("No cherry-pick in progress.")
-    except DULWICH_REBASE_ERRORS as e:
-        raise RebaseFailure(str(e) or "Rebase continue failed") from e
-
-
-def rebase_abort(repo: Repo) -> None:
-    """Abort an in-progress cherry-pick rebase."""
-    try:
-        if get_cherry_pick_head(repo) is not None:
-            porcelain.cherry_pick(repo, None, abort=True)
-        else:
-            raise RebaseFailure("No cherry-pick in progress.")
-    except DULWICH_REBASE_ERRORS as e:
-        raise RebaseFailure(str(e) or "Rebase abort failed") from e
-
-
-def cherry_pick(repo: Repo, commit: bytes) -> None:
-    """Cherry-pick a commit onto the current branch."""
-    try:
-        porcelain.cherry_pick(repo, commit)
-    except DULWICH_REBASE_ERRORS as e:
-        raise RebaseFailure(str(e) or "Cherry-pick failed") from e
 
 
 def get_conflict_files(repo: Repo) -> list[str]:
@@ -427,35 +254,3 @@ def get_conflict_files(repo: Repo) -> list[str]:
             paths.append(path.decode())
 
     return sorted(paths)
-
-
-def has_uncommitted_changes(repo: Repo) -> bool:
-    """Check for uncommitted changes (staged or unstaged)."""
-    status = porcelain.status(repo)
-    return bool(
-        status.staged["add"]
-        or status.staged["modify"]
-        or status.staged["delete"]
-        or status.unstaged
-    )
-
-
-def is_ancestor(repo: Repo, maybe_ancestor: bytes, descendant: bytes) -> bool:
-    """Check if commit is ancestor of another.
-
-    Returns True if maybe_ancestor is reachable from descendant.
-    """
-    if maybe_ancestor == descendant:
-        return True
-
-    merge_base = get_merge_base(repo, maybe_ancestor, descendant)
-    return merge_base == maybe_ancestor
-
-
-def get_remote_ref(repo: Repo, remote_branch: str) -> bytes | None:
-    """Get SHA of remote ref like origin/branch_a."""
-    full_ref = f"refs/remotes/{remote_branch}".encode()
-    try:
-        return repo.refs[full_ref]
-    except KeyError:
-        return None
