@@ -82,3 +82,38 @@ def test_get_default_branch_none(tmp_path: Path) -> None:
 
     default = git.get_default_branch(repo)
     assert default is None
+
+
+def test_delete_branch(repo_with_feature: Repo) -> None:
+    """Test deleting a branch."""
+    assert git.branch_exists(repo_with_feature, "feature")
+    git.delete_branch(repo_with_feature, "feature")
+    assert not git.branch_exists(repo_with_feature, "feature")
+
+
+def test_delete_branch_nonexistent(temp_repo: Repo) -> None:
+    """Test deleting a branch that doesn't exist does nothing."""
+    # Should not raise an error
+    git.delete_branch(temp_repo, "nonexistent")
+
+
+def test_has_remote_no_remote(temp_repo: Repo) -> None:
+    """Test has_remote returns False when no remote configured."""
+    assert not git.has_remote(temp_repo, "origin")
+
+
+def test_has_remote_with_remote(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test has_remote returns True when remote is configured."""
+    # Add origin remote to config
+    config = temp_repo.get_config()
+    config.set((b"remote", b"origin"), b"url", b"https://github.com/test/test.git")
+    config.write_to_path()
+
+    assert git.has_remote(temp_repo, "origin")
+
+
+def test_fetch_and_fast_forward_trunk_no_remote(temp_repo: Repo) -> None:
+    """Test fetch_and_fast_forward_trunk when no remote configured."""
+    success, new_sha = git.fetch_and_fast_forward_trunk(temp_repo, "main")
+    assert success is True
+    assert new_sha is None
