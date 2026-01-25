@@ -144,7 +144,7 @@ def _submit(
         raise SubmitError("Cannot submit in detached HEAD state")
 
     if git.has_uncommitted_changes(repo):
-        raise SubmitError("You have uncommitted changes. Commit or stash them first.")
+        typer.echo("Warning: You have uncommitted changes.", err=True)
 
     if not git.has_remote(repo, "origin"):
         raise SubmitError("No origin remote configured")

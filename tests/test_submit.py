@@ -118,17 +118,24 @@ def test_submit_error_detached_head(temp_repo: Repo, tmp_path: Path) -> None:
         _submit(temp_repo)
 
 
-def test_submit_error_uncommitted_changes(
-    repo_with_tracked_feature: Repo, tmp_path: Path
+def test_submit_warns_uncommitted_changes(
+    repo_with_tracked_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test submit fails with uncommitted changes."""
+    """Test submit warns but continues with uncommitted changes."""
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
     # Create uncommitted changes
     test_file = tmp_path / "uncommitted.txt"
     test_file.write_text("uncommitted")
     porcelain.add(repo_with_tracked_feature, paths=[str(test_file)])
 
-    with pytest.raises(SubmitError, match="uncommitted changes"):
-        _submit(repo_with_tracked_feature)
+    # Should show warning but continue (dry-run to avoid needing full mocks)
+    result = runner.invoke(app, ["submit", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "Warning: You have uncommitted changes" in result.output
 
 
 def test_submit_error_no_remote(repo_with_tracked_feature: Repo) -> None:
