@@ -4,7 +4,7 @@ Additional commands for complex operations.
 
 ## Commands
 
-### 17. `sc delete`
+### 15. `sc delete`
 
 Remove branch from stack.
 
@@ -26,7 +26,7 @@ sc delete <branch> --keep  # Untrack only (keep branch)
 
 ---
 
-### 18. `sc move`
+### 16. `sc move`
 
 Move branch to different parent.
 
