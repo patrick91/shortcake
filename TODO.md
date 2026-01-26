@@ -4,16 +4,6 @@ Issues discovered during testing of `sc submit`.
 
 ## High Priority
 
-### `sc sync` doesn't detect squash-merged branches
-After squash-merging a PR, `sc sync` rebases the branch instead of detecting it was merged and removing it from the stack. This causes:
-- Duplicate commits (original + squash merge)
-- Child branches still point to the merged branch as parent
-- `sc submit` would create duplicate PRs (now mitigated by merged PR detection)
-
-**Expected behavior:** `sc sync` should detect when a branch's commits are already in the target (via squash/rebase merge) and:
-1. Remove the branch from the stack (or mark as merged)
-2. Update child branches to point to the new parent (e.g., `main`)
-
 ### `sc adopt` doesn't support re-parenting
 When a branch is already tracked, `sc adopt -p <new-parent>` fails with "Branch is already tracked".
 
@@ -42,3 +32,5 @@ When `sc submit` skips a branch because it has a merged PR, it only prints a mes
 - [x] Add tests for `push_branch` force-with-lease logic
 - [x] Use respx for GitHub API tests
 - [x] Suppress GitHub server messages during push
+- [x] `sc sync` detects squash-merged branches (via `is_squash_merged()`)
+- [x] Fix test fixtures (`switch_branch` helper) to properly reset index when switching branches
