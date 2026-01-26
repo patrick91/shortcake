@@ -536,9 +536,11 @@ def test_github_client_handles_http_error() -> None:
         return_value=httpx.Response(401, json={"message": "Bad credentials"})
     )
 
-    with GitHubClient("token", "owner", "repo") as client:
-        with pytest.raises(httpx.HTTPStatusError) as exc_info:
-            client.get_pr_for_branch("feature")
+    with (
+        GitHubClient("token", "owner", "repo") as client,
+        pytest.raises(httpx.HTTPStatusError) as exc_info,
+    ):
+        client.get_pr_for_branch("feature")
 
     assert exc_info.value.response.status_code == 401
 
@@ -611,6 +613,41 @@ def test_github_client_has_merged_pr_queries_closed() -> None:
         client.has_merged_pr("feature")
 
     assert route.calls.last.request.url.params["state"] == "closed"
+
+
+# Tests for get_merged_pr_number
+
+
+@respx.mock
+def test_github_client_get_merged_pr_number_returns_number() -> None:
+    """Test get_merged_pr_number returns PR number when merged PR exists."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"number": 123, "merged_at": "2024-01-01T00:00:00Z"},
+                {"number": 456, "merged_at": None},  # Closed but not merged
+            ],
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        result = client.get_merged_pr_number("feature")
+
+    assert result == 123
+
+
+@respx.mock
+def test_github_client_get_merged_pr_number_returns_none() -> None:
+    """Test get_merged_pr_number returns None when no merged PR exists."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        result = client.get_merged_pr_number("feature")
+
+    assert result is None
 
 
 # Tests for push_branch
@@ -689,9 +726,7 @@ def test_push_branch_force_with_lease_uses_correct_url(temp_repo: Repo) -> None:
     """Test that ls_remote is called with the origin URL, not repo."""
     # Set up origin remote with specific URL
     config = temp_repo.get_config()
-    config.set(
-        (b"remote", b"origin"), b"url", b"git@github.com:myorg/myrepo.git"
-    )
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:myorg/myrepo.git")
     config.write_to_path()
 
     # Create branch and tracking ref
@@ -703,13 +738,15 @@ def test_push_branch_force_with_lease_uses_correct_url(temp_repo: Repo) -> None:
     mock_ls_result.refs = {b"refs/heads/feature": head_sha}
 
     with (
-        patch("shortcake._github.porcelain.ls_remote", return_value=mock_ls_result) as mock_ls,
+        patch(
+            "shortcake._github.porcelain.ls_remote", return_value=mock_ls_result
+        ) as mock_ls,
         patch("shortcake._github.porcelain.push"),
     ):
         push_branch(temp_repo, "feature")
 
-    # Verify ls_remote was called with the URL string, not the repo
-    mock_ls.assert_called_once_with("git@github.com:myorg/myrepo.git")
+    # Verify ls_remote was called with the URL string and quiet=True
+    mock_ls.assert_called_once_with("git@github.com:myorg/myrepo.git", quiet=True)
 
 
 def test_push_branch_disabled_force_with_lease(temp_repo: Repo) -> None:

@@ -45,9 +45,31 @@ def test_adopt_already_tracked(repo_with_feature: Repo) -> None:
     # First adopt
     _adopt(repo_with_feature)
 
-    # Try again
-    with pytest.raises(AdoptError, match="already tracked"):
+    # Try again - should fail with hint to use --force
+    with pytest.raises(AdoptError, match="already tracked.*--force"):
         _adopt(repo_with_feature)
+
+
+def test_adopt_force_reparent(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """Test re-parenting with --force flag."""
+    # First adopt with main as parent
+    result = _adopt(repo_with_feature)
+    assert result.parent == "main"
+
+    # Create a new branch to use as parent
+    main_sha = repo_with_feature.refs[b"refs/heads/main"]
+    repo_with_feature.refs[b"refs/heads/develop"] = main_sha
+
+    # Re-parent to develop with --force
+    result = _adopt(repo_with_feature, parent="develop", force=True)
+    assert result.parent == "develop"
+
+    # Verify the trailer was updated
+    from shortcake._git._stack import get_branch_parent
+
+    all_branches = {"feature", "main", "develop"}
+    parent = get_branch_parent(repo_with_feature, "feature", all_branches)
+    assert parent == "develop"
 
 
 def test_adopt_default_branch(temp_repo: Repo) -> None:

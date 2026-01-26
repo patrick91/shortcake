@@ -31,6 +31,13 @@ class Trailers:
         result = porcelain.interpret_trailers(message, trailers=trailers)
         return result.decode()
 
+    def remove_from(self, message: str) -> str:
+        """Remove Shortcake trailers from message.
+
+        Returns the message with Shortcake-Parent trailer removed.
+        """
+        return strip_trailers(message)
+
 
 def strip_trailers(message: str) -> str:
     """Remove Shortcake trailer block from message for editing.
