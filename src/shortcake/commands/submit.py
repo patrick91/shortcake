@@ -259,6 +259,8 @@ def _submit(
                     branch_result.error = f"GitHub API error: {e.response.text}"
                 else:
                     branch_result.error = f"GitHub API error: {e.response.status_code}"
+            except httpx.RequestError as e:
+                branch_result.error = f"Network error: {e}"
 
             result.branch_results.append(branch_result)
 
@@ -278,7 +280,7 @@ def _submit(
                         existing_pr.body, stack_section
                     )
                     gh.update_pr(pr_num, body=new_body)
-            except httpx.HTTPStatusError:
+            except (httpx.HTTPStatusError, httpx.RequestError):
                 # Non-fatal: stack visualization update failed
                 pass
 

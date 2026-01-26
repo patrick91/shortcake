@@ -77,6 +77,7 @@ def get_repo_info(repo: Repo) -> tuple[str, str] | None:
     Returns (owner, repo_name) or None if cannot be determined.
     Supports:
     - git@github.com:owner/repo.git
+    - ssh://git@github.com/owner/repo.git
     - https://github.com/owner/repo.git
     - https://github.com/owner/repo
     """
@@ -90,6 +91,11 @@ def get_repo_info(repo: Repo) -> tuple[str, str] | None:
     ssh_match = re.match(r"git@github\.com:([^/]+)/([^/]+?)(?:\.git)?$", url)
     if ssh_match:
         return ssh_match.group(1), ssh_match.group(2)
+
+    # SSH URL format: ssh://git@github.com/owner/repo.git
+    ssh_url_match = re.match(r"ssh://git@github\.com/([^/]+)/([^/]+?)(?:\.git)?$", url)
+    if ssh_url_match:
+        return ssh_url_match.group(1), ssh_url_match.group(2)
 
     # HTTPS format: https://github.com/owner/repo.git
     https_match = re.match(r"https://github\.com/([^/]+)/([^/]+?)(?:\.git)?$", url)
@@ -122,13 +128,14 @@ class GitHubClient:
         self.client.close()
 
     def get_pr_for_branch(self, branch: str) -> PRInfo | None:
-        """Find an existing PR for the given branch.
+        """Find an existing open PR for the given branch.
 
-        Returns PRInfo if found, None otherwise.
+        Returns PRInfo if an open PR is found, None otherwise.
+        Closed PRs are ignored.
         """
         response = self.client.get(
             f"/repos/{self.owner}/{self.repo}/pulls",
-            params={"head": f"{self.owner}:{branch}", "state": "all"},
+            params={"head": f"{self.owner}:{branch}", "state": "open"},
         )
         response.raise_for_status()
 

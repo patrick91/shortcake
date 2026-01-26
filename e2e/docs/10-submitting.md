@@ -98,7 +98,7 @@ Error: No origin remote configured
 
 ## Notes
 
-- PRs are created with the first line of the branch's first commit as the title
+- PRs are created with the first line of the branch's HEAD commit as the title
 - When a PR already exists, only the base and description are updated
 - Stack visualization is preserved - your original PR description is kept
 - Force push is used to update branches (be careful with shared branches)
