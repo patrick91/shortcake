@@ -4,7 +4,7 @@ Commands for interacting with GitHub PRs.
 
 ## Commands
 
-### 15. `sc submit`
+### 13. `sc submit`
 
 Push and create/update PRs.
 
@@ -49,7 +49,7 @@ sc submit --draft    # As drafts
 
 ---
 
-### 16. `sc checkout` / `sc co`
+### 14. `sc checkout` / `sc co`
 
 Smart checkout - works for local and remote branches.
 
@@ -107,3 +107,4 @@ Decision: Start with `gh` CLI, migrate to library if needed.
 - [ ] GitHub PR creation
 - [ ] GitHub PR updates
 - [ ] Stack visualization in PR body
+- [ ] Enhance `sc ls` with PR info (commit counts, PR status) - cached for performance

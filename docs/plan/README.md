@@ -31,11 +31,11 @@ This trailer defines the stack relationship. No external state files needed.
 
 ## Phases
 
-1. [Foundation](./phase-1-foundation.md) - `adopt`, `ls`, `create`
-2. [Navigation](./phase-2-navigation.md) - `up`, `down`, `top`, `bottom`
-3. [Daily Workflow](./phase-3-workflow.md) - `commit`, `status`, `log`
-4. [Stack Operations](./phase-4-stack-ops.md) - `restack`, `continue`, `abort`, `sync`
-5. [GitHub Integration](./phase-5-github.md) - `submit`, `checkout`
+1. [Foundation](./phase-1-foundation.md) - `adopt`, `ls`, `create` ✅
+2. [Navigation](./phase-2-navigation.md) - `up`, `down`, `top`, `bottom` ✅
+3. [Daily Workflow](./phase-3-workflow.md) - `log` ✅
+4. [Stack Operations](./phase-4-stack-ops.md) - `restack`, `continue`, `abort`, `sync` ✅
+5. [GitHub Integration](./phase-5-github.md) - `submit`, `checkout`, enhance `ls` with PR info
 6. [Advanced](./phase-6-advanced.md) - `delete`, `move`
 
 ## Project Structure
@@ -72,4 +72,4 @@ tests/
 
 ---
 
-*Last updated: 2025-01-19*
+*Last updated: 2025-01-25*
