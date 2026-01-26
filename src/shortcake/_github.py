@@ -1,5 +1,6 @@
 """GitHub API client for PR management."""
 
+import io
 import os
 import re
 import subprocess
@@ -249,12 +250,14 @@ def push_branch(repo: Repo, branch: str, force_with_lease: bool = True) -> bool:
                 if actual_remote_sha is not None and actual_remote_sha != expected_remote_sha:
                     return False
 
-        # Proceed with force push
+        # Proceed with force push (suppress server messages)
         porcelain.push(
             repo,
             "origin",
             refspecs=[f"refs/heads/{branch}"],
             force=True,
+            outstream=io.BytesIO(),
+            errstream=io.BytesIO(),
         )
         return True
     except Exception:  # pragma: no cover
