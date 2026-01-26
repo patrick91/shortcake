@@ -4,7 +4,7 @@ Commands for rebasing and syncing stacks.
 
 ## Commands
 
-### 11. `sc restack`
+### 9. `sc restack`
 
 Rebase branches onto updated parents.
 
@@ -33,7 +33,7 @@ sc restack --dry-run    # Preview
 
 ---
 
-### 12. `sc continue`
+### 10. `sc continue`
 
 Continue after conflict resolution.
 
@@ -52,7 +52,7 @@ sc continue    # Continue after conflict
 
 ---
 
-### 13. `sc abort`
+### 11. `sc abort`
 
 Abort in-progress operation.
 
@@ -71,7 +71,7 @@ sc abort       # Abort operation
 
 ---
 
-### 14. `sc sync`
+### 12. `sc sync`
 
 Clean up after merges.
 
@@ -105,7 +105,7 @@ sc sync --dry-run    # Preview
 
 ## Checklist
 
-- [ ] Implement `sc restack`
-- [ ] Implement `sc continue`
-- [ ] Implement `sc abort`
-- [ ] Implement `sc sync`
+- [x] Implement `sc restack`
+- [x] Implement `sc continue`
+- [x] Implement `sc abort`
+- [x] Implement `sc sync`
