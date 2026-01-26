@@ -230,7 +230,7 @@ def push_branch(repo: Repo, branch: str, force_with_lease: bool = True) -> bool:
     Returns:
         True on success, False on failure (including lease check failure).
     """
-    try:  # pragma: no cover
+    try:
         if force_with_lease:
             # Get our local tracking ref - what we expect remote to be
             tracking_ref_name = f"refs/remotes/origin/{branch}".encode()
@@ -241,10 +241,14 @@ def push_branch(repo: Repo, branch: str, force_with_lease: bool = True) -> bool:
                 expected_remote_sha = None
 
             if expected_remote_sha is not None:
+                # Get origin URL for ls_remote
+                config = repo.get_config()
+                origin_url = config.get((b"remote", b"origin"), b"url").decode()
+
                 # Check current remote ref
-                remote_refs = porcelain.ls_remote(repo, "origin")
+                remote_result = porcelain.ls_remote(origin_url)
                 remote_ref_name = f"refs/heads/{branch}".encode()
-                actual_remote_sha = remote_refs.get(remote_ref_name)
+                actual_remote_sha = remote_result.refs.get(remote_ref_name)
 
                 # If remote exists and differs from our expectation, abort
                 if actual_remote_sha is not None and actual_remote_sha != expected_remote_sha:
