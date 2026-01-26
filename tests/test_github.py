@@ -12,6 +12,7 @@ from shortcake._github import (
     GitHubClient,
     get_github_token,
     get_repo_info,
+    push_branch,
 )
 
 # Tests for get_github_token
@@ -540,3 +541,125 @@ def test_github_client_handles_http_error() -> None:
             client.get_pr_for_branch("feature")
 
     assert exc_info.value.response.status_code == 401
+
+
+# Tests for push_branch
+
+
+def test_push_branch_new_branch_no_tracking_ref(temp_repo: Repo) -> None:
+    """Test push succeeds for new branch without tracking ref."""
+    # Set up origin remote
+    config = temp_repo.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Create a branch
+    temp_repo.refs[b"refs/heads/feature"] = temp_repo.head()
+
+    with patch("shortcake._github.porcelain.push") as mock_push:
+        result = push_branch(temp_repo, "feature")
+
+    assert result is True
+    mock_push.assert_called_once()
+
+
+def test_push_branch_force_with_lease_passes(temp_repo: Repo) -> None:
+    """Test push succeeds when remote matches tracking ref."""
+    # Set up origin remote
+    config = temp_repo.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Create branch and tracking ref pointing to same commit
+    head_sha = temp_repo.head()
+    temp_repo.refs[b"refs/heads/feature"] = head_sha
+    temp_repo.refs[b"refs/remotes/origin/feature"] = head_sha
+
+    # Mock ls_remote to return same SHA
+    mock_ls_result = MagicMock()
+    mock_ls_result.refs = {b"refs/heads/feature": head_sha}
+
+    with (
+        patch("shortcake._github.porcelain.ls_remote", return_value=mock_ls_result),
+        patch("shortcake._github.porcelain.push") as mock_push,
+    ):
+        result = push_branch(temp_repo, "feature")
+
+    assert result is True
+    mock_push.assert_called_once()
+
+
+def test_push_branch_force_with_lease_fails(temp_repo: Repo) -> None:
+    """Test push fails when remote differs from tracking ref."""
+    # Set up origin remote
+    config = temp_repo.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Create branch and tracking ref
+    head_sha = temp_repo.head()
+    temp_repo.refs[b"refs/heads/feature"] = head_sha
+    temp_repo.refs[b"refs/remotes/origin/feature"] = head_sha
+
+    # Mock ls_remote to return DIFFERENT SHA (someone else pushed)
+    mock_ls_result = MagicMock()
+    mock_ls_result.refs = {b"refs/heads/feature": b"different_sha_from_someone_else"}
+
+    with (
+        patch("shortcake._github.porcelain.ls_remote", return_value=mock_ls_result),
+        patch("shortcake._github.porcelain.push") as mock_push,
+    ):
+        result = push_branch(temp_repo, "feature")
+
+    assert result is False
+    mock_push.assert_not_called()
+
+
+def test_push_branch_force_with_lease_uses_correct_url(temp_repo: Repo) -> None:
+    """Test that ls_remote is called with the origin URL, not repo."""
+    # Set up origin remote with specific URL
+    config = temp_repo.get_config()
+    config.set(
+        (b"remote", b"origin"), b"url", b"git@github.com:myorg/myrepo.git"
+    )
+    config.write_to_path()
+
+    # Create branch and tracking ref
+    head_sha = temp_repo.head()
+    temp_repo.refs[b"refs/heads/feature"] = head_sha
+    temp_repo.refs[b"refs/remotes/origin/feature"] = head_sha
+
+    mock_ls_result = MagicMock()
+    mock_ls_result.refs = {b"refs/heads/feature": head_sha}
+
+    with (
+        patch("shortcake._github.porcelain.ls_remote", return_value=mock_ls_result) as mock_ls,
+        patch("shortcake._github.porcelain.push"),
+    ):
+        push_branch(temp_repo, "feature")
+
+    # Verify ls_remote was called with the URL string, not the repo
+    mock_ls.assert_called_once_with("git@github.com:myorg/myrepo.git")
+
+
+def test_push_branch_disabled_force_with_lease(temp_repo: Repo) -> None:
+    """Test push with force_with_lease=False skips the check."""
+    # Set up origin remote
+    config = temp_repo.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Create branch and tracking ref with different SHA (would fail if checked)
+    head_sha = temp_repo.head()
+    temp_repo.refs[b"refs/heads/feature"] = head_sha
+    temp_repo.refs[b"refs/remotes/origin/feature"] = head_sha
+
+    with (
+        patch("shortcake._github.porcelain.ls_remote") as mock_ls,
+        patch("shortcake._github.porcelain.push") as mock_push,
+    ):
+        result = push_branch(temp_repo, "feature", force_with_lease=False)
+
+    assert result is True
+    mock_ls.assert_not_called()  # Should not check remote
+    mock_push.assert_called_once()
