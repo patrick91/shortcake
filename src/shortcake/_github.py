@@ -155,6 +155,20 @@ class GitHubClient:
             is_draft=pr.get("draft", False),
         )
 
+    def has_merged_pr(self, branch: str) -> bool:
+        """Check if the branch has a merged PR.
+
+        Returns True if a merged PR exists for this branch.
+        """
+        response = self.client.get(
+            f"/repos/{self.owner}/{self.repo}/pulls",
+            params={"head": f"{self.owner}:{branch}", "state": "closed"},
+        )
+        response.raise_for_status()
+
+        prs = response.json()
+        return any(pr.get("merged_at") is not None for pr in prs)
+
     def create_pr(
         self, head: str, base: str, title: str, body: str, draft: bool = False
     ) -> PRInfo:
