@@ -223,6 +223,15 @@ def _submit(
                         gh.update_pr(existing_pr.number, base=parent)
                     branch_result.action = PRAction.UPDATED
                 else:
+                    # Check if branch has a merged PR (skip if already merged)
+                    if gh.has_merged_pr(branch):
+                        typer.echo(
+                            f"  Skipping '{branch}' - already has a merged PR"
+                        )
+                        branch_result.action = PRAction.SKIPPED
+                        result.branch_results.append(branch_result)
+                        continue
+
                     # Create new PR
                     title = _get_commit_title(repo, branch)
                     typer.echo(f"  Creating PR for '{branch}'...")

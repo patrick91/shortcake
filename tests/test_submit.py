@@ -214,6 +214,7 @@ def test_submit_creates_pr(
     mock_client = MagicMock(spec=GitHubClient)
     # First call: None (no PR exists), second call: mock_pr (after creation)
     mock_client.get_pr_for_branch.side_effect = [None, mock_pr]
+    mock_client.has_merged_pr.return_value = False
     mock_client.create_pr.return_value = mock_pr
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
@@ -460,6 +461,7 @@ def test_submit_draft_pr(
 
     mock_client = MagicMock(spec=GitHubClient)
     mock_client.get_pr_for_branch.side_effect = [None, mock_pr]
+    mock_client.has_merged_pr.return_value = False
     mock_client.create_pr.return_value = mock_pr
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
@@ -575,6 +577,7 @@ def test_cli_submit_success(
 
     mock_client = MagicMock(spec=GitHubClient)
     mock_client.get_pr_for_branch.side_effect = [None, mock_pr]
+    mock_client.has_merged_pr.return_value = False
     mock_client.create_pr.return_value = mock_pr
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
@@ -638,6 +641,7 @@ def test_cli_submit_draft_flag(
 
     mock_client = MagicMock(spec=GitHubClient)
     mock_client.get_pr_for_branch.side_effect = [None, mock_pr]
+    mock_client.has_merged_pr.return_value = False
     mock_client.create_pr.return_value = mock_pr
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
@@ -686,6 +690,31 @@ def test_cli_submit_updated_only(
     assert result.exit_code == 0
     assert "Updated" in result.output
     # Should not have created any PRs
+    mock_client.create_pr.assert_not_called()
+
+
+def test_submit_skips_branch_with_merged_pr(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit skips branches that have merged PRs."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None  # No open PR
+    mock_client.has_merged_pr.return_value = True  # But has merged PR
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = _submit(repo_with_tracked_feature)
+
+    assert len(result.branch_results) == 1
+    assert result.branch_results[0].action == PRAction.SKIPPED
+    # Should not have tried to create a PR
     mock_client.create_pr.assert_not_called()
 
 

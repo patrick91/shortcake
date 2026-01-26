@@ -543,6 +543,76 @@ def test_github_client_handles_http_error() -> None:
     assert exc_info.value.response.status_code == 401
 
 
+@respx.mock
+def test_github_client_has_merged_pr_true() -> None:
+    """Test has_merged_pr returns True when merged PR exists."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 123,
+                    "state": "closed",
+                    "merged_at": "2024-01-15T10:30:00Z",
+                }
+            ],
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        result = client.has_merged_pr("feature")
+
+    assert result is True
+
+
+@respx.mock
+def test_github_client_has_merged_pr_false_no_prs() -> None:
+    """Test has_merged_pr returns False when no PRs exist."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        result = client.has_merged_pr("feature")
+
+    assert result is False
+
+
+@respx.mock
+def test_github_client_has_merged_pr_false_closed_not_merged() -> None:
+    """Test has_merged_pr returns False for closed but not merged PR."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 123,
+                    "state": "closed",
+                    "merged_at": None,  # Closed but not merged
+                }
+            ],
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        result = client.has_merged_pr("feature")
+
+    assert result is False
+
+
+@respx.mock
+def test_github_client_has_merged_pr_queries_closed() -> None:
+    """Test has_merged_pr queries closed PRs."""
+    route = respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        client.has_merged_pr("feature")
+
+    assert route.calls.last.request.url.params["state"] == "closed"
+
+
 # Tests for push_branch
 
 
