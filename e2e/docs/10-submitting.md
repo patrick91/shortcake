@@ -101,4 +101,4 @@ Error: No origin remote configured
 - PRs are created with the first line of the branch's HEAD commit as the title
 - When a PR already exists, only the base and description are updated
 - Stack visualization is preserved - your original PR description is kept
-- Force push is used to update branches (be careful with shared branches)
+- Uses `--force-with-lease` to safely update branches (prevents overwriting others' work)
