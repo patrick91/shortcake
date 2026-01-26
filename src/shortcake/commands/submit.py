@@ -66,24 +66,36 @@ def _build_stack_section(
     current_branch: str,
     pr_numbers: dict[str, int],
     owner: str,
+    merged_pr_numbers: dict[str, int] | None = None,
 ) -> str:
     """Build the stack visualization markdown section.
 
     Args:
         stack_branches: Branches in topological order (bottom to top).
         current_branch: The branch this section is being built for.
-        pr_numbers: Map of branch name to PR number.
+        pr_numbers: Map of branch name to open PR number.
         owner: GitHub repo owner for PR links.
+        merged_pr_numbers: Map of branch name to merged PR number.
 
     Returns:
         Markdown string with stack visualization.
     """
+    if merged_pr_numbers is None:
+        merged_pr_numbers = {}
+
     lines = [STACK_START_MARKER, "## Stack", ""]
 
     # Show stack in reverse order (top to bottom) for readability
     for branch in reversed(stack_branches):
         pr_num = pr_numbers.get(branch)
-        pr_ref = f"#{pr_num}" if pr_num else "(no PR)"
+        merged_num = merged_pr_numbers.get(branch)
+
+        if pr_num:
+            pr_ref = f"#{pr_num}"
+        elif merged_num:
+            pr_ref = f"#{merged_num} (merged)"
+        else:
+            pr_ref = "(no PR)"
 
         if branch == current_branch:
             lines.append(f"- **{pr_ref}** (`{branch}`) <-- this PR")
@@ -226,7 +238,8 @@ def _submit(
                     # Check if branch has a merged PR (skip if already merged)
                     if gh.has_merged_pr(branch):
                         typer.echo(
-                            f"  Skipping '{branch}' - already has a merged PR"
+                            f"  Skipping '{branch}' - already has a merged PR. "
+                            f"Run 'sc sync' to clean up merged branches."
                         )
                         branch_result.action = PRAction.SKIPPED
                         result.branch_results.append(branch_result)
@@ -273,7 +286,18 @@ def _submit(
 
             result.branch_results.append(branch_result)
 
-        # Phase 2: Update all PR bodies with stack visualization
+        # Phase 2: Collect merged PR numbers for stack visualization
+        merged_pr_numbers: dict[str, int] = {}
+        for branch in stack_branches:
+            if branch not in pr_numbers:
+                try:
+                    merged_num = gh.get_merged_pr_number(branch)
+                    if merged_num:
+                        merged_pr_numbers[branch] = merged_num
+                except (httpx.HTTPStatusError, httpx.RequestError):
+                    pass
+
+        # Phase 3: Update all PR bodies with stack visualization
         for branch in stack_branches:
             pr_num = pr_numbers.get(branch)
             if not pr_num:
@@ -283,7 +307,7 @@ def _submit(
                 existing_pr = gh.get_pr_for_branch(branch)
                 if existing_pr:
                     stack_section = _build_stack_section(
-                        stack_branches, branch, pr_numbers, owner
+                        stack_branches, branch, pr_numbers, owner, merged_pr_numbers
                     )
                     new_body = _update_pr_body_with_stack(
                         existing_pr.body, stack_section

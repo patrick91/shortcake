@@ -169,6 +169,23 @@ class GitHubClient:
         prs = response.json()
         return any(pr.get("merged_at") is not None for pr in prs)
 
+    def get_merged_pr_number(self, branch: str) -> int | None:
+        """Get the PR number for a merged PR on this branch.
+
+        Returns the PR number if a merged PR exists, None otherwise.
+        """
+        response = self.client.get(
+            f"/repos/{self.owner}/{self.repo}/pulls",
+            params={"head": f"{self.owner}:{branch}", "state": "closed"},
+        )
+        response.raise_for_status()
+
+        prs = response.json()
+        for pr in prs:
+            if pr.get("merged_at") is not None:
+                return pr["number"]
+        return None
+
     def create_pr(
         self, head: str, base: str, title: str, body: str, draft: bool = False
     ) -> PRInfo:
@@ -259,13 +276,16 @@ def push_branch(repo: Repo, branch: str, force_with_lease: bool = True) -> bool:
                 config = repo.get_config()
                 origin_url = config.get((b"remote", b"origin"), b"url").decode()
 
-                # Check current remote ref
-                remote_result = porcelain.ls_remote(origin_url)
+                # Check current remote ref (quiet=True suppresses server messages)
+                remote_result = porcelain.ls_remote(origin_url, quiet=True)
                 remote_ref_name = f"refs/heads/{branch}".encode()
                 actual_remote_sha = remote_result.refs.get(remote_ref_name)
 
                 # If remote exists and differs from our expectation, abort
-                if actual_remote_sha is not None and actual_remote_sha != expected_remote_sha:
+                if (
+                    actual_remote_sha is not None
+                    and actual_remote_sha != expected_remote_sha
+                ):
                     return False
 
         # Proceed with force push (suppress server messages)
