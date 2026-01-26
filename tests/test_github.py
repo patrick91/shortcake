@@ -247,6 +247,28 @@ def test_get_repo_info_non_github_url(temp_repo: Repo) -> None:
     assert result is None
 
 
+def test_get_repo_info_ssh_url_format(temp_repo: Repo) -> None:
+    """Test parsing ssh:// URL format."""
+    config = temp_repo.get_config()
+    config.set((b"remote", b"origin"), b"url", b"ssh://git@github.com/owner/repo.git")
+    config.write_to_path()
+
+    result = get_repo_info(temp_repo)
+
+    assert result == ("owner", "repo")
+
+
+def test_get_repo_info_ssh_url_format_no_extension(temp_repo: Repo) -> None:
+    """Test parsing ssh:// URL without .git extension."""
+    config = temp_repo.get_config()
+    config.set((b"remote", b"origin"), b"url", b"ssh://git@github.com/owner/repo")
+    config.write_to_path()
+
+    result = get_repo_info(temp_repo)
+
+    assert result == ("owner", "repo")
+
+
 # Tests for GitHubClient
 
 
@@ -432,3 +454,46 @@ def test_github_client_update_pr_title() -> None:
 
     call_kwargs = mock_patch.call_args[1]
     assert call_kwargs["json"]["title"] == "New Title"
+
+
+def test_github_client_get_pr_for_branch_only_queries_open() -> None:
+    """Test that only open PRs are queried."""
+    mock_response = MagicMock()
+    mock_response.json.return_value = [
+        {
+            "number": 200,
+            "html_url": "https://github.com/owner/repo/pull/200",
+            "base": {"ref": "main"},
+            "title": "Open PR",
+            "body": "Open body",
+            "state": "open",
+            "draft": False,
+        },
+    ]
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(httpx.Client, "get", return_value=mock_response) as mock_get:
+        client = GitHubClient("token", "owner", "repo")
+        result = client.get_pr_for_branch("feature")
+
+    # Verify state=open is used in the query
+    call_kwargs = mock_get.call_args[1]
+    assert call_kwargs["params"]["state"] == "open"
+
+    assert result is not None
+    assert result.number == 200
+    assert result.state == "open"
+
+
+def test_github_client_get_pr_for_branch_ignores_closed() -> None:
+    """Test that closed PRs are ignored (returns None when no open PRs)."""
+    mock_response = MagicMock()
+    # API returns empty list when state=open and only closed PRs exist
+    mock_response.json.return_value = []
+    mock_response.raise_for_status = MagicMock()
+
+    with patch.object(httpx.Client, "get", return_value=mock_response):
+        client = GitHubClient("token", "owner", "repo")
+        result = client.get_pr_for_branch("feature")
+
+    assert result is None

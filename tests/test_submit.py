@@ -687,3 +687,89 @@ def test_cli_submit_updated_only(
     assert "Updated" in result.output
     # Should not have created any PRs
     mock_client.create_pr.assert_not_called()
+
+
+def test_submit_handles_network_error(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit handles network errors (DNS, timeout, connection)."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.side_effect = httpx.ConnectError("Connection refused")
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = _submit(repo_with_tracked_feature)
+
+    assert result.branch_results[0].error is not None
+    assert "Network error" in result.branch_results[0].error
+
+
+def test_submit_handles_timeout_error(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit handles timeout errors."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.side_effect = httpx.TimeoutException("Request timeout")
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = _submit(repo_with_tracked_feature)
+
+    assert result.branch_results[0].error is not None
+    assert "Network error" in result.branch_results[0].error
+
+
+def test_submit_stack_body_update_network_error_non_fatal(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that network errors updating PR body with stack are non-fatal."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_pr = PRInfo(
+        number=123,
+        url="https://github.com/owner/repo/pull/123",
+        base="main",
+        title="feat: add feature",
+        body="",
+        state="open",
+        is_draft=False,
+    )
+
+    call_count = [0]
+
+    def mock_get_pr(branch: str) -> PRInfo:
+        call_count[0] += 1
+        if call_count[0] <= 1:
+            # First call during PR check
+            return mock_pr
+        # Second call during body update - raise network error
+        raise httpx.ConnectError("Connection refused")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.side_effect = mock_get_pr
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        # Should not raise - network error during body update is non-fatal
+        result = _submit(repo_with_tracked_feature)
+
+    assert result.branch_results[0].action == PRAction.UPDATED
