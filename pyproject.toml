@@ -27,6 +27,7 @@ typing = ["ty>=0.0.1"]
 linting = ["ruff>=0.11.0"]
 dev = [
     "inline-snapshot>=0.31.1",
+    "respx>=0.22.0",
 ]
 
 [project.scripts]

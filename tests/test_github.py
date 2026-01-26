@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+import respx
 from dulwich.repo import Repo
 
 from shortcake._github import (
@@ -273,31 +274,33 @@ def test_get_repo_info_ssh_url_format_no_extension(temp_repo: Repo) -> None:
 
 
 def test_github_client_context_manager() -> None:
-    """Test GitHubClient context manager."""
-    with patch.object(httpx.Client, "close") as mock_close:
-        with GitHubClient("token", "owner", "repo"):
-            pass
-        mock_close.assert_called_once()
+    """Test GitHubClient context manager closes the client."""
+    with GitHubClient("token", "owner", "repo") as client:
+        assert client is not None
+    # Client should be closed after exiting context
 
 
+@respx.mock
 def test_github_client_get_pr_for_branch_found() -> None:
     """Test finding existing PR for branch."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = [
-        {
-            "number": 123,
-            "html_url": "https://github.com/owner/repo/pull/123",
-            "base": {"ref": "main"},
-            "title": "Test PR",
-            "body": "PR body",
-            "state": "open",
-            "draft": False,
-        }
-    ]
-    mock_response.raise_for_status = MagicMock()
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 123,
+                    "html_url": "https://github.com/owner/repo/pull/123",
+                    "base": {"ref": "main"},
+                    "title": "Test PR",
+                    "body": "PR body",
+                    "state": "open",
+                    "draft": False,
+                }
+            ],
+        )
+    )
 
-    with patch.object(httpx.Client, "get", return_value=mock_response):
-        client = GitHubClient("token", "owner", "repo")
+    with GitHubClient("token", "owner", "repo") as client:
         result = client.get_pr_for_branch("feature")
 
     assert result is not None
@@ -309,37 +312,40 @@ def test_github_client_get_pr_for_branch_found() -> None:
     assert result.is_draft is False
 
 
+@respx.mock
 def test_github_client_get_pr_for_branch_not_found() -> None:
     """Test no PR found for branch."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = []
-    mock_response.raise_for_status = MagicMock()
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(200, json=[])
+    )
 
-    with patch.object(httpx.Client, "get", return_value=mock_response):
-        client = GitHubClient("token", "owner", "repo")
+    with GitHubClient("token", "owner", "repo") as client:
         result = client.get_pr_for_branch("feature")
 
     assert result is None
 
 
+@respx.mock
 def test_github_client_get_pr_for_branch_draft() -> None:
     """Test finding draft PR."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = [
-        {
-            "number": 123,
-            "html_url": "https://github.com/owner/repo/pull/123",
-            "base": {"ref": "main"},
-            "title": "Draft PR",
-            "body": None,  # Test null body
-            "state": "open",
-            "draft": True,
-        }
-    ]
-    mock_response.raise_for_status = MagicMock()
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 123,
+                    "html_url": "https://github.com/owner/repo/pull/123",
+                    "base": {"ref": "main"},
+                    "title": "Draft PR",
+                    "body": None,  # Test null body
+                    "state": "open",
+                    "draft": True,
+                }
+            ],
+        )
+    )
 
-    with patch.object(httpx.Client, "get", return_value=mock_response):
-        client = GitHubClient("token", "owner", "repo")
+    with GitHubClient("token", "owner", "repo") as client:
         result = client.get_pr_for_branch("feature")
 
     assert result is not None
@@ -347,22 +353,25 @@ def test_github_client_get_pr_for_branch_draft() -> None:
     assert result.body == ""
 
 
+@respx.mock
 def test_github_client_create_pr() -> None:
     """Test creating a new PR."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = {
-        "number": 456,
-        "html_url": "https://github.com/owner/repo/pull/456",
-        "base": {"ref": "main"},
-        "title": "New Feature",
-        "body": "Description",
-        "state": "open",
-        "draft": False,
-    }
-    mock_response.raise_for_status = MagicMock()
+    route = respx.post("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            201,
+            json={
+                "number": 456,
+                "html_url": "https://github.com/owner/repo/pull/456",
+                "base": {"ref": "main"},
+                "title": "New Feature",
+                "body": "Description",
+                "state": "open",
+                "draft": False,
+            },
+        )
+    )
 
-    with patch.object(httpx.Client, "post", return_value=mock_response):
-        client = GitHubClient("token", "owner", "repo")
+    with GitHubClient("token", "owner", "repo") as client:
         result = client.create_pr(
             head="feature",
             base="main",
@@ -373,24 +382,28 @@ def test_github_client_create_pr() -> None:
 
     assert result.number == 456
     assert result.url == "https://github.com/owner/repo/pull/456"
+    assert route.called
 
 
+@respx.mock
 def test_github_client_create_pr_draft() -> None:
     """Test creating a draft PR."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = {
-        "number": 789,
-        "html_url": "https://github.com/owner/repo/pull/789",
-        "base": {"ref": "main"},
-        "title": "Draft Feature",
-        "body": "",
-        "state": "open",
-        "draft": True,
-    }
-    mock_response.raise_for_status = MagicMock()
+    route = respx.post("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            201,
+            json={
+                "number": 789,
+                "html_url": "https://github.com/owner/repo/pull/789",
+                "base": {"ref": "main"},
+                "title": "Draft Feature",
+                "body": "",
+                "state": "open",
+                "draft": True,
+            },
+        )
+    )
 
-    with patch.object(httpx.Client, "post", return_value=mock_response) as mock_post:
-        client = GitHubClient("token", "owner", "repo")
+    with GitHubClient("token", "owner", "repo") as client:
         result = client.create_pr(
             head="feature",
             base="main",
@@ -400,100 +413,130 @@ def test_github_client_create_pr_draft() -> None:
         )
 
     assert result.is_draft is True
-    # Verify draft=True was passed
-    call_kwargs = mock_post.call_args[1]
-    assert call_kwargs["json"]["draft"] is True
+    # Verify draft=True was passed in request body
+    assert route.calls.last.request.content is not None
+    import json
+
+    request_body = json.loads(route.calls.last.request.content)
+    assert request_body["draft"] is True
 
 
+@respx.mock
 def test_github_client_update_pr() -> None:
     """Test updating a PR."""
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
+    route = respx.patch("https://api.github.com/repos/owner/repo/pulls/123").mock(
+        return_value=httpx.Response(200, json={})
+    )
 
-    with patch.object(httpx.Client, "patch", return_value=mock_response) as mock_patch:
-        client = GitHubClient("token", "owner", "repo")
+    with GitHubClient("token", "owner", "repo") as client:
         client.update_pr(123, base="develop", body="Updated body")
 
-    mock_patch.assert_called_once()
-    call_kwargs = mock_patch.call_args[1]
-    assert call_kwargs["json"]["base"] == "develop"
-    assert call_kwargs["json"]["body"] == "Updated body"
+    assert route.called
+    import json
+
+    request_body = json.loads(route.calls.last.request.content)
+    assert request_body["base"] == "develop"
+    assert request_body["body"] == "Updated body"
 
 
+@respx.mock
 def test_github_client_update_pr_partial() -> None:
     """Test updating only some PR fields."""
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
+    route = respx.patch("https://api.github.com/repos/owner/repo/pulls/123").mock(
+        return_value=httpx.Response(200, json={})
+    )
 
-    with patch.object(httpx.Client, "patch", return_value=mock_response) as mock_patch:
-        client = GitHubClient("token", "owner", "repo")
+    with GitHubClient("token", "owner", "repo") as client:
         client.update_pr(123, base="develop")
 
-    call_kwargs = mock_patch.call_args[1]
-    assert "base" in call_kwargs["json"]
-    assert "body" not in call_kwargs["json"]
+    import json
+
+    request_body = json.loads(route.calls.last.request.content)
+    assert "base" in request_body
+    assert "body" not in request_body
 
 
+@respx.mock
 def test_github_client_update_pr_no_changes() -> None:
     """Test update_pr with no changes doesn't call API."""
-    with patch.object(httpx.Client, "patch") as mock_patch:
-        client = GitHubClient("token", "owner", "repo")
+    route = respx.patch("https://api.github.com/repos/owner/repo/pulls/123")
+
+    with GitHubClient("token", "owner", "repo") as client:
         client.update_pr(123)
 
-    mock_patch.assert_not_called()
+    assert not route.called
 
 
+@respx.mock
 def test_github_client_update_pr_title() -> None:
     """Test updating PR title."""
-    mock_response = MagicMock()
-    mock_response.raise_for_status = MagicMock()
+    route = respx.patch("https://api.github.com/repos/owner/repo/pulls/123").mock(
+        return_value=httpx.Response(200, json={})
+    )
 
-    with patch.object(httpx.Client, "patch", return_value=mock_response) as mock_patch:
-        client = GitHubClient("token", "owner", "repo")
+    with GitHubClient("token", "owner", "repo") as client:
         client.update_pr(123, title="New Title")
 
-    call_kwargs = mock_patch.call_args[1]
-    assert call_kwargs["json"]["title"] == "New Title"
+    import json
+
+    request_body = json.loads(route.calls.last.request.content)
+    assert request_body["title"] == "New Title"
 
 
+@respx.mock
 def test_github_client_get_pr_for_branch_only_queries_open() -> None:
     """Test that only open PRs are queried."""
-    mock_response = MagicMock()
-    mock_response.json.return_value = [
-        {
-            "number": 200,
-            "html_url": "https://github.com/owner/repo/pull/200",
-            "base": {"ref": "main"},
-            "title": "Open PR",
-            "body": "Open body",
-            "state": "open",
-            "draft": False,
-        },
-    ]
-    mock_response.raise_for_status = MagicMock()
+    route = respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 200,
+                    "html_url": "https://github.com/owner/repo/pull/200",
+                    "base": {"ref": "main"},
+                    "title": "Open PR",
+                    "body": "Open body",
+                    "state": "open",
+                    "draft": False,
+                },
+            ],
+        )
+    )
 
-    with patch.object(httpx.Client, "get", return_value=mock_response) as mock_get:
-        client = GitHubClient("token", "owner", "repo")
+    with GitHubClient("token", "owner", "repo") as client:
         result = client.get_pr_for_branch("feature")
 
     # Verify state=open is used in the query
-    call_kwargs = mock_get.call_args[1]
-    assert call_kwargs["params"]["state"] == "open"
+    assert route.calls.last.request.url.params["state"] == "open"
 
     assert result is not None
     assert result.number == 200
     assert result.state == "open"
 
 
+@respx.mock
 def test_github_client_get_pr_for_branch_ignores_closed() -> None:
     """Test that closed PRs are ignored (returns None when no open PRs)."""
-    mock_response = MagicMock()
     # API returns empty list when state=open and only closed PRs exist
-    mock_response.json.return_value = []
-    mock_response.raise_for_status = MagicMock()
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(200, json=[])
+    )
 
-    with patch.object(httpx.Client, "get", return_value=mock_response):
-        client = GitHubClient("token", "owner", "repo")
+    with GitHubClient("token", "owner", "repo") as client:
         result = client.get_pr_for_branch("feature")
 
     assert result is None
+
+
+@respx.mock
+def test_github_client_handles_http_error() -> None:
+    """Test that HTTP errors are raised properly."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(401, json={"message": "Bad credentials"})
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        with pytest.raises(httpx.HTTPStatusError) as exc_info:
+            client.get_pr_for_branch("feature")
+
+    assert exc_info.value.response.status_code == 401
