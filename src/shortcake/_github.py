@@ -213,20 +213,48 @@ class GitHubClient:
             response.raise_for_status()
 
 
-def push_branch(repo: Repo, branch: str, force: bool = True) -> bool:
-    """Push a branch to origin.
+def push_branch(repo: Repo, branch: str, force_with_lease: bool = True) -> bool:
+    """Push a branch to origin with force-with-lease semantics.
 
-    Uses dulwich porcelain.push() with force flag.
-    Returns True on success, False on failure.
+    Uses dulwich for pushing. When force_with_lease is True, checks that
+    the remote ref hasn't changed since we last fetched before force pushing.
 
-    Note: dulwich doesn't support --force-with-lease, only --force.
+    Args:
+        repo: The repository.
+        branch: Branch name to push.
+        force_with_lease: If True (default), only force-push if the remote
+            ref matches our local tracking ref. This prevents overwriting
+            work that someone else has pushed.
+
+    Returns:
+        True on success, False on failure (including lease check failure).
     """
     try:  # pragma: no cover
+        if force_with_lease:
+            # Get our local tracking ref - what we expect remote to be
+            tracking_ref_name = f"refs/remotes/origin/{branch}".encode()
+            try:
+                expected_remote_sha = repo.refs[tracking_ref_name]
+            except KeyError:
+                # No tracking ref means this is a new branch, allow push
+                expected_remote_sha = None
+
+            if expected_remote_sha is not None:
+                # Check current remote ref
+                remote_refs = porcelain.ls_remote(repo, "origin")
+                remote_ref_name = f"refs/heads/{branch}".encode()
+                actual_remote_sha = remote_refs.get(remote_ref_name)
+
+                # If remote exists and differs from our expectation, abort
+                if actual_remote_sha is not None and actual_remote_sha != expected_remote_sha:
+                    return False
+
+        # Proceed with force push
         porcelain.push(
             repo,
             "origin",
             refspecs=[f"refs/heads/{branch}"],
-            force=force,
+            force=True,
         )
         return True
     except Exception:  # pragma: no cover
