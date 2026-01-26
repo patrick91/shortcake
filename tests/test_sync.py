@@ -13,6 +13,7 @@ from shortcake._git._stack import (
     get_merged_branches,
     get_tracked_branches,
     is_merged,
+    is_squash_merged,
 )
 from shortcake._trailers import Trailers
 from shortcake.cli import app
@@ -53,6 +54,74 @@ def test_is_merged_true(repo_with_merged_branch: Repo) -> None:
 def test_is_merged_false(repo_with_tracked_feature: Repo) -> None:
     """Test non-merged branch."""
     assert not is_merged(repo_with_tracked_feature, "feature", "main")
+
+
+def test_is_squash_merged_true(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test detecting squash-merged branch.
+
+    Simulates a squash merge by manually copying the branch's tree changes
+    to main, without making the branch an ancestor of main.
+    """
+    # Create feature branch from main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    # Add a commit on feature
+    feature_file = tmp_path / "feature.txt"
+    feature_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(feature_file)])
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: add feature")
+    porcelain.commit(temp_repo, message=message.encode())
+
+    # Simulate squash merge: add same file to main directly
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.reset(temp_repo, "hard")
+    # Create same file with same content on main
+    feature_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(feature_file)])
+    porcelain.commit(temp_repo, message=b"squash: add feature")
+
+    # Branch is NOT an ancestor of main (not regular merged)
+    assert not is_merged(temp_repo, "feature", "main")
+    # But tree changes ARE in main (squash merged)
+    assert is_squash_merged(temp_repo, "feature", "main")
+
+
+def test_is_squash_merged_false(repo_with_tracked_feature: Repo) -> None:
+    """Test non-squash-merged branch."""
+    assert not is_squash_merged(repo_with_tracked_feature, "feature", "main")
+
+
+def test_get_merged_branches_detects_squash_merge(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test get_merged_branches detects squash-merged branches."""
+    # Create feature branch from main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    # Add a commit on feature with trailer
+    feature_file = tmp_path / "feature.txt"
+    feature_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(feature_file)])
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: add feature")
+    porcelain.commit(temp_repo, message=message.encode())
+
+    # Simulate squash merge: add same file to main
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.reset(temp_repo, "hard")
+    feature_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(feature_file)])
+    porcelain.commit(temp_repo, message=b"squash: add feature")
+
+    # get_merged_branches should detect it
+    tracked = get_tracked_branches(temp_repo)
+    merged = get_merged_branches(temp_repo, tracked, "main")
+    assert "feature" in merged
 
 
 def test_get_merged_branches(repo_with_merged_branch: Repo) -> None:

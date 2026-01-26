@@ -7,6 +7,21 @@ from dulwich.repo import Repo
 from shortcake._trailers import Trailers
 
 
+def switch_branch(repo: Repo, branch: str) -> None:
+    """Properly switch branches with index and working tree reset.
+
+    dulwich's porcelain.switch doesn't fully reset the index, which can
+    cause files from the old branch to be included in new commits.
+    This helper sets HEAD first, then uses reset --hard to update the
+    index and working tree without moving any branch refs.
+    """
+    ref = f"refs/heads/{branch}".encode()
+    # Set HEAD to target branch first
+    repo.refs.set_symbolic_ref(b"HEAD", ref)
+    # Reset index and working tree to match HEAD (doesn't move branch refs)
+    porcelain.reset(repo, "hard")
+
+
 @pytest.fixture
 def temp_repo(tmp_path: Path) -> Repo:
     """Create a temporary git repo with initial commit on main."""
@@ -123,15 +138,15 @@ def repo_with_stack_behind(temp_repo: Repo, tmp_path: Path) -> Repo:
     porcelain.commit(temp_repo, message=message_b.encode())
 
     # Now add a commit to main (to make branch_a behind)
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
-    porcelain.switch(temp_repo, "main")
+    # Use switch_branch to properly reset index and working tree
+    switch_branch(temp_repo, "main")
     main_file = tmp_path / "main_update.txt"
     main_file.write_text("main update")
     porcelain.add(temp_repo, paths=[str(main_file)])
     porcelain.commit(temp_repo, message=b"chore: update main")
 
     # Switch back to branch_b
-    porcelain.switch(temp_repo, "branch_b")
+    switch_branch(temp_repo, "branch_b")
 
     return temp_repo
 
@@ -161,14 +176,14 @@ def repo_with_merged_branch(temp_repo: Repo, tmp_path: Path) -> Repo:
     temp_repo.refs[b"refs/heads/main"] = feature_sha
 
     # Add another commit to main so it's ahead of feature
-    porcelain.switch(temp_repo, "main")
+    switch_branch(temp_repo, "main")
     main_file = tmp_path / "main_after_merge.txt"
     main_file.write_text("main after merge")
     porcelain.add(temp_repo, paths=[str(main_file)])
     porcelain.commit(temp_repo, message=b"chore: post-merge commit")
 
     # Switch back to feature
-    porcelain.switch(temp_repo, "feature")
+    switch_branch(temp_repo, "feature")
 
     return temp_repo
 
@@ -210,14 +225,14 @@ def repo_with_merged_and_children(temp_repo: Repo, tmp_path: Path) -> Repo:
     temp_repo.refs[b"refs/heads/main"] = branch_a_sha
 
     # Add commit to main so it's ahead of branch_a
-    porcelain.switch(temp_repo, "main")
+    switch_branch(temp_repo, "main")
     main_file = tmp_path / "main_after_merge.txt"
     main_file.write_text("main after merge")
     porcelain.add(temp_repo, paths=[str(main_file)])
     porcelain.commit(temp_repo, message=b"chore: post-merge commit")
 
     # Switch to branch_b
-    porcelain.switch(temp_repo, "branch_b")
+    switch_branch(temp_repo, "branch_b")
 
     return temp_repo
 

@@ -17,9 +17,10 @@ Before using `sc submit`, you need:
 
 ## Basic Usage
 
-### Setup: Create a Stack
+### Setup: Create a Stack with Remote
 
 ```console
+$ git remote add origin git@github.com:test/repo.git
 $ echo "feature code" > feature.py && git add feature.py
 $ sc create -m "Add feature"
 Created branch 'add-feature' from 'main'
