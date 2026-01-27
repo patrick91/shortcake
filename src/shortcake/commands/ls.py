@@ -18,10 +18,13 @@ def _ls(repo: Repo) -> str:
     # Get current branch (None if detached HEAD)
     current = git.get_current_branch(repo)
 
+    # Precompute all branch heads once (O(n) instead of O(n²))
+    branch_heads = {b: git.get_branch_head(repo, b) for b in all_branches}
+
     # Find parent for each branch
     branches: dict[str, str | None] = {}
     for branch in all_branches:
-        parent = git.get_branch_parent(repo, branch, all_branches)
+        parent = git.get_branch_parent(repo, branch, all_branches, branch_heads)
         if parent is not None:
             branches[branch] = parent
 
