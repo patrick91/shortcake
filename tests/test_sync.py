@@ -94,6 +94,129 @@ def test_is_squash_merged_false(repo_with_tracked_feature: Repo) -> None:
     assert not is_squash_merged(repo_with_tracked_feature, "feature", "main")
 
 
+def test_is_squash_merged_branch_no_changes(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test is_squash_merged when branch tree equals merge base (no changes)."""
+    # Create feature branch at same commit as main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+
+    # Branch has no changes - tree equals merge base
+    assert is_squash_merged(temp_repo, "feature", "main")
+
+
+def test_is_squash_merged_with_deletion(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test is_squash_merged detects deleted files that are also deleted on trunk."""
+    # Create a file on main first
+    delete_me = tmp_path / "delete_me.txt"
+    delete_me.write_text("will be deleted")
+    porcelain.add(temp_repo, paths=[str(delete_me)])
+    porcelain.commit(temp_repo, message=b"Add file to delete")
+
+    # Create feature branch from main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    porcelain.reset(temp_repo, "hard")
+
+    # Delete the file on feature branch
+    delete_me.unlink()
+    porcelain.rm(temp_repo, paths=[str(delete_me)])
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: delete file")
+    porcelain.commit(temp_repo, message=message.encode())
+
+    # Simulate squash merge: delete same file on main
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.reset(temp_repo, "hard")
+    delete_me.unlink()
+    porcelain.rm(temp_repo, paths=[str(delete_me)])
+    porcelain.commit(temp_repo, message=b"squash: delete file")
+
+    # Should detect as squash-merged
+    assert is_squash_merged(temp_repo, "feature", "main")
+
+
+def test_is_squash_merged_with_extra_trunk_changes(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test squash-merge detection when trunk has additional changes.
+
+    This tests the case where branch changes are a subset of trunk changes.
+    """
+    # Create feature branch from main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    # Add a commit on feature
+    feature_file = tmp_path / "feature.txt"
+    feature_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(feature_file)])
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: add feature")
+    porcelain.commit(temp_repo, message=message.encode())
+
+    # Simulate squash merge with extra changes:
+    # Add same file to main PLUS an additional file
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.reset(temp_repo, "hard")
+    # Create same file with same content on main
+    feature_file.write_text("feature content")
+    extra_file = tmp_path / "extra.txt"
+    extra_file.write_text("extra content")
+    porcelain.add(temp_repo, paths=[str(feature_file), str(extra_file)])
+    porcelain.commit(temp_repo, message=b"squash: add feature plus extra")
+
+    # Branch is NOT an ancestor of main (not regular merged)
+    assert not is_merged(temp_repo, "feature", "main")
+    # But tree changes ARE in main (squash merged)
+    # Trees are different (main has extra.txt) but feature changes are present
+    assert is_squash_merged(temp_repo, "feature", "main")
+
+
+def test_is_squash_merged_no_common_ancestor(tmp_path: Path) -> None:
+    """Test is_squash_merged returns False when branches have no common ancestor."""
+    from dulwich.repo import Repo
+
+    # Create a repo with two unrelated branches
+    repo = Repo.init(tmp_path, default_branch=b"main")
+
+    # First commit on main
+    file1 = tmp_path / "main.txt"
+    file1.write_text("main content")
+    porcelain.add(repo, paths=[str(file1)])
+    porcelain.commit(repo, message=b"Initial commit on main")
+
+    # Create orphan branch with unrelated history using dulwich directly
+    # First, create a new tree and commit without parents
+    import time
+
+    from dulwich.objects import Blob, Commit, Tree
+
+    blob = Blob.from_string(b"orphan content")
+    repo.object_store.add_object(blob)
+
+    tree = Tree()
+    tree.add(b"orphan.txt", 0o100644, blob.id)
+    repo.object_store.add_object(tree)
+
+    commit = Commit()
+    commit.tree = tree.id
+    commit.author = b"Test <test@test.com>"
+    commit.committer = b"Test <test@test.com>"
+    commit.author_time = commit.commit_time = int(time.time())
+    commit.author_timezone = commit.commit_timezone = 0
+    commit.message = b"Orphan commit"
+    commit.parents = []  # No parents - orphan
+    repo.object_store.add_object(commit)
+
+    # Create orphan ref
+    repo.refs[b"refs/heads/orphan"] = commit.id
+
+    # Branches have no common ancestor
+    assert not is_squash_merged(repo, "orphan", "main")
+
+
 def test_get_merged_branches_detects_squash_merge(
     temp_repo: Repo, tmp_path: Path
 ) -> None:

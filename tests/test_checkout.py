@@ -151,8 +151,8 @@ def test_checkout_local_branch_no_default_branch(tmp_path: Path) -> None:
 # Tests for _checkout with remote branches
 
 
-def test_checkout_remote_branch_not_found(temp_repo: Repo) -> None:
-    """Test error when branch doesn't exist locally or on remote."""
+def test_checkout_remote_branch_fetch_fails(temp_repo: Repo) -> None:
+    """Test error when fetch fails."""
     # Set up origin remote
     config = temp_repo.get_config()
     config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
@@ -162,6 +162,22 @@ def test_checkout_remote_branch_not_found(temp_repo: Repo) -> None:
     with (
         patch("shortcake.commands.checkout._fetch_branch", return_value=False),
         pytest.raises(CheckoutError, match="not found locally or on remote"),
+    ):
+        _checkout(temp_repo, "nonexistent-branch")
+
+
+def test_checkout_remote_branch_not_on_remote(temp_repo: Repo) -> None:
+    """Test error when fetch succeeds but branch not found on remote."""
+    # Set up origin remote
+    config = temp_repo.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Mock fetch to succeed, but don't add the remote ref
+    # so get_remote_ref returns None
+    with (
+        patch("shortcake.commands.checkout._fetch_branch", return_value=True),
+        pytest.raises(CheckoutError, match="not found on remote"),
     ):
         _checkout(temp_repo, "nonexistent-branch")
 

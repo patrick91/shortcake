@@ -3,10 +3,14 @@ from pathlib import Path
 import pytest
 from dulwich import porcelain
 from dulwich.repo import Repo
+from typer.testing import CliRunner
 
 from shortcake import _git as git
 from shortcake._trailers import Trailers
+from shortcake.cli import app
 from shortcake.commands.adopt import AdoptError, _adopt
+
+runner = CliRunner()
 
 
 def test_adopt_current_branch(repo_with_feature: Repo) -> None:
@@ -190,3 +194,24 @@ def test_trailers_apply_to_preserves_existing() -> None:
     result = trailers.apply_to(message)
     assert "Existing-Trailer: value" in result
     assert "Shortcake-Parent: main" in result
+
+
+# CLI tests
+
+
+def test_adopt_cli_force_reparent(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """Test CLI re-parenting with --force flag."""
+    import os
+
+    # First adopt with main as parent
+    _adopt(repo_with_feature)
+
+    # Create a new branch to use as parent
+    main_sha = repo_with_feature.refs[b"refs/heads/main"]
+    repo_with_feature.refs[b"refs/heads/develop"] = main_sha
+
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["adopt", "--force", "--parent", "develop"])
+
+    assert result.exit_code == 0
+    assert "Re-parented 'feature' to 'develop'" in result.output
