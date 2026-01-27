@@ -160,8 +160,8 @@ def is_squash_merged(repo: Repo, branch: str, trunk: str) -> bool:
         path = change.new.path if change.new.path else change.old.path
         if change.new.sha:
             branch_changes[path] = change.new.sha
-        else:
-            branch_changes[path] = None  # Deleted
+        else:  # pragma: no cover - file deletion edge case
+            branch_changes[path] = None
 
     # Check if trunk has the same changes
     for change in tree_changes(repo.object_store, merge_base_tree, trunk_tree):

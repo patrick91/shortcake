@@ -24,6 +24,7 @@ class PRInfo:
     body: str
     state: str  # "open", "closed", "merged"
     is_draft: bool
+    head_ref: str | None = None  # Branch name (head ref)
 
 
 def get_github_token() -> str | None:
@@ -153,6 +154,31 @@ class GitHubClient:
             body=pr["body"] or "",
             state=pr["state"],
             is_draft=pr.get("draft", False),
+        )
+
+    def get_pr_by_number(self, pr_number: int) -> PRInfo | None:
+        """Get PR info by PR number.
+
+        Returns PRInfo if PR exists, None if not found (404).
+        Raises httpx.HTTPStatusError for other errors.
+        """
+        response = self.client.get(
+            f"/repos/{self.owner}/{self.repo}/pulls/{pr_number}",
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+
+        pr = response.json()
+        return PRInfo(
+            number=pr["number"],
+            url=pr["html_url"],
+            base=pr["base"]["ref"],
+            title=pr["title"],
+            body=pr["body"] or "",
+            state=pr["state"],
+            is_draft=pr.get("draft", False),
+            head_ref=pr["head"]["ref"],
         )
 
     def has_merged_pr(self, branch: str) -> bool:

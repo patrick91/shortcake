@@ -68,6 +68,21 @@ def test_build_stack_section_missing_pr() -> None:
     assert "(no PR) (`branch_b`)" in section
 
 
+def test_build_stack_section_merged_pr() -> None:
+    """Test stack section with merged PR numbers."""
+    stack_branches = ["branch_a", "branch_b"]
+    pr_numbers = {"branch_a": 1}  # branch_b has no open PR
+    merged_pr_numbers = {"branch_b": 5}  # but branch_b has a merged PR
+
+    section = _build_stack_section(
+        stack_branches, "branch_a", pr_numbers, "owner", merged_pr_numbers
+    )
+
+    assert "#1 (`branch_a`)" in section or "**#1** (`branch_a`)" in section
+    assert "#5 (merged)" in section
+    assert "branch_b" in section
+
+
 def test_update_pr_body_with_stack_no_markers() -> None:
     """Test prepending stack section to body without markers."""
     existing_body = "Original description"
@@ -748,7 +763,9 @@ def test_submit_handles_timeout_error(
     monkeypatch.setenv("GH_TOKEN", "test-token")
 
     mock_client = MagicMock(spec=GitHubClient)
-    mock_client.get_pr_for_branch.side_effect = httpx.TimeoutException("Request timeout")
+    mock_client.get_pr_for_branch.side_effect = httpx.TimeoutException(
+        "Request timeout"
+    )
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
 
@@ -802,3 +819,48 @@ def test_submit_stack_body_update_network_error_non_fatal(
         result = _submit(repo_with_tracked_feature)
 
     assert result.branch_results[0].action == PRAction.UPDATED
+
+
+def test_submit_merged_pr_lookup_error_ignored(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that errors looking up merged PRs are gracefully ignored."""
+    setup_origin_remote(repo_with_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    # PR only for branch_b, not branch_a
+    mock_pr_b = PRInfo(
+        number=789,
+        url="https://github.com/owner/repo/pull/789",
+        base="branch_a",
+        title="feat: branch b",
+        body="",
+        state="open",
+        is_draft=False,
+    )
+
+    import os
+
+    os.chdir(tmp_path)
+
+    mock_client = MagicMock(spec=GitHubClient)
+    # branch_a has no PR, branch_b has PR
+    mock_client.get_pr_for_branch.side_effect = lambda b: (
+        None if b == "branch_a" else mock_pr_b
+    )
+    # Merged PR lookup fails with network error
+    mock_client.get_merged_pr_number.side_effect = httpx.HTTPStatusError(
+        "500", request=MagicMock(), response=MagicMock()
+    )
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        # Should complete - errors looking up merged PRs are ignored
+        result = _submit(repo_with_stack)
+
+    # Should have result for branch_b
+    assert any(br.branch == "branch_b" for br in result.branch_results)
