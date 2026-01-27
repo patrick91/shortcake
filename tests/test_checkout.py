@@ -147,6 +147,77 @@ def test_checkout_from_remote_creates_local(temp_repo: Repo, tmp_path: Path) -> 
     assert b"refs/heads/remote-feature" in temp_repo.refs
 
 
+def test_checkout_from_remote_with_adoption(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test checkout from remote with adoption enabled."""
+    # Set up origin remote
+    config = temp_repo.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Create a commit on remote branch that differs from main
+    main_sha = temp_repo.head()
+
+    # Add a file and commit to make a unique SHA for remote branch
+    test_file = tmp_path / "remote.txt"
+    test_file.write_text("remote content")
+    porcelain.add(temp_repo, paths=[str(test_file)])
+    porcelain.commit(temp_repo, message=b"Add remote feature")
+    remote_sha = temp_repo.head()
+
+    # Reset back to main
+    temp_repo.refs[b"refs/heads/main"] = main_sha
+    porcelain.reset(temp_repo, "hard")
+
+    # Simulate remote ref exists with the new commit
+    temp_repo.refs[b"refs/remotes/origin/remote-feature"] = remote_sha
+
+    with patch("shortcake.commands.checkout._fetch_branch", return_value=True):
+        result = _checkout(temp_repo, "remote-feature", adopt=True)
+
+    assert result.branch == "remote-feature"
+    assert result.from_remote is True
+    assert result.adopted is True
+
+
+def test_checkout_from_remote_adoption_fails(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test checkout from remote when adoption fails (no commits relative to parent)."""
+    # Set up origin remote
+    config = temp_repo.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Remote branch at same commit as main (no unique commits)
+    remote_sha = temp_repo.head()
+    temp_repo.refs[b"refs/remotes/origin/remote-feature"] = remote_sha
+
+    with patch("shortcake.commands.checkout._fetch_branch", return_value=True):
+        result = _checkout(temp_repo, "remote-feature", adopt=True)
+
+    assert result.branch == "remote-feature"
+    assert result.from_remote is True
+    assert result.adopted is False  # Adoption fails silently
+
+
+def test_checkout_from_remote_create_branch_fails(temp_repo: Repo) -> None:
+    """Test error when _create_branch_from_remote fails."""
+    # Set up origin remote
+    config = temp_repo.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Simulate remote ref exists
+    temp_repo.refs[b"refs/remotes/origin/remote-feature"] = temp_repo.head()
+
+    with (
+        patch("shortcake.commands.checkout._fetch_branch", return_value=True),
+        patch(
+            "shortcake.commands.checkout._create_branch_from_remote", return_value=False
+        ),
+        pytest.raises(CheckoutError, match="Failed to create local branch"),
+    ):
+        _checkout(temp_repo, "remote-feature")
+
+
 # Tests for _checkout with PR numbers
 
 
