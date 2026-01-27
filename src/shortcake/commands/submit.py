@@ -29,6 +29,18 @@ class PRAction(Enum):
 
 
 @dataclass
+class BranchPlan:
+    """Planned action for a branch."""
+
+    branch: str
+    action: PRAction
+    existing_pr_number: int | None = None
+    existing_pr_url: str | None = None
+    existing_pr_base: str | None = None
+    parent: str | None = None
+
+
+@dataclass
 class BranchSubmitResult:
     """Result of submitting a single branch."""
 
@@ -187,75 +199,136 @@ def _submit(
             "Use 'sc adopt' to track it first."
         )
     result.stack_branches = stack_branches
-
-    if dry_run:
-        typer.echo(f"Would submit {len(stack_branches)} branch(es):")
-        for branch in stack_branches:
-            typer.echo(f"  {branch}")
-        return result
-
-    # Track PR numbers for stack visualization
-    pr_numbers: dict[str, int] = {}
     all_branches = set(git.get_all_local_branches(repo))
 
+    # Phase 1: Build plan - check GitHub for existing PRs
+    plans: list[BranchPlan] = []
+    pr_numbers: dict[str, int] = {}
+
     with GitHubClient(token, owner, repo_name) as gh:
-        # Phase 1: Push all branches and create/identify PRs
         for branch in stack_branches:
-            branch_result = BranchSubmitResult(branch=branch, action=PRAction.SKIPPED)
+            parent = git.get_branch_parent(repo, branch, all_branches)
+
+            try:
+                existing_pr = gh.get_pr_for_branch(branch)
+                if existing_pr:
+                    plans.append(
+                        BranchPlan(
+                            branch=branch,
+                            action=PRAction.UPDATED,
+                            existing_pr_number=existing_pr.number,
+                            existing_pr_url=existing_pr.url,
+                            existing_pr_base=existing_pr.base,
+                            parent=parent,
+                        )
+                    )
+                    pr_numbers[branch] = existing_pr.number
+                elif gh.has_merged_pr(branch):
+                    plans.append(
+                        BranchPlan(
+                            branch=branch, action=PRAction.SKIPPED, parent=parent
+                        )
+                    )
+                else:
+                    plans.append(
+                        BranchPlan(
+                            branch=branch, action=PRAction.CREATED, parent=parent
+                        )
+                    )
+            except httpx.HTTPStatusError as e:
+                # Handle fatal errors during planning
+                if e.response.status_code == 401:
+                    raise SubmitError(
+                        "GitHub authentication failed. "
+                        "Re-run 'gh auth login' or check your token."
+                    ) from None
+                elif e.response.status_code == 403:
+                    if "rate limit" in e.response.text.lower():
+                        raise SubmitError(
+                            "GitHub API rate limit exceeded. Please wait and try again."
+                        ) from None
+                    raise SubmitError(
+                        f"GitHub API forbidden: {e.response.text}"
+                    ) from None
+                # For other errors, assume create
+                plans.append(
+                    BranchPlan(branch=branch, action=PRAction.CREATED, parent=parent)
+                )
+            except httpx.RequestError:
+                # Network errors during planning - assume create
+                plans.append(
+                    BranchPlan(branch=branch, action=PRAction.CREATED, parent=parent)
+                )
+
+        # Dry run: show plan and return
+        if dry_run:
+            typer.echo(f"Would submit {len(stack_branches)} branch(es):")
+            for plan in plans:
+                if plan.action == PRAction.UPDATED:
+                    typer.echo(
+                        f"  {plan.branch} (update PR #{plan.existing_pr_number})"
+                    )
+                elif plan.action == PRAction.SKIPPED:
+                    typer.echo(f"  {plan.branch} (skip - already merged)")
+                else:
+                    typer.echo(f"  {plan.branch} (create new PR)")
+            return result
+
+        # Phase 2: Execute plan - push and create/update PRs
+        for plan in plans:
+            branch_result = BranchSubmitResult(
+                branch=plan.branch, action=PRAction.SKIPPED
+            )
 
             # Push branch
-            typer.echo(f"Pushing '{branch}'...")
-            if not push_branch(repo, branch):  # pragma: no cover
+            typer.echo(f"Pushing '{plan.branch}'...")
+            if not push_branch(repo, plan.branch):  # pragma: no cover
                 branch_result.error = "Failed to push"
                 result.branch_results.append(branch_result)
                 continue
 
-            # Get parent branch for PR base
-            parent = git.get_branch_parent(repo, branch, all_branches)
-            if parent is None:  # pragma: no cover
+            if plan.parent is None:  # pragma: no cover
                 branch_result.error = "No parent branch found"
                 result.branch_results.append(branch_result)
                 continue
 
             try:
-                # Check if PR exists
-                existing_pr = gh.get_pr_for_branch(branch)
-
-                if existing_pr:
-                    pr_numbers[branch] = existing_pr.number
-                    branch_result.pr_number = existing_pr.number
-                    branch_result.pr_url = existing_pr.url
+                if plan.action == PRAction.UPDATED:
+                    # Update existing PR - use info from planning
+                    pr_numbers[plan.branch] = plan.existing_pr_number  # type: ignore
+                    branch_result.pr_number = plan.existing_pr_number
+                    branch_result.pr_url = plan.existing_pr_url
 
                     # Update PR base if changed
-                    if existing_pr.base != parent:
+                    if plan.existing_pr_base != plan.parent:
                         typer.echo(
-                            f"  Updating PR #{existing_pr.number} base: "
-                            f"{existing_pr.base} -> {parent}"
+                            f"  Updating PR #{plan.existing_pr_number} base: "
+                            f"{plan.existing_pr_base} -> {plan.parent}"
                         )
-                        gh.update_pr(existing_pr.number, base=parent)
+                        gh.update_pr(plan.existing_pr_number, base=plan.parent)  # type: ignore
                     branch_result.action = PRAction.UPDATED
-                else:
-                    # Check if branch has a merged PR (skip if already merged)
-                    if gh.has_merged_pr(branch):
-                        typer.echo(
-                            f"  Skipping '{branch}' - already has a merged PR. "
-                            f"Run 'sc sync' to clean up merged branches."
-                        )
-                        branch_result.action = PRAction.SKIPPED
-                        result.branch_results.append(branch_result)
-                        continue
 
+                elif plan.action == PRAction.SKIPPED:
+                    typer.echo(
+                        f"  Skipping '{plan.branch}' - already has a merged PR. "
+                        f"Run 'sc sync' to clean up merged branches."
+                    )
+                    branch_result.action = PRAction.SKIPPED
+                    result.branch_results.append(branch_result)
+                    continue
+
+                else:  # PRAction.CREATED
                     # Create new PR
-                    title = _get_commit_title(repo, branch)
-                    typer.echo(f"  Creating PR for '{branch}'...")
+                    title = _get_commit_title(repo, plan.branch)
+                    typer.echo(f"  Creating PR for '{plan.branch}'...")
                     pr = gh.create_pr(
-                        head=branch,
-                        base=parent,
+                        head=plan.branch,
+                        base=plan.parent,
                         title=title,
                         body="",
                         draft=draft,
                     )
-                    pr_numbers[branch] = pr.number
+                    pr_numbers[plan.branch] = pr.number
                     branch_result.pr_number = pr.number
                     branch_result.pr_url = pr.url
                     branch_result.action = PRAction.CREATED
