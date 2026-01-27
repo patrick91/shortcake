@@ -748,7 +748,9 @@ def test_submit_handles_timeout_error(
     monkeypatch.setenv("GH_TOKEN", "test-token")
 
     mock_client = MagicMock(spec=GitHubClient)
-    mock_client.get_pr_for_branch.side_effect = httpx.TimeoutException("Request timeout")
+    mock_client.get_pr_for_branch.side_effect = httpx.TimeoutException(
+        "Request timeout"
+    )
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
 
