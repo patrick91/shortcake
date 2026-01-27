@@ -697,7 +697,9 @@ def test_render_pr_with_rich_link() -> None:
     tree = StackTree(roots=[root])
     output = tree.render()
 
-    assert "[link=https://github.com/owner/repo/pull/123]#123[/link]" in output
+    assert (
+        "[cyan underline link=https://github.com/owner/repo/pull/123]#123[/]" in output
+    )
 
 
 def test_render_pr_without_url_no_link() -> None:
