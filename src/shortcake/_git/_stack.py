@@ -11,7 +11,12 @@ from shortcake._git._rebase import is_ancestor
 from shortcake._trailers import Trailers
 
 
-def get_branch_parent(repo: Repo, branch: str, all_branches: set[str]) -> str | None:
+def get_branch_parent(
+    repo: Repo,
+    branch: str,
+    all_branches: set[str],
+    branch_heads: dict[str, bytes] | None = None,
+) -> str | None:
     """
     Get parent from Shortcake-Parent trailer in first commit.
 
@@ -22,18 +27,28 @@ def get_branch_parent(repo: Repo, branch: str, all_branches: set[str]) -> str | 
         repo: The git repository
         branch: The branch name to check
         all_branches: Set of all branch names for determining boundaries
+        branch_heads: Optional precomputed dict of branch name -> head SHA.
+                      If provided, avoids redundant get_branch_head() calls.
 
     Returns:
         Parent branch name if found, None otherwise
     """
 
-    branch_head = get_branch_head(repo, branch)
+    # Use precomputed head if available, otherwise fetch it
+    if branch_heads is not None:
+        branch_head = branch_heads[branch]
+    else:
+        branch_head = get_branch_head(repo, branch)
 
     # Get heads of other branches to know where to stop
-    other_branch_heads: set[bytes] = set()
-    for other_branch in all_branches:
-        if other_branch != branch:
-            other_branch_heads.add(get_branch_head(repo, other_branch))
+    # Use precomputed heads if provided (O(n) -> O(1) per call)
+    if branch_heads is not None:
+        other_branch_heads = {sha for b, sha in branch_heads.items() if b != branch}
+    else:
+        other_branch_heads: set[bytes] = set()
+        for other_branch in all_branches:
+            if other_branch != branch:
+                other_branch_heads.add(get_branch_head(repo, other_branch))
 
     # Walk commits from branch head
     seen: set[bytes] = set()
@@ -78,11 +93,16 @@ def get_branch_children(repo: Repo, branch: str) -> list[str]:
         Sorted list of branch names that have this branch as parent
     """
     all_branches = set(get_all_local_branches(repo))
+
+    # Precompute ALL branch heads once (O(n) total instead of O(n²))
+    branch_heads = {b: get_branch_head(repo, b) for b in all_branches}
+
     children = []
     for potential_child in all_branches:
         if potential_child == branch:
             continue
-        parent = get_branch_parent(repo, potential_child, all_branches)
+        # Pass precomputed heads to avoid redundant lookups
+        parent = get_branch_parent(repo, potential_child, all_branches, branch_heads)
         if parent == branch:
             children.append(potential_child)
     return sorted(children)
@@ -91,9 +111,14 @@ def get_branch_children(repo: Repo, branch: str) -> list[str]:
 def get_tracked_branches(repo: Repo) -> list[str]:
     """Get all tracked branches (those with Shortcake-Parent trailer)."""
     all_branches = set(get_all_local_branches(repo))
+
+    # Precompute ALL branch heads once (O(n) total instead of O(n²))
+    branch_heads = {b: get_branch_head(repo, b) for b in all_branches}
+
     tracked = []
     for branch in all_branches:
-        parent = get_branch_parent(repo, branch, all_branches)
+        # Pass precomputed heads to avoid redundant lookups
+        parent = get_branch_parent(repo, branch, all_branches, branch_heads)
         if parent is not None:
             tracked.append(branch)
     return sorted(tracked)
