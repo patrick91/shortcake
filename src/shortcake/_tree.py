@@ -163,12 +163,12 @@ class StackTree:
             if node.pr_number:
                 pr_text = f"#{node.pr_number}"
                 if node.pr_url:
-                    pr_text = f"[link={node.pr_url}]{pr_text}[/link]"
+                    pr_text = f"[cyan underline link={node.pr_url}]{pr_text}[/]"
                 pr_suffix = f" {pr_text}"
                 if node.pr_is_merged:
-                    pr_suffix += " merged"
+                    pr_suffix += " [dim]merged[/]"
                 elif node.pr_is_draft:
-                    pr_suffix += " draft"
+                    pr_suffix += " [dim]draft[/]"
 
             # Warning/status suffix
             suffix = " (current)" if node.is_current else ""
@@ -221,12 +221,12 @@ class StackTree:
             if node.pr_number:
                 pr_text = f"#{node.pr_number}"
                 if node.pr_url:
-                    pr_text = f"[link={node.pr_url}]{pr_text}[/link]"
+                    pr_text = f"[cyan underline link={node.pr_url}]{pr_text}[/]"
                 pr_suffix = f" {pr_text}"
                 if node.pr_is_merged:
-                    pr_suffix += " merged"
+                    pr_suffix += " [dim]merged[/]"
                 elif node.pr_is_draft:
-                    pr_suffix += " draft"
+                    pr_suffix += " [dim]draft[/]"
 
             suffix = " (current)" if node.is_current else ""
             if node.warning == BranchWarning.ORPHAN:
