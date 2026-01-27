@@ -4,14 +4,13 @@ import typer
 from dulwich.repo import Repo
 from rich.console import Console
 from rich.live import Live
-from rich.text import Text
 
 from shortcake import _git as git
 from shortcake._cache import load_pr_cache, update_pr_cache
 from shortcake._github import GitHubClient, get_github_token, get_repo_info
 from shortcake._tree import BranchNode, StackTree
 
-console = Console()
+console = Console(highlight=False)
 
 
 def _build_tree(repo: Repo) -> tuple[StackTree, set[str]]:
@@ -72,15 +71,17 @@ def _fetch_pr_info(repo: Repo, tree: StackTree, tracked_branches: set[str]) -> N
     repo_info = get_repo_info(repo)
 
     if not token or not repo_info:
-        typer.echo(
-            "Cannot fetch PR info: no GitHub token or not a GitHub repo", err=True
+        console.print(
+            "Cannot fetch PR info: no GitHub token or not a GitHub repo",
+            style="bold red",
         )
         return
 
     owner, repo_name = repo_info
     branch_nodes = _collect_nodes(tree)
 
-    with Live(Text(tree.render(use_rich_links=True)), refresh_per_second=4) as live:
+    with Live(console=console, refresh_per_second=4) as live:
+        live.update(tree.render())
         try:
             with GitHubClient(token, owner, repo_name) as gh:
                 for node in branch_nodes:
@@ -114,7 +115,7 @@ def _fetch_pr_info(repo: Repo, tree: StackTree, tracked_branches: set[str]) -> N
                                     is_merged=True,
                                     url=pr_url,
                                 )
-                        live.update(Text(tree.render(use_rich_links=True)))
+                        live.update(tree.render())
                     except Exception:
                         continue
         except Exception:
@@ -152,4 +153,4 @@ def ls(
                 node.pr_is_merged = cached.is_merged
                 node.pr_url = cached.url
 
-        console.print(tree.render(use_rich_links=True))
+        console.print(tree.render())

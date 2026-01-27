@@ -685,7 +685,7 @@ def test_snapshot_pr_with_multiple_children() -> None:
 
 
 def test_render_pr_with_rich_link() -> None:
-    """Test rendering branch with Rich link markup."""
+    """Test rendering branch with Rich link markup when URL is set."""
     child = BranchNode(
         name="feature",
         is_current=True,
@@ -695,7 +695,7 @@ def test_render_pr_with_rich_link() -> None:
     root = BranchNode(name="main", children=[child])
 
     tree = StackTree(roots=[root])
-    output = tree.render(use_rich_links=True)
+    output = tree.render()
 
     assert "[link=https://github.com/owner/repo/pull/123]#123[/link]" in output
 
@@ -706,7 +706,7 @@ def test_render_pr_without_url_no_link() -> None:
     root = BranchNode(name="main", children=[child])
 
     tree = StackTree(roots=[root])
-    output = tree.render(use_rich_links=True)
+    output = tree.render()
 
     # Should have plain #123, not link markup
     assert "#123" in output
