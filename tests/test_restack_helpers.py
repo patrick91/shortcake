@@ -16,10 +16,7 @@ from shortcake.cli import app
 from shortcake.commands.continue_ import _continue_rebase
 from shortcake.commands.restack import (
     RestackError,
-    _fast_forward_branch,
-    _fetch_remote,
     _get_conflict_files,
-    _get_diverged_branches,
     _get_stack_in_order,
     _plan_restack,
     _restack,
@@ -60,19 +57,6 @@ def test_show_conflict_message_no_files(capsys: pytest.CaptureFixture[str]) -> N
     captured = capsys.readouterr()
     assert "Conflict while rebasing 'branch_a' onto 'main'" in captured.out
     assert "sc continue" in captured.out
-
-
-def test_get_diverged_branches_no_remote(repo_with_stack: Repo) -> None:
-    """Test divergence check with no remote refs."""
-    branches = ["branch_a", "branch_b"]
-    diverged = _get_diverged_branches(repo_with_stack, branches)
-    assert diverged == []
-
-
-def test_fetch_remote(temp_repo: Repo) -> None:
-    """Test fetch remote - should fail gracefully when no remote exists."""
-    result = _fetch_remote(temp_repo)
-    assert result is False
 
 
 def test_restack_git_rebase_in_progress(repo_with_stack: Repo, tmp_path: Path) -> None:
@@ -359,20 +343,12 @@ def test_get_stack_visited_branch(repo_with_fork: Repo) -> None:
     assert len(order) == len(set(order))
 
 
-def test_fast_forward_branch(temp_repo: Repo) -> None:
-    """Test fast forward branch - should fail gracefully when no remote exists."""
-    result = _fast_forward_branch(temp_repo, "main")
-    # Returns False because there's no origin remote to fetch from
-    assert result is False
-
-
 def test_cli_restack_help() -> None:
     """Test CLI restack --help."""
     result = runner.invoke(app, ["restack", "--help"])
     assert result.exit_code == 0
     output = strip_ansi(result.output)
     assert "--dry-run" in output
-    assert "--sync" in output
 
 
 def test_cli_continue_help() -> None:
@@ -490,19 +466,6 @@ def test_continue_rebase_function_error(
     assert result is False
 
 
-def test_restack_with_sync_flag(
-    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Test restack --sync flag."""
-    monkeypatch.chdir(tmp_path)
-
-    # Will try to fetch (and fail gracefully since no remote)
-    result = runner.invoke(app, ["restack", "--sync"])
-
-    # Should still work (fetch fails silently)
-    assert result.exit_code == 0
-
-
 def test_cli_restack_dry_run_shows_branches(
     repo_with_stack_behind: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -514,94 +477,6 @@ def test_cli_restack_dry_run_shows_branches(
     assert result.exit_code == 0
     assert "branch_a" in result.output
     assert "onto" in result.output.lower()
-
-
-def test_get_diverged_branches_with_diverged_branch(
-    repo_with_stack: Repo, tmp_path: Path
-) -> None:
-    """Test divergence detection when branch has truly diverged from remote.
-
-    True divergence means both local and remote have commits the other doesn't.
-    """
-    # Create a sibling branch from main (not branch_a)
-    main_sha = git.get_branch_head(repo_with_stack, "main")
-    repo_with_stack.refs[b"refs/heads/sibling"] = main_sha
-    repo_with_stack.refs.set_symbolic_ref(b"HEAD", b"refs/heads/sibling")
-
-    # Create a commit on sibling branch
-    sibling_file = tmp_path / "sibling.txt"
-    sibling_file.write_text("sibling content")
-    porcelain.add(repo_with_stack, paths=[str(sibling_file)])
-    sibling_sha = porcelain.commit(repo_with_stack, message=b"Sibling commit on remote")
-
-    # Switch back to branch_a
-    repo_with_stack.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
-
-    # Set up origin/branch_a pointing to sibling commit
-    # Now local branch_a and origin/branch_a have diverged:
-    # - Local branch_a has commits sibling doesn't have
-    # - Sibling has commits branch_a doesn't have
-    repo_with_stack.refs[b"refs/remotes/origin/branch_a"] = sibling_sha
-
-    diverged = _get_diverged_branches(repo_with_stack, ["branch_a"])
-
-    # branch_a should be detected as diverged
-    assert "branch_a" in diverged
-
-
-def test_get_diverged_branches_allows_local_ahead(
-    repo_with_stack: Repo, tmp_path: Path
-) -> None:
-    """Test that local-ahead branches are NOT flagged as diverged."""
-    # Set origin/branch_a to main (which is an ancestor of branch_a)
-    # This simulates "local has unpushed commits" - not true divergence
-    main_sha = git.get_branch_head(repo_with_stack, "main")
-    repo_with_stack.refs[b"refs/remotes/origin/branch_a"] = main_sha
-
-    diverged = _get_diverged_branches(repo_with_stack, ["branch_a"])
-
-    # branch_a should NOT be detected as diverged (just local-ahead)
-    assert "branch_a" not in diverged
-
-
-def test_restack_with_diverged_branches(
-    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """Test restack fails with truly diverged branches."""
-    monkeypatch.chdir(tmp_path)
-
-    # Create branch_a with a commit
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
-
-    branch_a_file = tmp_path / "branch_a.txt"
-    branch_a_file.write_text("branch_a content")
-    porcelain.add(temp_repo, paths=[str(branch_a_file)])
-    porcelain.commit(
-        temp_repo,
-        message=b"feat: branch_a\n\nShortcake-Parent: main",
-    )
-
-    # Create a sibling branch from main for the "remote" commit
-    temp_repo.refs[b"refs/heads/sibling"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/sibling")
-
-    sibling_file = tmp_path / "sibling.txt"
-    sibling_file.write_text("sibling content")
-    porcelain.add(temp_repo, paths=[str(sibling_file)])
-    sibling_sha = porcelain.commit(temp_repo, message=b"Sibling commit on remote")
-
-    # Switch back to branch_a
-    porcelain.switch(temp_repo, "branch_a")
-
-    # Set up diverged remote ref
-    temp_repo.refs[b"refs/remotes/origin/branch_a"] = sibling_sha
-
-    result = runner.invoke(app, ["restack"])
-
-    assert result.exit_code == 1
-    assert "diverged" in result.output.lower()
 
 
 def test_restack_conflict_returns_conflict_branch(
