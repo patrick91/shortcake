@@ -21,6 +21,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
+from github_mock import GitHubMockServer
+
 
 @dataclass
 class CodeBlock:
@@ -38,6 +40,7 @@ class TestEnv:
 
     repo_dir: Path
     remote_dir: Path | None = None
+    github_mock: GitHubMockServer | None = None
 
 
 @dataclass
@@ -152,7 +155,10 @@ def setup_test_repo() -> TestEnv:
 
 
 def setup_remote(env: TestEnv) -> None:
-    """Create a bare remote and push main to it."""
+    """Create a bare remote and push main to it.
+
+    If origin already exists, removes it first to allow reconfiguration.
+    """
     remote_dir = Path(tempfile.mkdtemp(prefix="shortcake_remote_"))
 
     # Create bare repo
@@ -161,6 +167,14 @@ def setup_remote(env: TestEnv) -> None:
         cwd=remote_dir,
         capture_output=True,
         check=True,
+    )
+
+    # Remove existing origin if present
+    subprocess.run(
+        ["git", "remote", "remove", "origin"],
+        cwd=env.repo_dir,
+        capture_output=True,
+        # Don't check - it's OK if origin doesn't exist
     )
 
     # Add remote to local repo
@@ -288,6 +302,75 @@ def force_push_to_remote(env: TestEnv, branch: str) -> None:
         shutil.rmtree(temp_clone, ignore_errors=True)
 
 
+def setup_github_mock(env: TestEnv) -> None:
+    """Start the GitHub mock server and configure environment."""
+    if env.github_mock is not None:
+        return  # Already set up
+
+    env.github_mock = GitHubMockServer(owner="test", repo="repo")
+    env.github_mock.start()
+
+
+def setup_github_mock_with_remote(env: TestEnv) -> None:
+    """Set up both GitHub mock and a remote with a GitHub-compatible URL.
+
+    This:
+    1. Creates a bare remote repo
+    2. Configures origin with a fake GitHub URL (for get_repo_info() to work)
+    3. Sets up insteadOf so pushes go to the local bare repo
+    4. Starts the mock GitHub API server
+    """
+    # Start mock server first
+    setup_github_mock(env)
+
+    # Create bare remote
+    remote_dir = Path(tempfile.mkdtemp(prefix="shortcake_remote_"))
+    subprocess.run(
+        ["git", "init", "--bare"],
+        cwd=remote_dir,
+        capture_output=True,
+        check=True,
+    )
+
+    # Remove any existing origin
+    subprocess.run(
+        ["git", "remote", "remove", "origin"],
+        cwd=env.repo_dir,
+        capture_output=True,
+    )
+
+    # Add origin with a fake GitHub URL
+    subprocess.run(
+        ["git", "remote", "add", "origin", "git@github.com:test/repo.git"],
+        cwd=env.repo_dir,
+        capture_output=True,
+        check=True,
+    )
+
+    # Set up URL rewriting so pushes go to our local bare repo
+    subprocess.run(
+        [
+            "git",
+            "config",
+            f"url.{remote_dir}.insteadOf",
+            "git@github.com:test/repo.git",
+        ],
+        cwd=env.repo_dir,
+        capture_output=True,
+        check=True,
+    )
+
+    # Push main
+    subprocess.run(
+        ["git", "push", "-u", "origin", "main"],
+        cwd=env.repo_dir,
+        capture_output=True,
+        check=True,
+    )
+
+    env.remote_dir = remote_dir
+
+
 def run_command(cmd: str, env: TestEnv) -> str:
     """Run a shell command and return output.
 
@@ -296,6 +379,12 @@ def run_command(cmd: str, env: TestEnv) -> str:
     - # setup: with-remote: Create bare remote and push main
     - # remote: update-main: Simulate remote main advancing
     - # remote: force-push <branch>: Simulate force-push to branch
+    - # github: setup-mock: Start mock GitHub server
+    - # github: add-pr <branch> <number> <base>: Add existing PR
+    - # github: merge-pr <number>: Mark PR as merged
+    - # github: error-auth: Trigger 401 errors
+    - # github: error-rate-limit: Trigger 403 rate limit
+    - # github: clear-errors: Clear error mode
     """
     cmd_stripped = cmd.strip()
 
@@ -316,13 +405,115 @@ def run_command(cmd: str, env: TestEnv) -> str:
         force_push_to_remote(env, branch)
         return ""
 
+    # GitHub mock meta-commands
+    if cmd_stripped == "# github: setup-mock":
+        setup_github_mock(env)
+        return ""
+
+    if cmd_stripped == "# github: setup-mock-with-remote":
+        setup_github_mock_with_remote(env)
+        return ""
+
+    if cmd_stripped.startswith("# github: add-pr "):
+        # Format: # github: add-pr <branch> <number> <base>
+        parts = cmd_stripped.replace("# github: add-pr ", "").strip().split()
+        if len(parts) >= 3:
+            branch, number, base = parts[0], int(parts[1]), parts[2]
+            if env.github_mock:
+                env.github_mock.add_pr(head=branch, base=base, number=number)
+        return ""
+
+    if cmd_stripped.startswith("# github: merge-pr "):
+        number = int(cmd_stripped.replace("# github: merge-pr ", "").strip())
+        if env.github_mock:
+            env.github_mock.merge_pr(number)
+        return ""
+
+    if cmd_stripped == "# github: error-auth":
+        if env.github_mock:
+            env.github_mock.set_error_mode("auth")
+        return ""
+
+    if cmd_stripped == "# github: error-rate-limit":
+        if env.github_mock:
+            env.github_mock.set_error_mode("rate_limit")
+        return ""
+
+    if cmd_stripped == "# github: clear-errors":
+        if env.github_mock:
+            env.github_mock.clear_errors()
+        return ""
+
+    if cmd_stripped == "# github: reset-state":
+        # Reset mock GitHub state (clear PRs, reset PR counter, clear errors)
+        if env.github_mock:
+            env.github_mock.state.prs.clear()
+            env.github_mock.state.next_pr_number = 1
+            env.github_mock.state.error_mode = None
+        return ""
+
+    if cmd_stripped == "# reset-to-main":
+        # Reset to main branch, delete other branches, clean working tree
+        subprocess.run(
+            ["git", "checkout", "main"],
+            cwd=env.repo_dir,
+            capture_output=True,
+        )
+        # Get list of branches and delete non-main ones
+        result = subprocess.run(
+            ["git", "branch", "--format=%(refname:short)"],
+            cwd=env.repo_dir,
+            capture_output=True,
+            text=True,
+        )
+        branches_to_delete = []
+        for branch in result.stdout.strip().split("\n"):
+            if branch and branch != "main":
+                branches_to_delete.append(branch)
+                subprocess.run(
+                    ["git", "branch", "-D", branch],
+                    cwd=env.repo_dir,
+                    capture_output=True,
+                )
+        # Also delete remote tracking refs and push deletes
+        for branch in branches_to_delete:
+            subprocess.run(
+                ["git", "push", "origin", "--delete", branch],
+                cwd=env.repo_dir,
+                capture_output=True,
+            )
+        # Clean working tree
+        subprocess.run(
+            ["git", "clean", "-fd"],
+            cwd=env.repo_dir,
+            capture_output=True,
+        )
+        subprocess.run(
+            ["git", "checkout", "--", "."],
+            cwd=env.repo_dir,
+            capture_output=True,
+        )
+        # Prune remote tracking refs
+        subprocess.run(
+            ["git", "fetch", "--prune", "origin"],
+            cwd=env.repo_dir,
+            capture_output=True,
+        )
+        return ""
+
+    # Build environment with mock GitHub settings if active
+    run_env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb"}
+    if env.github_mock:
+        run_env["GH_TOKEN"] = "mock-token-for-testing"
+        run_env["GITHUB_API_URL"] = env.github_mock.base_url
+
     result = subprocess.run(
         cmd,
         shell=True,
         cwd=env.repo_dir,
         capture_output=True,
         text=True,
-        env={**os.environ, "NO_COLOR": "1", "TERM": "dumb"},
+        env=run_env,
     )
 
     output = result.stdout
@@ -338,6 +529,7 @@ def normalize_output(output: str) -> str:
     - Strip trailing whitespace per line
     - Replace commit hashes (7+ hex chars) with <HASH>
     - Replace timestamps and other variable content
+    - Replace PR URLs with normalized form
     """
     lines = output.split("\n")
     normalized = []
@@ -350,6 +542,12 @@ def normalize_output(output: str) -> str:
         line = re.sub(r"\[(\S+)\s+[a-f0-9]{7,}\]", r"[\1 <HASH>]", line)
         line = re.sub(r"^[a-f0-9]{7,}\s+", "<HASH> ", line)
         line = re.sub(r"^(● )[a-f0-9]{7,}\s+", r"\1<HASH> ", line)
+        # Replace PR URLs (https://github.com/owner/repo/pull/123)
+        line = re.sub(
+            r"https://github\.com/[^/]+/[^/]+/pull/(\d+)",
+            r"https://github.com/<OWNER>/<REPO>/pull/\1",
+            line,
+        )
         normalized.append(line)
     return "\n".join(normalized)
 
@@ -448,6 +646,8 @@ def run_markdown_file(
         shutil.rmtree(env.repo_dir, ignore_errors=True)
         if env.remote_dir is not None:
             shutil.rmtree(env.remote_dir, ignore_errors=True)
+        if env.github_mock is not None:
+            env.github_mock.stop()
 
 
 def indent(text: str, spaces: int) -> str:

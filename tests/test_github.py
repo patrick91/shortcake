@@ -281,6 +281,40 @@ def test_github_client_context_manager() -> None:
     # Client should be closed after exiting context
 
 
+def test_github_client_default_base_url() -> None:
+    """Test GitHubClient uses default GitHub API URL."""
+    with GitHubClient("token", "owner", "repo") as client:
+        assert client.client.base_url == "https://api.github.com"
+
+
+def test_github_client_custom_base_url() -> None:
+    """Test GitHubClient accepts custom base URL."""
+    with GitHubClient(
+        "token", "owner", "repo", base_url="http://localhost:8080"
+    ) as client:
+        assert client.client.base_url == "http://localhost:8080"
+
+
+def test_github_client_base_url_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test GitHubClient uses GITHUB_API_URL env var."""
+    monkeypatch.setenv("GITHUB_API_URL", "http://mock-server:9000")
+
+    with GitHubClient("token", "owner", "repo") as client:
+        assert client.client.base_url == "http://mock-server:9000"
+
+
+def test_github_client_explicit_base_url_overrides_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test explicit base_url parameter overrides GITHUB_API_URL env var."""
+    monkeypatch.setenv("GITHUB_API_URL", "http://env-server:9000")
+
+    with GitHubClient(
+        "token", "owner", "repo", base_url="http://explicit:8080"
+    ) as client:
+        assert client.client.base_url == "http://explicit:8080"
+
+
 @respx.mock
 def test_github_client_get_pr_for_branch_found() -> None:
     """Test finding existing PR for branch."""
