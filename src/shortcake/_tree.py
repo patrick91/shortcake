@@ -142,12 +142,11 @@ class StackTree:
 
         return cls(roots=roots)
 
-    def render(self, use_rich_links: bool = False) -> str:
+    def render(self) -> str:
         """
         Render the tree as a string with box-drawing characters.
 
-        Args:
-            use_rich_links: If True, wrap PR numbers in Rich link markup.
+        PR numbers are wrapped in Rich link markup if a URL is available.
 
         Returns:
             Rendered tree string, or empty string if no branches.
@@ -155,15 +154,15 @@ class StackTree:
         if not self.roots:
             return ""
 
-        def get_node_label(node: BranchNode, use_rich_links: bool = False) -> str:
+        def get_node_label(node: BranchNode) -> str:
             """Get the display label for a node."""
             marker = "◉" if node.is_current else "◯"
 
-            # PR suffix
+            # PR suffix with Rich link if URL available
             pr_suffix = ""
             if node.pr_number:
                 pr_text = f"#{node.pr_number}"
-                if use_rich_links and node.pr_url:
+                if node.pr_url:
                     pr_text = f"[link={node.pr_url}]{pr_text}[/link]"
                 pr_suffix = f" {pr_text}"
                 if node.pr_is_merged:
@@ -186,7 +185,7 @@ class StackTree:
 
             if not node.children:
                 # Leaf node
-                result.append(f"{prefix}{get_node_label(node, use_rich_links)}")
+                result.append(f"{prefix}{get_node_label(node)}")
                 return result
 
             if len(node.children) == 1:
@@ -195,7 +194,7 @@ class StackTree:
                 child_lines = render_branch(child, prefix)
                 result.extend(child_lines)
                 result.append(f"{prefix}│")
-                result.append(f"{prefix}{get_node_label(node, use_rich_links)}")
+                result.append(f"{prefix}{get_node_label(node)}")
                 return result
 
             # Multiple children - parallel stacks rendering
@@ -217,11 +216,11 @@ class StackTree:
             # Format: ◉─┴─┴─ name (for 3 children)
             marker = "◉" if node.is_current else "◯"
 
-            # PR suffix with optional Rich link
+            # PR suffix with Rich link if URL available
             pr_suffix = ""
             if node.pr_number:
                 pr_text = f"#{node.pr_number}"
-                if use_rich_links and node.pr_url:
+                if node.pr_url:
                     pr_text = f"[link={node.pr_url}]{pr_text}[/link]"
                 pr_suffix = f" {pr_text}"
                 if node.pr_is_merged:
