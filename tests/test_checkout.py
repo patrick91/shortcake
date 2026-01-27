@@ -8,9 +8,11 @@ import pytest
 import respx
 from dulwich import porcelain
 from dulwich.repo import Repo
+from typer.testing import CliRunner
 
 from shortcake import _git as git
 from shortcake._trailers import Trailers
+from shortcake.cli import app
 from shortcake.commands.checkout import (
     CheckoutError,
     _checkout,
@@ -328,3 +330,139 @@ def test_create_branch_from_remote_no_remote_ref(temp_repo: Repo) -> None:
     result = _create_branch_from_remote(temp_repo, "nonexistent")
 
     assert result is False
+
+
+# CLI tests
+
+runner = CliRunner()
+
+
+def test_checkout_cli_local_branch(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """Test checkout CLI with local branch."""
+    import os
+
+    switch_branch(repo_with_feature, "main")
+
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["checkout", "feature", "--no-adopt"])
+
+    assert result.exit_code == 0
+    assert "Switched to 'feature'" in result.output
+
+
+def test_checkout_cli_with_adoption(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """Test checkout CLI adopts untracked branch."""
+    import os
+
+    switch_branch(repo_with_feature, "main")
+
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["checkout", "feature"])
+
+    assert result.exit_code == 0
+    assert "Switched to 'feature'" in result.output
+    assert "Adopted 'feature' for stack tracking" in result.output
+
+
+def test_checkout_cli_error(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test checkout CLI error handling."""
+    import os
+
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["checkout", "nonexistent"])
+
+    assert result.exit_code == 1
+    assert "Error:" in result.output
+
+
+def test_checkout_cli_uncommitted_changes(
+    repo_with_feature: Repo, tmp_path: Path
+) -> None:
+    """Test checkout CLI warns about uncommitted changes."""
+    import os
+
+    switch_branch(repo_with_feature, "main")
+
+    # Create uncommitted changes
+    (tmp_path / "uncommitted.txt").write_text("uncommitted")
+    porcelain.add(repo_with_feature, paths=[str(tmp_path / "uncommitted.txt")])
+
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["checkout", "feature", "--no-adopt"])
+
+    assert result.exit_code == 0
+    assert "Warning: You have uncommitted changes." in result.output
+
+
+def test_co_alias(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """Test co alias works same as checkout."""
+    import os
+
+    switch_branch(repo_with_feature, "main")
+
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["co", "feature", "--no-adopt"])
+
+    assert result.exit_code == 0
+    assert "Switched to 'feature'" in result.output
+
+
+@respx.mock
+def test_checkout_cli_pr_output(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test checkout CLI output for PR checkout."""
+    import os
+
+    # Set up origin remote
+    config = temp_repo.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    # Create the branch locally
+    temp_repo.refs[b"refs/heads/pr-feature"] = temp_repo.head()
+
+    respx.get("https://api.github.com/repos/owner/repo/pulls/42").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "number": 42,
+                "html_url": "https://github.com/owner/repo/pull/42",
+                "base": {"ref": "main"},
+                "head": {"ref": "pr-feature"},
+                "title": "Test PR",
+                "body": "",
+                "state": "open",
+                "draft": False,
+            },
+        )
+    )
+
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["checkout", "42", "--no-adopt"])
+
+    assert result.exit_code == 0
+    assert "Checked out PR #42 (pr-feature)" in result.output
+
+
+def test_checkout_cli_remote_output(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test checkout CLI output for remote checkout."""
+    import os
+
+    # Set up origin remote
+    config = temp_repo.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Simulate remote ref exists
+    remote_sha = temp_repo.head()
+    temp_repo.refs[b"refs/remotes/origin/remote-feature"] = remote_sha
+
+    os.chdir(tmp_path)
+    with patch("shortcake.commands.checkout._fetch_branch", return_value=True):
+        result = runner.invoke(app, ["checkout", "remote-feature", "--no-adopt"])
+
+    assert result.exit_code == 0
+    assert "Checked out 'remote-feature' from remote" in result.output

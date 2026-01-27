@@ -46,7 +46,7 @@ def test_adopt_already_tracked(repo_with_feature: Repo) -> None:
     _adopt(repo_with_feature)
 
     # Try again - should fail with hint to use --force
-    with pytest.raises(AdoptError, match="already tracked.*--force"):
+    with pytest.raises(AdoptError, match=r"already tracked.*--force"):
         _adopt(repo_with_feature)
 
 
