@@ -1,5 +1,6 @@
 """Rebase operations."""
 
+import subprocess
 from pathlib import Path
 
 from dulwich import porcelain
@@ -122,12 +123,36 @@ def rebase_continue(repo: Repo) -> None:
 
 
 def rebase_abort(repo: Repo) -> None:
-    """Abort an in-progress cherry-pick rebase."""
+    """Abort an in-progress rebase (either git native or dulwich cherry-pick)."""
+    import shutil
+
+    git_dir = Path(repo.controldir())
+    rebase_merge = git_dir / "rebase-merge"
+    rebase_apply = git_dir / "rebase-apply"
+
+    # Check for git's native rebase state first
+    if rebase_merge.exists() or rebase_apply.exists():
+        result = subprocess.run(
+            ["git", "rebase", "--abort"],
+            cwd=repo.path,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            # git rebase --abort failed, likely corrupted state
+            # Clean up the rebase directories manually
+            if rebase_merge.exists():
+                shutil.rmtree(rebase_merge)
+            if rebase_apply.exists():  # pragma: no cover
+                shutil.rmtree(rebase_apply)
+        return
+
+    # Fall back to dulwich cherry-pick abort
     try:
         if get_cherry_pick_head(repo) is not None:
             porcelain.cherry_pick(repo, None, abort=True)
-        else:
-            raise RebaseFailure("No cherry-pick in progress.")
+        else:  # pragma: no cover
+            raise RebaseFailure("No rebase in progress.")
     except DULWICH_REBASE_ERRORS as e:
         raise RebaseFailure(str(e) or "Rebase abort failed") from e
 
