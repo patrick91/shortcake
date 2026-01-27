@@ -23,6 +23,23 @@ def test_open_repo_with_path(temp_repo: Repo, tmp_path: Path) -> None:
     assert repo is not None
 
 
+def test_open_repo_from_subdirectory(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test opening repo from a subdirectory."""
+    # Create a subdirectory
+    subdir = tmp_path / "src" / "lib"
+    subdir.mkdir(parents=True)
+
+    # Change to the subdirectory
+    monkeypatch.chdir(subdir)
+
+    # Should still find the repo
+    repo = git.open_repo()
+    assert repo is not None
+    assert Path(repo.path).resolve() == tmp_path.resolve()
+
+
 def test_get_current_branch(repo_with_feature: Repo) -> None:
     """Test getting current branch name."""
     branch = git.get_current_branch(repo_with_feature)
