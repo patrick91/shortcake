@@ -235,6 +235,44 @@ def test_checkout_from_remote_create_branch_fails(temp_repo: Repo) -> None:
         _checkout(temp_repo, "remote-feature")
 
 
+def test_checkout_from_remote_no_default_branch(tmp_path: Path) -> None:
+    """Test remote checkout when no default branch is detected."""
+    # Create repo without main or master
+    repo = Repo.init(tmp_path, default_branch=b"develop")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Test")
+    porcelain.add(repo, paths=[str(readme)])
+    porcelain.commit(repo, message=b"Initial commit")
+
+    # Set up origin remote
+    config = repo.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Create remote ref for feature (different commit from develop)
+    test_file = tmp_path / "feature.txt"
+    test_file.write_text("feature")
+    porcelain.add(repo, paths=[str(test_file)])
+    porcelain.commit(repo, message=b"Add feature")
+    feature_sha = repo.head()
+
+    # Reset to develop
+    develop_sha = repo.refs[b"refs/heads/develop"]
+    repo.refs[b"refs/heads/develop"] = develop_sha
+    porcelain.reset(repo, "hard")
+
+    # Simulate remote ref
+    repo.refs[b"refs/remotes/origin/remote-feature"] = feature_sha
+
+    with patch("shortcake.commands.checkout._fetch_branch", return_value=True):
+        result = _checkout(repo, "remote-feature", adopt=True)
+
+    # No default branch detected, so no adoption attempt
+    assert result.branch == "remote-feature"
+    assert result.from_remote is True
+    assert result.adopted is False
+
+
 # Tests for _checkout with PR numbers
 
 
