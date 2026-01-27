@@ -43,9 +43,9 @@ def _fetch_branch(repo: Repo, branch: str) -> bool:
             "origin",
             quiet=True,
         )
-    except Exception:  # pragma: no cover
-        return False
-    return True
+        return True
+    except Exception:
+        return False  # pragma: no cover
 
 
 def _create_branch_from_remote(repo: Repo, branch: str) -> bool:
