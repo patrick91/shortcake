@@ -548,3 +548,137 @@ def test_build_branch_with_none_parent() -> None:
     assert len(tree.roots) == 1
     assert tree.roots[0].name == "feature"
     assert tree.roots[0].warning is None  # No warning for None parent
+
+
+# PR info rendering tests
+
+
+def test_branch_node_pr_defaults() -> None:
+    """Test BranchNode PR field defaults."""
+    node = BranchNode(name="test")
+    assert node.pr_number is None
+    assert node.pr_is_draft is False
+    assert node.pr_is_merged is False
+
+
+def test_render_pr_number() -> None:
+    """Test rendering branch with PR number."""
+    child = BranchNode(name="feature", is_current=True, pr_number=123)
+    root = BranchNode(name="main", children=[child])
+
+    tree = StackTree(roots=[root])
+    output = tree.render()
+
+    assert "◉ feature #123 (current)" in output
+
+
+def test_render_pr_draft() -> None:
+    """Test rendering branch with draft PR."""
+    child = BranchNode(name="feature", is_current=True, pr_number=456, pr_is_draft=True)
+    root = BranchNode(name="main", children=[child])
+
+    tree = StackTree(roots=[root])
+    output = tree.render()
+
+    assert "◉ feature #456 draft (current)" in output
+
+
+def test_render_pr_merged() -> None:
+    """Test rendering branch with merged PR."""
+    child = BranchNode(
+        name="feature", is_current=False, pr_number=789, pr_is_merged=True
+    )
+    root = BranchNode(name="main", is_current=True, children=[child])
+
+    tree = StackTree(roots=[root])
+    output = tree.render()
+
+    assert "◯ feature #789 merged" in output
+
+
+def test_snapshot_pr_number() -> None:
+    """Snapshot test for branch with PR number."""
+    branches = {"feature": "main"}
+    all_branches = {"main", "feature"}
+    current = "feature"
+
+    tree = StackTree.build(branches, all_branches, current)
+    # Manually set PR info after build
+    for root in tree.roots:
+        for child in root.children:
+            if child.name == "feature":
+                child.pr_number = 123
+
+    assert tree.render() == snapshot("""\
+◉ feature #123 (current)
+│
+◯ main\
+""")
+
+
+def test_snapshot_pr_draft() -> None:
+    """Snapshot test for branch with draft PR."""
+    branches = {"feature": "main"}
+    all_branches = {"main", "feature"}
+    current = "feature"
+
+    tree = StackTree.build(branches, all_branches, current)
+    for root in tree.roots:
+        for child in root.children:
+            if child.name == "feature":
+                child.pr_number = 456
+                child.pr_is_draft = True
+
+    assert tree.render() == snapshot("""\
+◉ feature #456 draft (current)
+│
+◯ main\
+""")
+
+
+def test_snapshot_pr_merged() -> None:
+    """Snapshot test for branch with merged PR."""
+    branches = {"feature": "main"}
+    all_branches = {"main", "feature"}
+    current = "main"
+
+    tree = StackTree.build(branches, all_branches, current)
+    for root in tree.roots:
+        for child in root.children:
+            if child.name == "feature":
+                child.pr_number = 789
+                child.pr_is_merged = True
+
+    assert tree.render() == snapshot("""\
+◯ feature #789 merged
+│
+◉ main (current)\
+""")
+
+
+def test_snapshot_pr_with_multiple_children() -> None:
+    """Snapshot test for PR info with merge connector (multiple children)."""
+    branches = {
+        "feature-a": "main",
+        "feature-b": "main",
+    }
+    all_branches = {"main", "feature-a", "feature-b"}
+    current = "main"
+
+    tree = StackTree.build(branches, all_branches, current)
+    # Set PR info on children
+    for root in tree.roots:
+        for child in root.children:
+            if child.name == "feature-a":
+                child.pr_number = 100
+            elif child.name == "feature-b":
+                child.pr_number = 101
+                child.pr_is_draft = True
+
+    assert tree.render() == snapshot("""\
+◯ feature-a #100
+│
+│ ◯ feature-b #101 draft
+│ │
+◉─┘ main (current)\
+""")

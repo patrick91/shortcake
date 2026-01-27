@@ -18,6 +18,10 @@ class BranchNode:
     children: list["BranchNode"] = field(default_factory=list)
     is_current: bool = False
     warning: BranchWarning | None = None
+    # PR info (populated asynchronously)
+    pr_number: int | None = None
+    pr_is_draft: bool = False
+    pr_is_merged: bool = False
 
 
 @dataclass
@@ -150,12 +154,24 @@ class StackTree:
         def get_node_label(node: BranchNode) -> str:
             """Get the display label for a node."""
             marker = "◉" if node.is_current else "◯"
+
+            # PR suffix
+            pr_suffix = ""
+            if node.pr_number:
+                pr_suffix = f" #{node.pr_number}"
+                if node.pr_is_merged:
+                    pr_suffix += " merged"
+                elif node.pr_is_draft:
+                    pr_suffix += " draft"
+
+            # Warning/status suffix
             suffix = " (current)" if node.is_current else ""
             if node.warning == BranchWarning.ORPHAN:
                 suffix += " (parent missing)"
             elif node.warning == BranchWarning.CYCLE:
                 suffix += " (circular ref)"
-            return f"{marker} {node.name}{suffix}"
+
+            return f"{marker} {node.name}{pr_suffix}{suffix}"
 
         def render_branch(node: BranchNode, prefix: str = "") -> list[str]:
             """Render a single branch and its children, bottom-up."""
@@ -193,6 +209,16 @@ class StackTree:
             # Render the parent with merge connectors
             # Format: ◉─┴─┴─ name (for 3 children)
             marker = "◉" if node.is_current else "◯"
+
+            # PR suffix
+            pr_suffix = ""
+            if node.pr_number:
+                pr_suffix = f" #{node.pr_number}"
+                if node.pr_is_merged:
+                    pr_suffix += " merged"
+                elif node.pr_is_draft:
+                    pr_suffix += " draft"
+
             suffix = " (current)" if node.is_current else ""
             if node.warning == BranchWarning.ORPHAN:
                 suffix += " (parent missing)"
@@ -204,7 +230,9 @@ class StackTree:
                 merge_connector = "─┘"
             else:
                 merge_connector = "─" + "┴─" * (len(node.children) - 2) + "┘"
-            result.append(f"{prefix}{marker}{merge_connector} {node.name}{suffix}")
+            result.append(
+                f"{prefix}{marker}{merge_connector} {node.name}{pr_suffix}{suffix}"
+            )
 
             return result
 
