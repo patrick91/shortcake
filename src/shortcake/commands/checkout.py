@@ -11,7 +11,6 @@ from dulwich.repo import Repo
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
 from shortcake._github import GitHubClient, get_github_token, get_repo_info
-from shortcake.commands.adopt import AdoptError, _adopt
 
 
 class CheckoutError(ShortcakeError):
@@ -26,7 +25,6 @@ class CheckoutResult:
 
     branch: str
     from_remote: bool = False
-    adopted: bool = False
     pr_number: int | None = None
 
 
@@ -66,7 +64,6 @@ def _create_branch_from_remote(repo: Repo, branch: str) -> bool:
 def _checkout(
     repo: Repo,
     target: str,
-    adopt: bool = True,
 ) -> CheckoutResult:
     """
     Smart checkout - handles local branches, remote branches, and PR numbers.
@@ -74,7 +71,6 @@ def _checkout(
     Args:
         repo: The git repository.
         target: Branch name or PR number (as string).
-        adopt: If True, adopt untracked branches after checkout.
 
     Returns:
         CheckoutResult with details of what was done.
@@ -84,7 +80,6 @@ def _checkout(
     """
     branch: str
     pr_number: int | None = None
-    from_remote = False
 
     # Check if target is a PR number
     if target.isdigit():
@@ -126,24 +121,7 @@ def _checkout(
     if git.branch_exists(repo, branch):
         # Just switch to it
         git.switch_branch(repo, branch)
-        result = CheckoutResult(branch=branch, pr_number=pr_number)
-
-        # Check if it's tracked, offer to adopt if not
-        if adopt:
-            all_branches = set(git.get_all_local_branches(repo))
-            parent = git.get_branch_parent(repo, branch, all_branches)
-            if parent is None:
-                # Not tracked - try to adopt
-                default_branch = git.get_default_branch(repo)
-                if default_branch and branch != default_branch:
-                    try:
-                        _adopt(repo, branch)
-                        result.adopted = True
-                    except AdoptError:
-                        # Can't adopt (no commits relative to parent, etc.)
-                        pass
-
-        return result
+        return CheckoutResult(branch=branch, pr_number=pr_number)
 
     # Branch doesn't exist locally - try to fetch from remote
     if not git.has_remote(repo):
@@ -164,29 +142,14 @@ def _checkout(
     if not _create_branch_from_remote(repo, branch):
         raise CheckoutError(f"Failed to create local branch '{branch}' from remote.")
 
-    from_remote = True
-
     # Switch to the new branch
     git.switch_branch(repo, branch)
 
-    result = CheckoutResult(
+    return CheckoutResult(
         branch=branch,
-        from_remote=from_remote,
+        from_remote=True,
         pr_number=pr_number,
     )
-
-    # Try to adopt the branch
-    if adopt:
-        default_branch = git.get_default_branch(repo)
-        if default_branch and branch != default_branch:
-            try:
-                _adopt(repo, branch)
-                result.adopted = True
-            except AdoptError:
-                # Can't adopt - that's okay
-                pass
-
-    return result
 
 
 # Typer command
@@ -197,16 +160,11 @@ def checkout(
         str,
         typer.Argument(help="Branch name or PR number"),
     ],
-    no_adopt: Annotated[
-        bool,
-        typer.Option("--no-adopt", help="Don't adopt untracked branches"),
-    ] = False,
 ) -> None:
     """Checkout a branch by name or PR number.
 
     If the branch exists locally, switches to it.
     If not, fetches from remote and creates a local branch.
-    By default, adopts untracked branches to enable stack tracking.
     """
     repo = git.open_repo()
 
@@ -215,7 +173,7 @@ def checkout(
         typer.echo("Warning: You have uncommitted changes.", err=True)
 
     try:
-        result = _checkout(repo, target, adopt=not no_adopt)
+        result = _checkout(repo, target)
     except CheckoutError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from None
@@ -227,9 +185,6 @@ def checkout(
         typer.echo(f"Checked out '{result.branch}' from remote")
     else:
         typer.echo(f"Switched to '{result.branch}'")
-
-    if result.adopted:
-        typer.echo(f"  Adopted '{result.branch}' for stack tracking")
 
 
 # Alias
