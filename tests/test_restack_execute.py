@@ -110,3 +110,86 @@ def test_restack_already_in_progress(repo_with_stack_behind: Repo) -> None:
 
     with pytest.raises(RestackError, match="already in progress"):
         _restack(repo_with_stack_behind)
+
+
+def test_restack_after_parent_amend_preserves_content(
+    repo_with_stack: Repo, tmp_path: Path
+) -> None:
+    """Regression test: restack after amending parent branch preserves child content.
+
+    This tests the bug where amending a parent branch (e.g., via `sc modify`)
+    caused the child branch to lose its commits during restack.
+
+    The issue was that git merge-base returned an ancestor too far back in
+    history, causing restack to try to cherry-pick both the old parent commit
+    AND the child's commits.
+
+    See: https://github.com/patrick91/shortcake/commit/7d8c7d7
+    """
+    # repo_with_stack has: main → branch_a → branch_b
+    # branch_a has a.txt, branch_b has b.txt
+
+    # Record original content
+    original_a_content = repo_with_stack[
+        git.get_branch_head(repo_with_stack, "branch_a")
+    ].tree
+    original_b_content = repo_with_stack[
+        git.get_branch_head(repo_with_stack, "branch_b")
+    ].tree
+
+    # Verify initial state - branch_b should have both a.txt and b.txt
+    branch_b_tree = repo_with_stack[original_b_content]
+    file_names = [item.path.decode() for item in branch_b_tree.items()]
+    assert "a.txt" in file_names
+    assert "b.txt" in file_names
+
+    # Switch to branch_a and amend it (simulating `sc modify`)
+    git.switch_branch(repo_with_stack, "branch_a")
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("branch a content\nmodified content")
+    porcelain.add(repo_with_stack, paths=[str(file_a)])
+    git.amend_commit(repo_with_stack, "feat: branch a (amended)")
+
+    # Verify branch_a was actually modified
+    new_a_tree = repo_with_stack[git.get_branch_head(repo_with_stack, "branch_a")].tree
+    assert new_a_tree != original_a_content
+
+    # Switch to branch_b and run restack
+    git.switch_branch(repo_with_stack, "branch_b")
+    result = _restack(repo_with_stack)
+
+    # Should restack only branch_b (branch_a doesn't need rebasing)
+    assert result.restacked_branches == ["branch_b"]
+    assert result.conflict_branch is None
+
+    # CRITICAL: Verify branch_b still has its own content (b.txt)
+    new_b_head = git.get_branch_head(repo_with_stack, "branch_b")
+    new_b_tree = repo_with_stack[repo_with_stack[new_b_head].tree]
+    new_file_names = [item.path.decode() for item in new_b_tree.items()]
+    assert "b.txt" in new_file_names, "branch_b should still have b.txt after restack"
+    assert "a.txt" in new_file_names, "branch_b should have a.txt from parent"
+
+    # Verify b.txt content is preserved
+    b_txt_sha = None
+    for item in new_b_tree.items():
+        if item.path == b"b.txt":
+            b_txt_sha = item.sha
+            break
+    assert b_txt_sha is not None
+    assert repo_with_stack[b_txt_sha].data == b"branch b content"
+
+    # Verify a.txt has the amended content
+    a_txt_sha = None
+    for item in new_b_tree.items():
+        if item.path == b"a.txt":
+            a_txt_sha = item.sha
+            break
+    assert a_txt_sha is not None
+    assert b"modified content" in repo_with_stack[a_txt_sha].data
+
+    # Verify only 1 commit on branch_b since branch_a (not 2)
+    branch_a_head = git.get_branch_head(repo_with_stack, "branch_a")
+    commits_on_b = git.get_commits_between(repo_with_stack, new_b_head, branch_a_head)
+    assert len(commits_on_b) == 1, (
+        f"branch_b should have exactly 1 commit since branch_a, got {len(commits_on_b)}"
+    )
