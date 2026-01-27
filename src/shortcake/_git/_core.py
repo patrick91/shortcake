@@ -168,8 +168,18 @@ def set_head_to_branch(repo: Repo, branch: str) -> None:
 
 
 def switch_branch(repo: Repo, branch: str, force: bool = False) -> None:
-    """Switch to branch, updating working directory and index."""
-    porcelain.switch(repo, branch, force=force)
+    """Switch to branch, updating working directory and index.
+
+    Uses native git instead of dulwich because dulwich's porcelain.switch()
+    has a bug where it incorrectly stages files when switching between branches
+    that have different file sets.
+    """
+    cmd = ["git", "switch", branch]
+    if force:
+        cmd.append("--force")
+    result = subprocess.run(cmd, cwd=repo.path, capture_output=True, text=True)
+    if result.returncode != 0:
+        raise ValueError(f"Failed to switch branch: {result.stderr.strip()}")
 
 
 def has_staged_changes(repo: Repo) -> bool:
