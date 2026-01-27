@@ -18,6 +18,70 @@ from shortcake.commands.restack import _get_stack_in_order
 STACK_START_MARKER = "<!-- shortcake:start -->"
 STACK_END_MARKER = "<!-- shortcake:end -->"
 
+# Regex patterns for parsing stack sections
+# Matches: - #42 (merged) (`branch-name`)
+_MERGED_PR_PATTERN = re.compile(r"-\s*#(\d+)\s*\(merged\)\s*\(`([^`]+)`\)")
+# Matches any branch in stack: - #42 (`branch`) or - **#42** (`branch`)
+# or - (no PR) (`branch`)
+_STACK_BRANCH_PATTERN = re.compile(
+    r"-\s*(?:\*\*)?(?:#\d+|#\d+\s*\(merged\)|\(no PR\))(?:\*\*)?\s*\(`([^`]+)`\)"
+)
+
+
+def _parse_merged_prs_from_body(body: str) -> dict[str, int]:
+    """Extract merged PR info from existing stack section.
+
+    Parses lines like: - #42 (merged) (`branch-name`)
+
+    Args:
+        body: The PR body text.
+
+    Returns:
+        Dict mapping branch name to merged PR number.
+    """
+    # Extract the stack section first
+    if STACK_START_MARKER not in body or STACK_END_MARKER not in body:
+        return {}
+
+    start_idx = body.index(STACK_START_MARKER)
+    end_idx = body.index(STACK_END_MARKER) + len(STACK_END_MARKER)
+    stack_section = body[start_idx:end_idx]
+
+    merged_prs: dict[str, int] = {}
+    for match in _MERGED_PR_PATTERN.finditer(stack_section):
+        pr_number = int(match.group(1))
+        branch_name = match.group(2)
+        merged_prs[branch_name] = pr_number
+
+    return merged_prs
+
+
+def _parse_stack_order_from_body(body: str) -> list[str]:
+    """Extract branch order from existing stack section.
+
+    Returns branches in display order (top to bottom as shown in PR).
+
+    Args:
+        body: The PR body text.
+
+    Returns:
+        List of branch names in display order.
+    """
+    # Extract the stack section first
+    if STACK_START_MARKER not in body or STACK_END_MARKER not in body:
+        return []
+
+    start_idx = body.index(STACK_START_MARKER)
+    end_idx = body.index(STACK_END_MARKER) + len(STACK_END_MARKER)
+    stack_section = body[start_idx:end_idx]
+
+    branches: list[str] = []
+    for match in _STACK_BRANCH_PATTERN.finditer(stack_section):
+        branch_name = match.group(1)
+        branches.append(branch_name)
+
+    return branches
+
 
 class PRAction(Enum):
     """Action taken for a branch during submit."""
@@ -260,6 +324,30 @@ def _submit(
                     BranchPlan(branch=branch, action=PRAction.CREATED, parent=parent)
                 )
 
+        # Collect historical merged PRs and stack order from existing open PRs
+        # This preserves merged PR info even after branches are deleted locally
+        historical_merged_prs: dict[str, int] = {}
+        historical_stack_order: list[str] = []
+        for plan in plans:
+            if plan.action == PRAction.UPDATED and plan.existing_pr_number:
+                try:
+                    existing_pr = gh.get_pr_for_branch(plan.branch)
+                    if existing_pr and existing_pr.body:
+                        # Parse merged PRs from this PR's body
+                        parsed_merged = _parse_merged_prs_from_body(existing_pr.body)
+                        for branch_name, pr_num in parsed_merged.items():
+                            if branch_name not in historical_merged_prs:
+                                historical_merged_prs[branch_name] = pr_num
+
+                        # Parse stack order (only if we don't have one yet)
+                        if not historical_stack_order:
+                            historical_stack_order = _parse_stack_order_from_body(
+                                existing_pr.body
+                            )
+                except (httpx.HTTPStatusError, httpx.RequestError):
+                    # Non-fatal: continue without historical data
+                    pass
+
         # Dry run: show plan and return
         if dry_run:
             typer.echo(f"Would submit {len(stack_branches)} branch(es):")
@@ -360,9 +448,11 @@ def _submit(
             result.branch_results.append(branch_result)
 
         # Phase 2: Collect merged PR numbers for stack visualization
-        merged_pr_numbers: dict[str, int] = {}
+        # Start with historical merged PRs (from existing PR bodies)
+        merged_pr_numbers: dict[str, int] = dict(historical_merged_prs)
+        # Also check GitHub API for merged PRs of local branches
         for branch in stack_branches:
-            if branch not in pr_numbers:
+            if branch not in pr_numbers and branch not in merged_pr_numbers:
                 try:
                     merged_num = gh.get_merged_pr_number(branch)
                     if merged_num:
@@ -371,6 +461,32 @@ def _submit(
                     pass
 
         # Phase 3: Update all PR bodies with stack visualization
+        # Merge historical stack order with current local branches
+        # Historical order is in display order (top to bottom), need to reverse
+        # for our internal representation (bottom to top)
+        full_stack_branches = list(stack_branches)  # Start with local branches
+        if historical_stack_order:
+            # Historical order is display order (top to bottom)
+            # Reverse to get bottom to top order
+            historical_bottom_to_top = list(reversed(historical_stack_order))
+            # Add historical branches that are no longer local (merged and deleted)
+            for hist_branch in historical_bottom_to_top:
+                if hist_branch not in full_stack_branches:
+                    # Find position based on historical order
+                    # Insert at the position it would have been
+                    inserted = False
+                    for i, local_branch in enumerate(full_stack_branches):
+                        if local_branch in historical_bottom_to_top:
+                            local_pos = historical_bottom_to_top.index(local_branch)
+                            hist_pos = historical_bottom_to_top.index(hist_branch)
+                            if hist_pos < local_pos:
+                                full_stack_branches.insert(i, hist_branch)
+                                inserted = True
+                                break
+                    if not inserted:
+                        # Append at the end if no better position found
+                        full_stack_branches.append(hist_branch)
+
         for branch in stack_branches:
             pr_num = pr_numbers.get(branch)
             if not pr_num:
@@ -380,7 +496,11 @@ def _submit(
                 existing_pr = gh.get_pr_for_branch(branch)
                 if existing_pr:
                     stack_section = _build_stack_section(
-                        stack_branches, branch, pr_numbers, owner, merged_pr_numbers
+                        full_stack_branches,
+                        branch,
+                        pr_numbers,
+                        owner,
+                        merged_pr_numbers,
                     )
                     new_body = _update_pr_body_with_stack(
                         existing_pr.body, stack_section

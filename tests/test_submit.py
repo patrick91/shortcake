@@ -18,6 +18,8 @@ from shortcake.commands.submit import (
     SubmitError,
     _build_stack_section,
     _get_commit_title,
+    _parse_merged_prs_from_body,
+    _parse_stack_order_from_body,
     _submit,
     _update_pr_body_with_stack,
 )
@@ -81,6 +83,92 @@ def test_build_stack_section_merged_pr() -> None:
     assert "#1 (`branch_a`)" in section or "**#1** (`branch_a`)" in section
     assert "#5 (merged)" in section
     assert "branch_b" in section
+
+
+def test_parse_merged_prs_from_body_basic() -> None:
+    """Test parsing merged PRs from a stack section."""
+    body = f"""{STACK_START_MARKER}
+## Stack
+
+- #100 (`top-branch`)
+- **#99** (`current-branch`) <-- this PR
+- #42 (merged) (`merged-branch`)
+- #41 (merged) (`another-merged`)
+{STACK_END_MARKER}
+
+Some other content here."""
+
+    result = _parse_merged_prs_from_body(body)
+
+    assert result == {"merged-branch": 42, "another-merged": 41}
+
+
+def test_parse_merged_prs_from_body_no_markers() -> None:
+    """Test parsing merged PRs when no stack section exists."""
+    body = "Just a regular PR body without stack section"
+
+    result = _parse_merged_prs_from_body(body)
+
+    assert result == {}
+
+
+def test_parse_merged_prs_from_body_no_merged() -> None:
+    """Test parsing when stack section has no merged PRs."""
+    body = f"""{STACK_START_MARKER}
+## Stack
+
+- #100 (`branch-a`)
+- **#99** (`branch-b`) <-- this PR
+{STACK_END_MARKER}"""
+
+    result = _parse_merged_prs_from_body(body)
+
+    assert result == {}
+
+
+def test_parse_stack_order_from_body_basic() -> None:
+    """Test parsing stack order from a stack section."""
+    body = f"""{STACK_START_MARKER}
+## Stack
+
+- #100 (`top-branch`)
+- **#99** (`current-branch`) <-- this PR
+- #42 (merged) (`merged-branch`)
+- (no PR) (`unsubmitted-branch`)
+{STACK_END_MARKER}
+
+Some other content."""
+
+    result = _parse_stack_order_from_body(body)
+
+    # Should return branches in display order (top to bottom)
+    assert result == [
+        "top-branch",
+        "current-branch",
+        "merged-branch",
+        "unsubmitted-branch",
+    ]
+
+
+def test_parse_stack_order_from_body_no_markers() -> None:
+    """Test parsing stack order when no stack section exists."""
+    body = "Regular PR body without stack"
+
+    result = _parse_stack_order_from_body(body)
+
+    assert result == []
+
+
+def test_parse_stack_order_from_body_empty_stack() -> None:
+    """Test parsing when stack section exists but is empty."""
+    body = f"""{STACK_START_MARKER}
+## Stack
+
+{STACK_END_MARKER}"""
+
+    result = _parse_stack_order_from_body(body)
+
+    assert result == []
 
 
 def test_update_pr_body_with_stack_no_markers() -> None:
@@ -1137,3 +1225,190 @@ def test_submit_merged_pr_lookup_error_ignored(
 
     # Should have result for branch_b
     assert any(br.branch == "branch_b" for br in result.branch_results)
+
+
+def test_submit_preserves_merged_prs_from_existing_body(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that merged PRs from existing PR bodies are preserved."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    # Existing PR body has historical merged PRs
+    existing_body = f"""{STACK_START_MARKER}
+## Stack
+
+- **#456** (`feature`) <-- this PR
+- #100 (merged) (`old-merged-branch`)
+- #99 (merged) (`another-old-branch`)
+{STACK_END_MARKER}
+
+Original description."""
+
+    mock_pr = PRInfo(
+        number=456,
+        url="https://github.com/owner/repo/pull/456",
+        base="main",
+        title="feat: add feature",
+        body=existing_body,
+        state="open",
+        is_draft=False,
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = mock_pr
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    # Track what body is updated with
+    updated_bodies: list[str] = []
+
+    def track_update(pr_num: int, body: str | None = None, base: str | None = None):
+        if body is not None:
+            updated_bodies.append(body)
+
+    mock_client.update_pr.side_effect = track_update
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        _submit(repo_with_tracked_feature)
+
+    # Verify the updated body preserves the merged PRs
+    assert len(updated_bodies) > 0
+    updated_body = updated_bodies[-1]
+    assert "#100 (merged)" in updated_body
+    assert "old-merged-branch" in updated_body
+    assert "#99 (merged)" in updated_body
+    assert "another-old-branch" in updated_body
+
+
+def test_submit_appends_historical_branch_at_end(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that historical branches are appended at end when no position found."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    # Historical stack order has a merged branch at the TOP (display order)
+    # which means it comes AFTER the local branch in bottom-to-top order.
+    # Display order (top to bottom): merged-top, feature
+    # Bottom-to-top order: feature, merged-top
+    # So merged-top should be appended at the end of full_stack_branches.
+    existing_body = f"""{STACK_START_MARKER}
+## Stack
+
+- #100 (merged) (`top-merged-branch`)
+- **#456** (`feature`) <-- this PR
+{STACK_END_MARKER}
+
+Description."""
+
+    mock_pr = PRInfo(
+        number=456,
+        url="https://github.com/owner/repo/pull/456",
+        base="main",
+        title="feat: add feature",
+        body=existing_body,
+        state="open",
+        is_draft=False,
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = mock_pr
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    updated_bodies: list[str] = []
+
+    def track_update(pr_num: int, body: str | None = None, base: str | None = None):
+        if body is not None:
+            updated_bodies.append(body)
+
+    mock_client.update_pr.side_effect = track_update
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        _submit(repo_with_tracked_feature)
+
+    # Verify the merged branch is preserved
+    assert len(updated_bodies) > 0
+    updated_body = updated_bodies[-1]
+    assert "#100 (merged)" in updated_body
+    assert "top-merged-branch" in updated_body
+
+    # In display order (top to bottom), merged branch should appear before feature
+    feature_pos = updated_body.find("`feature`")
+    merged_pos = updated_body.find("`top-merged-branch`")
+    assert feature_pos > 0
+    assert merged_pos > 0
+    assert merged_pos < feature_pos  # Merged is above (before) feature in display
+
+
+def test_submit_preserves_stack_order_from_existing_body(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that stack order from existing PR bodies is preserved."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    # Existing PR body has historical stack order with merged branches
+    existing_body = f"""{STACK_START_MARKER}
+## Stack
+
+- **#456** (`feature`) <-- this PR
+- #100 (merged) (`first-merged`)
+- #99 (merged) (`second-merged`)
+{STACK_END_MARKER}
+
+Description."""
+
+    mock_pr = PRInfo(
+        number=456,
+        url="https://github.com/owner/repo/pull/456",
+        base="main",
+        title="feat: add feature",
+        body=existing_body,
+        state="open",
+        is_draft=False,
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = mock_pr
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    updated_bodies: list[str] = []
+
+    def track_update(pr_num: int, body: str | None = None, base: str | None = None):
+        if body is not None:
+            updated_bodies.append(body)
+
+    mock_client.update_pr.side_effect = track_update
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        _submit(repo_with_tracked_feature)
+
+    # Verify the order is preserved (merged branches should appear after feature)
+    assert len(updated_bodies) > 0
+    updated_body = updated_bodies[-1]
+
+    # Find positions of branches in the body
+    feature_pos = updated_body.find("`feature`")
+    first_merged_pos = updated_body.find("`first-merged`")
+    second_merged_pos = updated_body.find("`second-merged`")
+
+    # All should be present
+    assert feature_pos > 0
+    assert first_merged_pos > 0
+    assert second_merged_pos > 0
+
+    # Order should be preserved (feature at top, then merged branches below)
+    assert feature_pos < first_merged_pos
+    assert first_merged_pos < second_merged_pos
