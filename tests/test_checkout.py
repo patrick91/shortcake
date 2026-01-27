@@ -10,8 +10,6 @@ from dulwich import porcelain
 from dulwich.repo import Repo
 from typer.testing import CliRunner
 
-from shortcake import _git as git
-from shortcake._trailers import Trailers
 from shortcake.cli import app
 from shortcake.commands.checkout import (
     CheckoutError,
@@ -38,114 +36,14 @@ def test_checkout_local_branch_exists(repo_with_feature: Repo) -> None:
     # Switch to main first
     switch_branch(repo_with_feature, "main")
 
-    result = _checkout(repo_with_feature, "feature", adopt=False)
+    result = _checkout(repo_with_feature, "feature")
 
     assert result.branch == "feature"
     assert result.from_remote is False
-    assert result.adopted is False
     assert result.pr_number is None
 
     # Verify we're on feature branch (HEAD points to feature)
     assert repo_with_feature.refs.read_ref(b"HEAD") == b"ref: refs/heads/feature"
-
-
-def test_checkout_local_branch_adopts_untracked(repo_with_feature: Repo) -> None:
-    """Test checkout adopts untracked branches by default."""
-    # Switch to main first
-    switch_branch(repo_with_feature, "main")
-
-    result = _checkout(repo_with_feature, "feature", adopt=True)
-
-    assert result.branch == "feature"
-    assert result.adopted is True
-
-    # Verify trailer was added
-    head = git.get_branch_head(repo_with_feature, "feature")
-    message = git.get_commit_message(repo_with_feature, head)
-    trailers = Trailers.from_message(message)
-    assert trailers.parent_branch == "main"
-
-
-def test_checkout_local_branch_already_tracked(
-    repo_with_tracked_feature: Repo,
-) -> None:
-    """Test checkout doesn't re-adopt already tracked branches."""
-    # Switch to main first
-    switch_branch(repo_with_tracked_feature, "main")
-
-    result = _checkout(repo_with_tracked_feature, "feature", adopt=True)
-
-    assert result.branch == "feature"
-    assert result.adopted is False  # Already tracked, no adoption needed
-
-
-def test_checkout_local_branch_no_adopt_flag(repo_with_feature: Repo) -> None:
-    """Test checkout with adopt=False skips adoption."""
-    # Switch to main first
-    switch_branch(repo_with_feature, "main")
-
-    result = _checkout(repo_with_feature, "feature", adopt=False)
-
-    assert result.branch == "feature"
-    assert result.adopted is False
-
-
-def test_checkout_default_branch_not_adopted(temp_repo: Repo) -> None:
-    """Test checkout of default branch doesn't try to adopt it."""
-    # Create feature and switch to it
-    temp_repo.refs[b"refs/heads/feature"] = temp_repo.head()
-    switch_branch(temp_repo, "feature")
-
-    # Checkout main - should not try to adopt
-    result = _checkout(temp_repo, "main", adopt=True)
-
-    assert result.branch == "main"
-    assert result.adopted is False
-
-
-def test_checkout_local_branch_adoption_fails(temp_repo: Repo) -> None:
-    """Test local checkout when adoption fails (no unique commits)."""
-    # Create feature branch at same commit as main (no unique commits)
-    main_sha = temp_repo.head()
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    switch_branch(temp_repo, "feature")
-
-    # Switch to main first
-    switch_branch(temp_repo, "main")
-
-    # Checkout feature - adoption should fail silently (no commits relative to main)
-    result = _checkout(temp_repo, "feature", adopt=True)
-
-    assert result.branch == "feature"
-    assert result.adopted is False  # Can't adopt, no unique commits
-
-
-def test_checkout_local_branch_no_default_branch(tmp_path: Path) -> None:
-    """Test local checkout when no default branch is detected."""
-    # Create repo without main or master
-    repo = Repo.init(tmp_path, default_branch=b"develop")
-    readme = tmp_path / "README.md"
-    readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
-
-    # Create feature branch with a unique commit
-    develop_sha = repo.head()
-    repo.refs[b"refs/heads/feature"] = develop_sha
-    switch_branch(repo, "feature")
-    test_file = tmp_path / "feature.txt"
-    test_file.write_text("feature")
-    porcelain.add(repo, paths=[str(test_file)])
-    porcelain.commit(repo, message=b"Add feature")
-
-    # Switch to develop
-    switch_branch(repo, "develop")
-
-    # Checkout feature - no default branch detected, so no adoption
-    result = _checkout(repo, "feature", adopt=True)
-
-    assert result.branch == "feature"
-    assert result.adopted is False  # No default branch, so no adoption attempt
 
 
 # Tests for _checkout with remote branches
@@ -200,65 +98,13 @@ def test_checkout_from_remote_creates_local(temp_repo: Repo, tmp_path: Path) -> 
     temp_repo.refs[b"refs/remotes/origin/remote-feature"] = remote_sha
 
     with patch("shortcake.commands.checkout._fetch_branch", return_value=True):
-        result = _checkout(temp_repo, "remote-feature", adopt=False)
+        result = _checkout(temp_repo, "remote-feature")
 
     assert result.branch == "remote-feature"
     assert result.from_remote is True
-    assert result.adopted is False
 
     # Verify local branch was created
     assert b"refs/heads/remote-feature" in temp_repo.refs
-
-
-def test_checkout_from_remote_with_adoption(temp_repo: Repo, tmp_path: Path) -> None:
-    """Test checkout from remote with adoption enabled."""
-    # Set up origin remote
-    config = temp_repo.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
-
-    # Create a commit on remote branch that differs from main
-    main_sha = temp_repo.head()
-
-    # Add a file and commit to make a unique SHA for remote branch
-    test_file = tmp_path / "remote.txt"
-    test_file.write_text("remote content")
-    porcelain.add(temp_repo, paths=[str(test_file)])
-    porcelain.commit(temp_repo, message=b"Add remote feature")
-    remote_sha = temp_repo.head()
-
-    # Reset back to main
-    temp_repo.refs[b"refs/heads/main"] = main_sha
-    porcelain.reset(temp_repo, "hard")
-
-    # Simulate remote ref exists with the new commit
-    temp_repo.refs[b"refs/remotes/origin/remote-feature"] = remote_sha
-
-    with patch("shortcake.commands.checkout._fetch_branch", return_value=True):
-        result = _checkout(temp_repo, "remote-feature", adopt=True)
-
-    assert result.branch == "remote-feature"
-    assert result.from_remote is True
-    assert result.adopted is True
-
-
-def test_checkout_from_remote_adoption_fails(temp_repo: Repo, tmp_path: Path) -> None:
-    """Test checkout from remote when adoption fails (no commits relative to parent)."""
-    # Set up origin remote
-    config = temp_repo.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
-
-    # Remote branch at same commit as main (no unique commits)
-    remote_sha = temp_repo.head()
-    temp_repo.refs[b"refs/remotes/origin/remote-feature"] = remote_sha
-
-    with patch("shortcake.commands.checkout._fetch_branch", return_value=True):
-        result = _checkout(temp_repo, "remote-feature", adopt=True)
-
-    assert result.branch == "remote-feature"
-    assert result.from_remote is True
-    assert result.adopted is False  # Adoption fails silently
 
 
 def test_checkout_from_remote_create_branch_fails(temp_repo: Repo) -> None:
@@ -279,44 +125,6 @@ def test_checkout_from_remote_create_branch_fails(temp_repo: Repo) -> None:
         pytest.raises(CheckoutError, match="Failed to create local branch"),
     ):
         _checkout(temp_repo, "remote-feature")
-
-
-def test_checkout_from_remote_no_default_branch(tmp_path: Path) -> None:
-    """Test remote checkout when no default branch is detected."""
-    # Create repo without main or master
-    repo = Repo.init(tmp_path, default_branch=b"develop")
-    readme = tmp_path / "README.md"
-    readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
-
-    # Set up origin remote
-    config = repo.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
-
-    # Create remote ref for feature (different commit from develop)
-    test_file = tmp_path / "feature.txt"
-    test_file.write_text("feature")
-    porcelain.add(repo, paths=[str(test_file)])
-    porcelain.commit(repo, message=b"Add feature")
-    feature_sha = repo.head()
-
-    # Reset to develop
-    develop_sha = repo.refs[b"refs/heads/develop"]
-    repo.refs[b"refs/heads/develop"] = develop_sha
-    porcelain.reset(repo, "hard")
-
-    # Simulate remote ref
-    repo.refs[b"refs/remotes/origin/remote-feature"] = feature_sha
-
-    with patch("shortcake.commands.checkout._fetch_branch", return_value=True):
-        result = _checkout(repo, "remote-feature", adopt=True)
-
-    # No default branch detected, so no adoption attempt
-    assert result.branch == "remote-feature"
-    assert result.from_remote is True
-    assert result.adopted is False
 
 
 # Tests for _checkout with PR numbers
@@ -355,7 +163,7 @@ def test_checkout_by_pr_number(
         )
     )
 
-    result = _checkout(temp_repo, "42", adopt=False)
+    result = _checkout(temp_repo, "42")
 
     assert result.branch == "pr-feature"
     assert result.pr_number == 42
@@ -518,24 +326,10 @@ def test_checkout_cli_local_branch(repo_with_feature: Repo, tmp_path: Path) -> N
     switch_branch(repo_with_feature, "main")
 
     os.chdir(tmp_path)
-    result = runner.invoke(app, ["checkout", "feature", "--no-adopt"])
-
-    assert result.exit_code == 0
-    assert "Switched to 'feature'" in result.output
-
-
-def test_checkout_cli_with_adoption(repo_with_feature: Repo, tmp_path: Path) -> None:
-    """Test checkout CLI adopts untracked branch."""
-    import os
-
-    switch_branch(repo_with_feature, "main")
-
-    os.chdir(tmp_path)
     result = runner.invoke(app, ["checkout", "feature"])
 
     assert result.exit_code == 0
     assert "Switched to 'feature'" in result.output
-    assert "Adopted 'feature' for stack tracking" in result.output
 
 
 def test_checkout_cli_error(temp_repo: Repo, tmp_path: Path) -> None:
@@ -562,7 +356,7 @@ def test_checkout_cli_uncommitted_changes(
     porcelain.add(repo_with_feature, paths=[str(tmp_path / "uncommitted.txt")])
 
     os.chdir(tmp_path)
-    result = runner.invoke(app, ["checkout", "feature", "--no-adopt"])
+    result = runner.invoke(app, ["checkout", "feature"])
 
     assert result.exit_code == 0
     assert "Warning: You have uncommitted changes." in result.output
@@ -575,7 +369,7 @@ def test_co_alias(repo_with_feature: Repo, tmp_path: Path) -> None:
     switch_branch(repo_with_feature, "main")
 
     os.chdir(tmp_path)
-    result = runner.invoke(app, ["co", "feature", "--no-adopt"])
+    result = runner.invoke(app, ["co", "feature"])
 
     assert result.exit_code == 0
     assert "Switched to 'feature'" in result.output
@@ -615,7 +409,7 @@ def test_checkout_cli_pr_output(
     )
 
     os.chdir(tmp_path)
-    result = runner.invoke(app, ["checkout", "42", "--no-adopt"])
+    result = runner.invoke(app, ["checkout", "42"])
 
     assert result.exit_code == 0
     assert "Checked out PR #42 (pr-feature)" in result.output
@@ -636,7 +430,7 @@ def test_checkout_cli_remote_output(temp_repo: Repo, tmp_path: Path) -> None:
 
     os.chdir(tmp_path)
     with patch("shortcake.commands.checkout._fetch_branch", return_value=True):
-        result = runner.invoke(app, ["checkout", "remote-feature", "--no-adopt"])
+        result = runner.invoke(app, ["checkout", "remote-feature"])
 
     assert result.exit_code == 0
     assert "Checked out 'remote-feature' from remote" in result.output
