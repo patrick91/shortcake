@@ -33,7 +33,7 @@ Use `--dry-run` to preview what would be submitted:
 ```console
 $ sc submit --dry-run
 Would submit 1 branch(es):
-  add-feature
+  add-feature (create new PR)
 ```
 
 ## Command Options
