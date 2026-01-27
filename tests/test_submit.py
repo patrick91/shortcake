@@ -146,8 +146,15 @@ def test_submit_warns_uncommitted_changes(
     test_file.write_text("uncommitted")
     porcelain.add(repo_with_tracked_feature, paths=[str(test_file)])
 
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
     # Should show warning but continue (dry-run to avoid needing full mocks)
-    result = runner.invoke(app, ["submit", "--dry-run"])
+    with patch("shortcake.commands.submit.GitHubClient", return_value=mock_client):
+        result = runner.invoke(app, ["submit", "--dry-run"])
 
     assert result.exit_code == 0
     assert "Warning: You have uncommitted changes" in result.output
@@ -203,10 +210,95 @@ def test_submit_dry_run(
     setup_origin_remote(repo_with_tracked_feature)
     monkeypatch.setenv("GH_TOKEN", "test-token")
 
-    result = _submit(repo_with_tracked_feature, dry_run=True)
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("shortcake.commands.submit.GitHubClient", return_value=mock_client):
+        result = _submit(repo_with_tracked_feature, dry_run=True)
 
     assert result.stack_branches == ["feature"]
     assert len(result.branch_results) == 0  # No actual results in dry run
+
+
+def test_submit_dry_run_shows_create_new_pr(
+    repo_with_tracked_feature: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Test submit dry run shows 'create new PR' for branches without PRs."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("shortcake.commands.submit.GitHubClient", return_value=mock_client):
+        _submit(repo_with_tracked_feature, dry_run=True)
+
+    captured = capsys.readouterr()
+    assert "create new PR" in captured.out
+    assert "feature" in captured.out
+
+
+def test_submit_dry_run_shows_update_pr(
+    repo_with_tracked_feature: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Test submit dry run shows 'update PR' for branches with existing PRs."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_pr = PRInfo(
+        number=123,
+        url="https://github.com/owner/repo/pull/123",
+        base="main",
+        title="feat: add feature",
+        body="",
+        state="open",
+        is_draft=False,
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = mock_pr
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("shortcake.commands.submit.GitHubClient", return_value=mock_client):
+        _submit(repo_with_tracked_feature, dry_run=True)
+
+    captured = capsys.readouterr()
+    assert "update PR #123" in captured.out
+    assert "feature" in captured.out
+
+
+def test_submit_dry_run_shows_skip_merged(
+    repo_with_tracked_feature: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Test submit dry run shows 'skip - already merged' for merged branches."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = True
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("shortcake.commands.submit.GitHubClient", return_value=mock_client):
+        _submit(repo_with_tracked_feature, dry_run=True)
+
+    captured = capsys.readouterr()
+    assert "skip - already merged" in captured.out
+    assert "feature" in captured.out
 
 
 def test_submit_creates_pr(
@@ -400,10 +492,176 @@ def test_submit_handles_403_non_rate_limit(
         _submit(repo_with_tracked_feature)
 
 
+def test_submit_planning_non_fatal_http_error_falls_back(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that non-fatal HTTP errors during planning fall back to create."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_response = MagicMock()
+    mock_response.status_code = 500
+    mock_response.text = "Internal Server Error"
+
+    mock_pr = PRInfo(
+        number=123,
+        url="https://github.com/owner/repo/pull/123",
+        base="main",
+        title="feat: add feature",
+        body="",
+        state="open",
+        is_draft=False,
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+    # Planning fails with 500
+    mock_client.get_pr_for_branch.side_effect = httpx.HTTPStatusError(
+        "500", request=MagicMock(), response=mock_response
+    )
+    # But execution succeeds
+    mock_client.create_pr.return_value = mock_pr
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = _submit(repo_with_tracked_feature)
+
+    # Should have fallen back to create action
+    assert result.branch_results[0].action == PRAction.CREATED
+
+
+def test_submit_planning_network_error_falls_back(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that network errors during planning fall back to create."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_pr = PRInfo(
+        number=123,
+        url="https://github.com/owner/repo/pull/123",
+        base="main",
+        title="feat: add feature",
+        body="",
+        state="open",
+        is_draft=False,
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+    # Planning fails with network error
+    mock_client.get_pr_for_branch.side_effect = httpx.ConnectError("Connection refused")
+    # But execution succeeds
+    mock_client.create_pr.return_value = mock_pr
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = _submit(repo_with_tracked_feature)
+
+    # Should have fallen back to create action
+    assert result.branch_results[0].action == PRAction.CREATED
+
+
+def test_submit_handles_401_during_create_pr(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit handles 401 error during PR creation (not planning)."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_response = MagicMock()
+    mock_response.status_code = 401
+    mock_response.text = "Bad credentials"
+
+    mock_client = MagicMock(spec=GitHubClient)
+    # Planning succeeds
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    # Execution fails with 401
+    mock_client.create_pr.side_effect = httpx.HTTPStatusError(
+        "401", request=MagicMock(), response=mock_response
+    )
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+        pytest.raises(SubmitError, match="authentication failed"),
+    ):
+        _submit(repo_with_tracked_feature)
+
+
+def test_submit_handles_rate_limit_during_create_pr(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit handles 403 rate limit error during PR creation."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+    mock_response.text = "API rate limit exceeded"
+
+    mock_client = MagicMock(spec=GitHubClient)
+    # Planning succeeds
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    # Execution fails with 403 rate limit
+    mock_client.create_pr.side_effect = httpx.HTTPStatusError(
+        "403", request=MagicMock(), response=mock_response
+    )
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+        pytest.raises(SubmitError, match="rate limit"),
+    ):
+        _submit(repo_with_tracked_feature)
+
+
+def test_submit_handles_403_forbidden_during_create_pr(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit handles 403 forbidden error during PR creation."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_response = MagicMock()
+    mock_response.status_code = 403
+    mock_response.text = "Repository access blocked"
+
+    mock_client = MagicMock(spec=GitHubClient)
+    # Planning succeeds
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    # Execution fails with 403 forbidden
+    mock_client.create_pr.side_effect = httpx.HTTPStatusError(
+        "403", request=MagicMock(), response=mock_response
+    )
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+        pytest.raises(SubmitError, match="forbidden"),
+    ):
+        _submit(repo_with_tracked_feature)
+
+
 def test_submit_handles_422_error(
     repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test submit handles 422 validation error."""
+    """Test submit handles 422 validation error during PR creation."""
     setup_origin_remote(repo_with_tracked_feature)
     monkeypatch.setenv("GH_TOKEN", "test-token")
 
@@ -412,7 +670,9 @@ def test_submit_handles_422_error(
     mock_response.text = "Validation failed"
 
     mock_client = MagicMock(spec=GitHubClient)
-    mock_client.get_pr_for_branch.side_effect = httpx.HTTPStatusError(
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.create_pr.side_effect = httpx.HTTPStatusError(
         "422", request=MagicMock(), response=mock_response
     )
     mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -432,7 +692,7 @@ def test_submit_handles_422_error(
 def test_submit_handles_other_http_error(
     repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test submit handles other HTTP errors."""
+    """Test submit handles other HTTP errors during PR creation."""
     setup_origin_remote(repo_with_tracked_feature)
     monkeypatch.setenv("GH_TOKEN", "test-token")
 
@@ -441,7 +701,9 @@ def test_submit_handles_other_http_error(
     mock_response.text = "Internal Server Error"
 
     mock_client = MagicMock(spec=GitHubClient)
-    mock_client.get_pr_for_branch.side_effect = httpx.HTTPStatusError(
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.create_pr.side_effect = httpx.HTTPStatusError(
         "500", request=MagicMock(), response=mock_response
     )
     mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -566,7 +828,14 @@ def test_cli_submit_dry_run(
     setup_origin_remote(repo_with_tracked_feature)
     monkeypatch.setenv("GH_TOKEN", "test-token")
 
-    result = runner.invoke(app, ["submit", "--dry-run"])
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("shortcake.commands.submit.GitHubClient", return_value=mock_client):
+        result = runner.invoke(app, ["submit", "--dry-run"])
 
     assert result.exit_code == 0
     assert "Would submit" in result.output
@@ -620,7 +889,9 @@ def test_cli_submit_with_errors(
     mock_response.text = "Server error"
 
     mock_client = MagicMock(spec=GitHubClient)
-    mock_client.get_pr_for_branch.side_effect = httpx.HTTPStatusError(
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.create_pr.side_effect = httpx.HTTPStatusError(
         "500", request=MagicMock(), response=mock_response
     )
     mock_client.__enter__ = MagicMock(return_value=mock_client)
@@ -741,7 +1012,9 @@ def test_submit_handles_network_error(
     monkeypatch.setenv("GH_TOKEN", "test-token")
 
     mock_client = MagicMock(spec=GitHubClient)
-    mock_client.get_pr_for_branch.side_effect = httpx.ConnectError("Connection refused")
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.create_pr.side_effect = httpx.ConnectError("Connection refused")
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
 
@@ -763,9 +1036,9 @@ def test_submit_handles_timeout_error(
     monkeypatch.setenv("GH_TOKEN", "test-token")
 
     mock_client = MagicMock(spec=GitHubClient)
-    mock_client.get_pr_for_branch.side_effect = httpx.TimeoutException(
-        "Request timeout"
-    )
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.create_pr.side_effect = httpx.TimeoutException("Request timeout")
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
 
