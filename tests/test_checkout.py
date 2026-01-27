@@ -118,6 +118,34 @@ def test_checkout_local_branch_adoption_fails(temp_repo: Repo) -> None:
     assert result.adopted is False  # Can't adopt, no unique commits
 
 
+def test_checkout_local_branch_no_default_branch(tmp_path: Path) -> None:
+    """Test local checkout when no default branch is detected."""
+    # Create repo without main or master
+    repo = Repo.init(tmp_path, default_branch=b"develop")
+    readme = tmp_path / "README.md"
+    readme.write_text("# Test")
+    porcelain.add(repo, paths=[str(readme)])
+    porcelain.commit(repo, message=b"Initial commit")
+
+    # Create feature branch with a unique commit
+    develop_sha = repo.head()
+    repo.refs[b"refs/heads/feature"] = develop_sha
+    switch_branch(repo, "feature")
+    test_file = tmp_path / "feature.txt"
+    test_file.write_text("feature")
+    porcelain.add(repo, paths=[str(test_file)])
+    porcelain.commit(repo, message=b"Add feature")
+
+    # Switch to develop
+    switch_branch(repo, "develop")
+
+    # Checkout feature - no default branch detected, so no adoption
+    result = _checkout(repo, "feature", adopt=True)
+
+    assert result.branch == "feature"
+    assert result.adopted is False  # No default branch, so no adoption attempt
+
+
 # Tests for _checkout with remote branches
 
 
