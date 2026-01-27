@@ -37,7 +37,7 @@ def _abort(repo: Repo) -> AbortResult:
         typer.echo("Aborting in-progress rebase...")
         try:
             git.rebase_abort(repo)
-        except RebaseFailure:
+        except RebaseFailure:  # pragma: no cover
             typer.echo(
                 "Warning: Failed to abort git rebase. You may need to run "
                 "'git rebase --abort' manually.",
