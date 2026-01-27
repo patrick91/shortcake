@@ -1,5 +1,7 @@
 """Remote operations."""
 
+import os
+
 from dulwich import porcelain
 from dulwich.repo import Repo
 
@@ -37,7 +39,9 @@ def fetch_and_fast_forward_trunk(repo: Repo, trunk: str) -> tuple[bool, str | No
         return True, None  # No remote configured, nothing to do
 
     try:  # pragma: no cover
-        porcelain.fetch(repo, "origin", quiet=True)
+        # Suppress progress output (\r chars corrupt terminal output)
+        with open(os.devnull, "wb") as devnull:
+            porcelain.fetch(repo, "origin", quiet=True, errstream=devnull)
     except DULWICH_IO_ERRORS:  # pragma: no cover
         return False, None
 
