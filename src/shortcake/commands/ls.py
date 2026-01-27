@@ -2,6 +2,7 @@ from typing import Annotated
 
 import typer
 from dulwich.repo import Repo
+from rich.console import Console
 from rich.live import Live
 from rich.text import Text
 
@@ -9,6 +10,8 @@ from shortcake import _git as git
 from shortcake._cache import load_pr_cache, update_pr_cache
 from shortcake._github import GitHubClient, get_github_token, get_repo_info
 from shortcake._tree import BranchNode, StackTree
+
+console = Console()
 
 
 def _build_tree(repo: Repo) -> tuple[StackTree, set[str]]:
@@ -77,7 +80,7 @@ def _fetch_pr_info(repo: Repo, tree: StackTree, tracked_branches: set[str]) -> N
     owner, repo_name = repo_info
     branch_nodes = _collect_nodes(tree)
 
-    with Live(Text(tree.render()), refresh_per_second=4) as live:
+    with Live(Text(tree.render(use_rich_links=True)), refresh_per_second=4) as live:
         try:
             with GitHubClient(token, owner, repo_name) as gh:
                 for node in branch_nodes:
@@ -88,18 +91,30 @@ def _fetch_pr_info(repo: Repo, tree: StackTree, tracked_branches: set[str]) -> N
                         if pr:
                             node.pr_number = pr.number
                             node.pr_is_draft = pr.is_draft
+                            node.pr_url = pr.url
                             update_pr_cache(
-                                repo, node.name, pr.number, is_draft=pr.is_draft
+                                repo,
+                                node.name,
+                                pr.number,
+                                is_draft=pr.is_draft,
+                                url=pr.url,
                             )
                         else:
                             merged_num = gh.get_merged_pr_number(node.name)
                             if merged_num:
                                 node.pr_number = merged_num
                                 node.pr_is_merged = True
+                                # Construct URL for merged PR
+                                pr_url = f"https://github.com/{owner}/{repo_name}/pull/{merged_num}"
+                                node.pr_url = pr_url
                                 update_pr_cache(
-                                    repo, node.name, merged_num, is_merged=True
+                                    repo,
+                                    node.name,
+                                    merged_num,
+                                    is_merged=True,
+                                    url=pr_url,
                                 )
-                        live.update(Text(tree.render()))
+                        live.update(Text(tree.render(use_rich_links=True)))
                     except Exception:
                         continue
         except Exception:
@@ -118,7 +133,7 @@ def ls(
     # Build tree
     tree, tracked_branches = _build_tree(repo)
     if not tree.roots:
-        typer.echo("No tracked branches found.")
+        console.print("No tracked branches found.")
         return
 
     branch_nodes = _collect_nodes(tree)
@@ -135,4 +150,6 @@ def ls(
                 node.pr_number = cached.number
                 node.pr_is_draft = cached.is_draft
                 node.pr_is_merged = cached.is_merged
-        typer.echo(tree.render())
+                node.pr_url = cached.url
+
+        console.print(tree.render(use_rich_links=True))

@@ -14,6 +14,7 @@ class CachedPRInfo:
     number: int
     is_draft: bool = False
     is_merged: bool = False
+    url: str | None = None
 
 
 def _get_cache_path(repo: Repo) -> Path:
@@ -67,6 +68,7 @@ def update_pr_cache(
     pr_number: int,
     is_draft: bool = False,
     is_merged: bool = False,
+    url: str | None = None,
 ) -> None:
     """Update cache for a single branch.
 
@@ -76,12 +78,14 @@ def update_pr_cache(
         pr_number: PR number.
         is_draft: Whether the PR is a draft.
         is_merged: Whether the PR is merged.
+        url: PR URL for clickable links.
     """
     cache = load_pr_cache(repo)
     cache[branch] = CachedPRInfo(
         number=pr_number,
         is_draft=is_draft,
         is_merged=is_merged,
+        url=url,
     )
     save_pr_cache(repo, cache)
 

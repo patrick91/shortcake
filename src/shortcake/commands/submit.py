@@ -405,6 +405,7 @@ def _submit(
                             plan.branch,
                             existing_pr.number,
                             is_draft=existing_pr.is_draft,
+                            url=existing_pr.url,
                         )
 
                 elif plan.action == PRAction.SKIPPED:
@@ -434,7 +435,9 @@ def _submit(
                     typer.echo(f"  Created PR #{pr.number}: {pr.url}")
 
                     # Update cache with new PR
-                    update_pr_cache(repo, plan.branch, pr.number, is_draft=pr.is_draft)
+                    update_pr_cache(
+                        repo, plan.branch, pr.number, is_draft=pr.is_draft, url=pr.url
+                    )
 
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 401:
