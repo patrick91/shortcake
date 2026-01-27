@@ -57,6 +57,7 @@ from shortcake._git._remote import (
 from shortcake._git._stack import (
     get_branch_children,
     get_branch_parent,
+    get_branch_parent_info,
     get_merged_branches,
     get_tracked_branches,
     is_merged,
@@ -80,6 +81,7 @@ __all__ = [
     "get_branch_children",
     "get_branch_head",
     "get_branch_parent",
+    "get_branch_parent_info",
     "get_cherry_pick_head",
     "get_commit_message",
     "get_commits_between",

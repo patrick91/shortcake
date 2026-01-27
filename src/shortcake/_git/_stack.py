@@ -33,6 +33,39 @@ def get_branch_parent(
     Returns:
         Parent branch name if found, None otherwise
     """
+    result = get_branch_parent_info(repo, branch, all_branches, branch_heads)
+    return result[0] if result else None
+
+
+def get_branch_parent_info(
+    repo: Repo,
+    branch: str,
+    all_branches: set[str],
+    branch_heads: dict[str, bytes] | None = None,
+) -> tuple[str, bytes | None] | None:
+    """
+    Get parent branch and the merge base commit for rebasing.
+
+    Walks commits from branch head to find the first commit that has the
+    Shortcake-Parent trailer. Returns both the parent branch name and the
+    parent of that commit (which is the correct merge base for rebasing).
+
+    This is important because when a parent branch is modified (e.g., via
+    `sc modify`), the git merge-base may return an ancestor that's too old,
+    causing the rebase to include commits from the old parent branch.
+
+    Args:
+        repo: The git repository
+        branch: The branch name to check
+        all_branches: Set of all branch names for determining boundaries
+        branch_heads: Optional precomputed dict of branch name -> head SHA.
+                      If provided, avoids redundant get_branch_head() calls.
+
+    Returns:
+        Tuple of (parent_branch_name, merge_base_sha) if found, None otherwise.
+        The merge_base_sha is the parent commit of the first commit with the trailer,
+        or None if the commit has no parents (orphan commit).
+    """
 
     # Use precomputed head if available, otherwise fetch it
     if branch_heads is not None:
@@ -70,7 +103,12 @@ def get_branch_parent(
         # A branch cannot be its own parent (can happen if merged commits
         # with trailers end up in the trunk)
         if trailers.parent_branch is not None and trailers.parent_branch != branch:
-            return trailers.parent_branch
+            # Found the first commit with trailer - return its parent as merge base
+            commit = repo[commit_sha]
+            if commit.parents:
+                return (trailers.parent_branch, commit.parents[0])
+            # Orphan commit (no parents) - return None for merge_base
+            return (trailers.parent_branch, None)
 
         # Add parents to visit
         commit = repo[commit_sha]
