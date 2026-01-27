@@ -650,6 +650,69 @@ def test_github_client_get_merged_pr_number_returns_none() -> None:
     assert result is None
 
 
+# Tests for get_pr_by_number
+
+
+@respx.mock
+def test_github_client_get_pr_by_number_found() -> None:
+    """Test get_pr_by_number returns PR info when found."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls/123").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "number": 123,
+                "html_url": "https://github.com/owner/repo/pull/123",
+                "base": {"ref": "main"},
+                "head": {"ref": "feature-branch"},
+                "title": "Test PR",
+                "body": "PR body",
+                "state": "open",
+                "draft": False,
+            },
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        result = client.get_pr_by_number(123)
+
+    assert result is not None
+    assert result.number == 123
+    assert result.url == "https://github.com/owner/repo/pull/123"
+    assert result.base == "main"
+    assert result.head_ref == "feature-branch"
+    assert result.title == "Test PR"
+    assert result.state == "open"
+
+
+@respx.mock
+def test_github_client_get_pr_by_number_not_found() -> None:
+    """Test get_pr_by_number returns None when PR doesn't exist."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls/999").mock(
+        return_value=httpx.Response(404, json={"message": "Not Found"})
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        result = client.get_pr_by_number(999)
+
+    assert result is None
+
+
+@respx.mock
+def test_github_client_get_pr_by_number_http_error() -> None:
+    """Test get_pr_by_number raises on non-404 errors."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls/123").mock(
+        return_value=httpx.Response(401, json={"message": "Bad credentials"})
+    )
+
+    with (
+        GitHubClient("token", "owner", "repo") as client,
+        pytest.raises(httpx.HTTPStatusError) as exc_info,
+    ):
+        client.get_pr_by_number(123)
+
+    assert exc_info.value.response.status_code == 401
+
+
 # Tests for push_branch
 
 

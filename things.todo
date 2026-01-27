@@ -1,0 +1,4 @@
+# this should show if it creates a new PR or not
+❯ sc submit --dry-run
+Would submit 1 branch(es):
+  add-migration-workspace-member
