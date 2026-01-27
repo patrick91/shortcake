@@ -635,7 +635,7 @@ def test_ls_with_cached_draft_pr(repo_with_feature: Repo) -> None:
             node.pr_is_draft = cached.is_draft
 
     output = tree.render()
-    assert "#456 draft" in output
+    assert "#456 [dim]draft[/]" in output
 
 
 def test_ls_with_cached_merged_pr(repo_with_feature: Repo) -> None:
@@ -660,4 +660,4 @@ def test_ls_with_cached_merged_pr(repo_with_feature: Repo) -> None:
             node.pr_is_merged = cached.is_merged
 
     output = tree.render()
-    assert "#789 merged" in output
+    assert "#789 [dim]merged[/]" in output
