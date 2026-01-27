@@ -110,11 +110,14 @@ def get_repo_info(repo: Repo) -> tuple[str, str] | None:
 class GitHubClient:
     """Client for GitHub REST API operations."""
 
-    def __init__(self, token: str, owner: str, repo: str):
+    def __init__(self, token: str, owner: str, repo: str, base_url: str | None = None):
         self.owner = owner
         self.repo = repo
+        effective_base_url = (
+            base_url or os.environ.get("GITHUB_API_URL") or "https://api.github.com"
+        )
         self.client = httpx.Client(
-            base_url="https://api.github.com",
+            base_url=effective_base_url,
             headers={
                 "Authorization": f"token {token}",
                 "Accept": "application/vnd.github+json",

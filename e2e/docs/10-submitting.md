@@ -15,31 +15,117 @@ Before using `sc submit`, you need:
 - A GitHub token (via `gh auth login` or `GH_TOKEN` environment variable)
 - An origin remote pointing to GitHub
 
-## Basic Usage
+## Dry Run
 
-### Setup: Create a Stack with Remote
+Use `--dry-run` to preview what would be submitted:
 
 ```console
 $ git remote add origin git@github.com:test/repo.git
 $ echo "feature code" > feature.py && git add feature.py
 $ sc create -m "Add feature"
 Created branch 'add-feature' from 'main'
-```
-
-### Dry Run
-
-Use `--dry-run` to preview what would be submitted:
-
-```console
 $ sc submit --dry-run
 Would submit 1 branch(es):
-  add-feature
+  add-feature (create new PR)
 ```
 
-## Command Options
+## Creating a New PR
 
-- `--draft` / `-d`: Create draft PRs
-- `--dry-run` / `-n`: Preview without making changes
+```console
+$ # reset-to-main
+$ # github: setup-mock-with-remote
+$ echo "feature code" > feature.py && git add feature.py
+$ sc create -m "Add feature"
+Created branch 'add-feature' from 'main'
+$ sc submit
+Pushing 'add-feature'...
+  Creating PR for 'add-feature'...
+  Created PR #1: https://github.com/<OWNER>/<REPO>/pull/1
+
+Created 1 PR(s)
+```
+
+## Creating a Draft PR
+
+```console
+$ # reset-to-main
+$ # github: reset-state
+$ echo "draft code" > draft.py && git add draft.py
+$ sc create -m "Draft feature"
+Created branch 'draft-feature' from 'main'
+$ sc submit --draft
+Pushing 'draft-feature'...
+  Creating PR for 'draft-feature'...
+  Created PR #1: https://github.com/<OWNER>/<REPO>/pull/1
+
+Created 1 PR(s)
+```
+
+## Updating an Existing PR
+
+When a PR already exists for a branch, submit updates it instead of creating a new one:
+
+```console
+$ # reset-to-main
+$ # github: reset-state
+$ echo "feature code" > feature.py && git add feature.py
+$ sc create -m "Add feature"
+Created branch 'add-feature' from 'main'
+$ # github: add-pr add-feature 42 main
+$ sc submit
+Pushing 'add-feature'...
+
+Updated 1 PR(s)
+```
+
+## Submitting a Stack of PRs
+
+When you have stacked branches, submit creates PRs for the entire stack:
+
+```console
+$ # reset-to-main
+$ # github: reset-state
+$ echo "feature a" > a.py && git add a.py
+$ sc create -m "Feature A"
+Created branch 'feature-a' from 'main'
+$ echo "feature b" > b.py && git add b.py
+$ sc create -m "Feature B"
+Created branch 'feature-b' from 'feature-a'
+$ sc submit
+Pushing 'feature-a'...
+  Creating PR for 'feature-a'...
+  Created PR #1: https://github.com/<OWNER>/<REPO>/pull/1
+Pushing 'feature-b'...
+  Creating PR for 'feature-b'...
+  Created PR #2: https://github.com/<OWNER>/<REPO>/pull/2
+
+Created 2 PR(s)
+```
+
+## Skipping Merged PRs
+
+Branches with merged PRs are skipped during submit:
+
+```console
+$ # reset-to-main
+$ # github: reset-state
+$ echo "feature a" > a.py && git add a.py
+$ sc create -m "Feature A"
+Created branch 'feature-a' from 'main'
+$ # github: add-pr feature-a 10 main
+$ # github: merge-pr 10
+$ echo "feature b" > b.py && git add b.py
+$ sc create -m "Feature B"
+Created branch 'feature-b' from 'feature-a'
+$ sc submit
+Pushing 'feature-a'...
+  Skipping 'feature-a' - already has a merged PR. Run 'sc sync' to clean up merged branches.
+Pushing 'feature-b'...
+  Creating PR for 'feature-b'...
+  Created PR #11: https://github.com/<OWNER>/<REPO>/pull/11
+
+Created 1 PR(s)
+```
 
 ## Stack Visualization
 
@@ -64,29 +150,36 @@ The visualization shows:
 
 ## Error Handling
 
-### No GitHub Token
+### Auth Failure
 
-If no token is found, submit will show an error:
-
-```
-Error: No GitHub token found. Run 'gh auth login' or set GH_TOKEN environment variable.
-```
-
-### Untracked Branch
-
-If the current branch is not tracked by shortcake:
-
-```
-Error: Branch 'my-branch' is not tracked by shortcake. Use 'sc adopt' to track it first.
+```console
+$ # reset-to-main
+$ # github: reset-state
+$ echo "feature code" > feature.py && git add feature.py
+$ sc create -m "Add feature"
+Created branch 'add-feature' from 'main'
+$ # github: error-auth
+$ sc submit
+Error: GitHub authentication failed. Re-run 'gh auth login' or check your token.
 ```
 
-### No Remote
+### Rate Limit
 
-If no origin remote is configured:
+```console
+$ # reset-to-main
+$ # github: reset-state
+$ echo "feature code" > feature.py && git add feature.py
+$ sc create -m "Add feature"
+Created branch 'add-feature' from 'main'
+$ # github: error-rate-limit
+$ sc submit
+Error: GitHub API rate limit exceeded. Please wait and try again.
+```
 
-```
-Error: No origin remote configured
-```
+## Command Options
+
+- `--draft` / `-d`: Create draft PRs
+- `--dry-run` / `-n`: Preview without making changes
 
 ## Token Resolution
 
