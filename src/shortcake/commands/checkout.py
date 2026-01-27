@@ -35,8 +35,8 @@ def _fetch_branch(repo: Repo, branch: str) -> bool:
 
     Returns True if fetch succeeded, False otherwise.
     Note: dulwich's porcelain.fetch fetches all refs, which is fine.
+    The branch parameter is reserved for future selective fetch.
     """
-    _ = branch  # Branch parameter reserved for future selective fetch
     try:
         porcelain.fetch(
             repo,
