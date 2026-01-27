@@ -10,6 +10,7 @@ import typer
 from dulwich.repo import Repo
 
 from shortcake import _git as git
+from shortcake._cache import update_pr_cache
 from shortcake._exceptions import ShortcakeError
 from shortcake._github import GitHubClient, get_github_token, get_repo_info, push_branch
 from shortcake.commands.restack import _get_stack_in_order
@@ -396,6 +397,16 @@ def _submit(
                         gh.update_pr(plan.existing_pr_number, base=plan.parent)  # type: ignore
                     branch_result.action = PRAction.UPDATED
 
+                    # Update cache with existing PR info
+                    existing_pr = gh.get_pr_for_branch(plan.branch)
+                    if existing_pr:
+                        update_pr_cache(
+                            repo,
+                            plan.branch,
+                            existing_pr.number,
+                            is_draft=existing_pr.is_draft,
+                        )
+
                 elif plan.action == PRAction.SKIPPED:
                     typer.echo(
                         f"  Skipping '{plan.branch}' - already has a merged PR. "
@@ -421,6 +432,9 @@ def _submit(
                     branch_result.pr_url = pr.url
                     branch_result.action = PRAction.CREATED
                     typer.echo(f"  Created PR #{pr.number}: {pr.url}")
+
+                    # Update cache with new PR
+                    update_pr_cache(repo, plan.branch, pr.number, is_draft=pr.is_draft)
 
             except httpx.HTTPStatusError as e:
                 if e.response.status_code == 401:

@@ -1,10 +1,8 @@
 import typer
 from dulwich.repo import Repo
-from rich.live import Live
-from rich.text import Text
 
 from shortcake import _git as git
-from shortcake._github import GitHubClient, get_github_token, get_repo_info
+from shortcake._cache import load_pr_cache
 from shortcake._tree import BranchNode, StackTree
 
 
@@ -58,46 +56,22 @@ def ls() -> None:
     """List all tracked branches as a tree."""
     repo = git.open_repo()
 
-    # Build tree (without PR info)
+    # Build tree
     tree, tracked_branches = _build_tree(repo)
     if not tree.roots:
         typer.echo("No tracked branches found.")
         return
 
-    # Check if we can fetch PR info
-    token = get_github_token()
-    repo_info = get_repo_info(repo)
+    # Load PR info from cache
+    pr_cache = load_pr_cache(repo)
 
-    if not token or not repo_info:
-        # No GitHub access, just print tree
-        typer.echo(tree.render())
-        return
-
-    # Live update: show tree, then fill in PR info
-    owner, repo_name = repo_info
+    # Apply cached PR info to nodes
     branch_nodes = _collect_nodes(tree)
+    for node in branch_nodes:
+        if node.name in tracked_branches and node.name in pr_cache:
+            cached = pr_cache[node.name]
+            node.pr_number = cached.number
+            node.pr_is_draft = cached.is_draft
+            node.pr_is_merged = cached.is_merged
 
-    with Live(Text(tree.render()), refresh_per_second=4) as live:
-        try:
-            with GitHubClient(token, owner, repo_name) as gh:
-                for node in branch_nodes:
-                    # Skip untracked branches (like main)
-                    if node.name not in tracked_branches:
-                        continue
-                    try:
-                        pr = gh.get_pr_for_branch(node.name)
-                        if pr:
-                            node.pr_number = pr.number
-                            node.pr_is_draft = pr.is_draft
-                        else:
-                            # Check for merged PR
-                            merged_num = gh.get_merged_pr_number(node.name)
-                            if merged_num:
-                                node.pr_number = merged_num
-                                node.pr_is_merged = True
-                        # Update display
-                        live.update(Text(tree.render()))
-                    except Exception:
-                        continue  # Skip on error
-        except Exception:
-            pass  # GitHub errors don't break the command
+    typer.echo(tree.render())
