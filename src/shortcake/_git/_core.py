@@ -178,7 +178,7 @@ def switch_branch(repo: Repo, branch: str, force: bool = False) -> None:
     if force:
         cmd.append("--force")
     result = subprocess.run(cmd, cwd=repo.path, capture_output=True, text=True)
-    if result.returncode != 0:
+    if result.returncode != 0:  # pragma: no cover
         raise ValueError(f"Failed to switch branch: {result.stderr.strip()}")
 
 

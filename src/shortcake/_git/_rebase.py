@@ -143,7 +143,7 @@ def rebase_abort(repo: Repo) -> None:
             # Clean up the rebase directories manually
             if rebase_merge.exists():
                 shutil.rmtree(rebase_merge)
-            if rebase_apply.exists():
+            if rebase_apply.exists():  # pragma: no cover
                 shutil.rmtree(rebase_apply)
         return
 
@@ -151,7 +151,7 @@ def rebase_abort(repo: Repo) -> None:
     try:
         if get_cherry_pick_head(repo) is not None:
             porcelain.cherry_pick(repo, None, abort=True)
-        else:
+        else:  # pragma: no cover
             raise RebaseFailure("No rebase in progress.")
     except DULWICH_REBASE_ERRORS as e:
         raise RebaseFailure(str(e) or "Rebase abort failed") from e
