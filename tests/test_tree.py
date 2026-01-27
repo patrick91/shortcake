@@ -580,7 +580,7 @@ def test_render_pr_draft() -> None:
     tree = StackTree(roots=[root])
     output = tree.render()
 
-    assert "◉ feature #456 draft (current)" in output
+    assert "◉ feature #456 [dim]draft[/] (current)" in output
 
 
 def test_render_pr_merged() -> None:
@@ -593,7 +593,7 @@ def test_render_pr_merged() -> None:
     tree = StackTree(roots=[root])
     output = tree.render()
 
-    assert "◯ feature #789 merged" in output
+    assert "◯ feature #789 [dim]merged[/]" in output
 
 
 def test_snapshot_pr_number() -> None:
@@ -630,7 +630,7 @@ def test_snapshot_pr_draft() -> None:
                 child.pr_is_draft = True
 
     assert tree.render() == snapshot("""\
-◉ feature #456 draft (current)
+◉ feature #456 [dim]draft[/] (current)
 │
 ◯ main\
 """)
@@ -650,7 +650,7 @@ def test_snapshot_pr_merged() -> None:
                 child.pr_is_merged = True
 
     assert tree.render() == snapshot("""\
-◯ feature #789 merged
+◯ feature #789 [dim]merged[/]
 │
 ◉ main (current)\
 """)
@@ -678,7 +678,7 @@ def test_snapshot_pr_with_multiple_children() -> None:
     assert tree.render() == snapshot("""\
 ◯ feature-a #100
 │
-│ ◯ feature-b #101 draft
+│ ◯ feature-b #101 [dim]draft[/]
 │ │
 ◉─┘ main (current)\
 """)
