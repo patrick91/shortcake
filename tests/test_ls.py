@@ -1,5 +1,4 @@
 from pathlib import Path
-from unittest.mock import patch
 
 import httpx
 import respx
@@ -574,14 +573,11 @@ def test_ls_no_pr_for_branch(repo_with_feature: Repo) -> None:
     assert feature_node.pr_number is None
 
 
-def test_ls_without_github_token(repo_with_feature: Repo) -> None:
-    """Test ls works without GitHub token (no PR info)."""
+def test_ls_without_cache(repo_with_feature: Repo) -> None:
+    """Test ls works without any cached PR info."""
     _adopt(repo_with_feature)
 
-    # No origin remote set up
-
-    with patch("shortcake.commands.ls.get_github_token", return_value=None):
-        result = _ls(repo_with_feature)
+    result = _ls(repo_with_feature)
 
     # Should still render tree, just without PR info
     assert "feature" in result
@@ -589,14 +585,79 @@ def test_ls_without_github_token(repo_with_feature: Repo) -> None:
     assert "#" not in result  # No PR numbers
 
 
-def test_ls_without_origin_remote(repo_with_feature: Repo) -> None:
-    """Test ls works without origin remote (no PR info)."""
+def test_ls_with_cached_pr_info(repo_with_feature: Repo) -> None:
+    """Test ls shows PR info from cache."""
+    from shortcake._cache import update_pr_cache
+
     _adopt(repo_with_feature)
 
-    # No origin remote
-    with patch("shortcake.commands.ls.get_github_token", return_value="fake-token"):
-        result = _ls(repo_with_feature)
+    # Populate cache
+    update_pr_cache(repo_with_feature, "feature", 123, is_draft=False)
 
-    # Should still render tree, just without PR info
-    assert "feature" in result
-    assert "main" in result
+    # Build tree and apply cache (simulating what ls() does)
+    from shortcake._cache import load_pr_cache
+
+    tree, tracked = _build_tree(repo_with_feature)
+    pr_cache = load_pr_cache(repo_with_feature)
+    branch_nodes = _collect_nodes(tree)
+
+    for node in branch_nodes:
+        if node.name in tracked and node.name in pr_cache:
+            cached = pr_cache[node.name]
+            node.pr_number = cached.number
+            node.pr_is_draft = cached.is_draft
+            node.pr_is_merged = cached.is_merged
+
+    output = tree.render()
+    assert "#123" in output
+    assert "feature" in output
+
+
+def test_ls_with_cached_draft_pr(repo_with_feature: Repo) -> None:
+    """Test ls shows draft status from cache."""
+    from shortcake._cache import update_pr_cache
+
+    _adopt(repo_with_feature)
+
+    # Populate cache with draft PR
+    update_pr_cache(repo_with_feature, "feature", 456, is_draft=True)
+
+    from shortcake._cache import load_pr_cache
+
+    tree, tracked = _build_tree(repo_with_feature)
+    pr_cache = load_pr_cache(repo_with_feature)
+    branch_nodes = _collect_nodes(tree)
+
+    for node in branch_nodes:
+        if node.name in tracked and node.name in pr_cache:
+            cached = pr_cache[node.name]
+            node.pr_number = cached.number
+            node.pr_is_draft = cached.is_draft
+
+    output = tree.render()
+    assert "#456 draft" in output
+
+
+def test_ls_with_cached_merged_pr(repo_with_feature: Repo) -> None:
+    """Test ls shows merged status from cache."""
+    from shortcake._cache import update_pr_cache
+
+    _adopt(repo_with_feature)
+
+    # Populate cache with merged PR
+    update_pr_cache(repo_with_feature, "feature", 789, is_merged=True)
+
+    from shortcake._cache import load_pr_cache
+
+    tree, tracked = _build_tree(repo_with_feature)
+    pr_cache = load_pr_cache(repo_with_feature)
+    branch_nodes = _collect_nodes(tree)
+
+    for node in branch_nodes:
+        if node.name in tracked and node.name in pr_cache:
+            cached = pr_cache[node.name]
+            node.pr_number = cached.number
+            node.pr_is_merged = cached.is_merged
+
+    output = tree.render()
+    assert "#789 merged" in output
