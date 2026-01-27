@@ -58,8 +58,14 @@ DULWICH_IO_ERRORS = (*DULWICH_ERRORS, OSError)
 
 
 def open_repo(path: Path | None = None) -> Repo:
-    """Open git repository at path or current directory."""
-    return Repo(str(path) if path else ".")
+    """Open git repository at path or current directory.
+
+    If path is not provided, discovers the repository by walking up
+    from the current directory.
+    """
+    if path:
+        return Repo(str(path))
+    return Repo.discover()
 
 
 def get_current_branch(repo: Repo) -> str | None:
