@@ -3,15 +3,11 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from dulwich import porcelain
 from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
-
-RESTACK_READ_ERRORS = (*git.DULWICH_IO_ERRORS, ValueError)
-RESTACK_REF_ERRORS = (*git.DULWICH_IO_ERRORS, KeyError)
 
 
 class RestackError(ShortcakeError):
@@ -159,7 +155,7 @@ def _get_conflict_files(repo: Repo | str) -> list[str]:
         if isinstance(repo, Repo):
             return git.get_conflict_files(repo)
         return git.get_conflict_files(git.open_repo(Path(repo)))
-    except RESTACK_READ_ERRORS:
+    except (*git.DULWICH_IO_ERRORS, ValueError):
         return []
 
 
@@ -191,107 +187,7 @@ def _show_rebase_error(branch: str, onto: str, error_output: str) -> None:
     typer.echo("Abort with: sc abort", err=True)
 
 
-def _get_diverged_branches(repo: Repo, branches: list[str]) -> list[str]:
-    """Return branches that have truly diverged from their remote.
-
-    True divergence means both local and remote have commits the other doesn't.
-    Local-only commits (ahead) or remote-only commits (behind) are not divergence.
-    """
-    diverged = []
-    for branch in branches:
-        remote_ref = f"origin/{branch}"
-        remote_sha = git.get_remote_ref(repo, remote_ref)
-        if remote_sha is None:
-            continue
-
-        local_sha = git.get_branch_head(repo, branch)
-        if local_sha == remote_sha:
-            continue
-
-        # Check for true divergence: neither is ancestor of the other
-        local_is_behind = git.is_ancestor(repo, local_sha, remote_sha)
-        remote_is_behind = git.is_ancestor(repo, remote_sha, local_sha)
-
-        if not local_is_behind and not remote_is_behind:
-            # Both have unique commits = true divergence
-            diverged.append(branch)
-    return diverged
-
-
-def _rebase_onto_remote(repo: Repo, branch: str) -> RebaseResult:
-    """Rebase a diverged branch onto its remote counterpart.
-
-    This replays local commits on top of the remote branch.
-    """
-    remote_ref = f"origin/{branch}"
-    remote_sha = git.get_remote_ref(repo, remote_ref)
-    local_sha = git.get_branch_head(repo, branch)
-
-    if remote_sha is None:
-        return RebaseResult(success=False, error_output="No remote tracking branch")
-
-    # Find merge base between local and remote
-    merge_base = git.get_merge_base(repo, local_sha, remote_sha)
-    if merge_base is None:
-        return RebaseResult(
-            success=False, error_output="No common ancestor with remote"
-        )
-
-    # Rebase local commits onto remote
-    try:
-        git.rebase_branch(repo, branch, remote_ref, merge_base.decode())
-        return RebaseResult(success=True)
-    except git.RebaseFailure as e:
-        return RebaseResult(success=False, error_output=str(e))
-
-
-def _fetch_remote(repo: Repo) -> bool:
-    """Fetch from origin. Returns True if successful."""
-    try:
-        porcelain.fetch(repo, "origin", quiet=True)
-        return True
-    except RESTACK_READ_ERRORS:
-        return False
-
-
-def _get_behind_branches(repo: Repo, branches: list[str]) -> list[str]:
-    """Return branches that are behind their remote (can be fast-forwarded)."""
-    behind = []
-    for branch in branches:
-        remote_ref = f"origin/{branch}"
-        remote_sha = git.get_remote_ref(repo, remote_ref)
-        if remote_sha is None:
-            continue
-
-        local_sha = git.get_branch_head(repo, branch)
-        if local_sha == remote_sha:
-            continue
-
-        # Behind means local is ancestor of remote
-        if git.is_ancestor(repo, local_sha, remote_sha):
-            behind.append(branch)
-    return behind
-
-
-def _fast_forward_branch(repo: Repo, branch: str) -> bool:
-    """Fast-forward branch to match origin. Returns True if successful, False otherwise.
-
-    Note: This only updates the ref, not the worktree. Only call this for
-    branches that are NOT currently checked out.
-    """
-    remote_ref = f"refs/remotes/origin/{branch}".encode()
-    local_ref = f"refs/heads/{branch}".encode()
-    if remote_ref not in repo.refs:
-        return False  # No remote ref to fast-forward to
-    try:
-        remote_sha = repo.refs[remote_ref]
-        repo.refs[local_ref] = remote_sha
-        return True
-    except RESTACK_REF_ERRORS:
-        return False
-
-
-def _restack(repo: Repo, dry_run: bool = False, sync: bool = False) -> RestackResult:
+def _restack(repo: Repo, dry_run: bool = False) -> RestackResult:
     """
     Restack current branch's stack.
 
@@ -320,62 +216,6 @@ def _restack(repo: Repo, dry_run: bool = False, sync: bool = False) -> RestackRe
 
     # Get stack in topological order
     stack_branches = _get_stack_in_order(repo, current_branch)
-
-    # Optional sync with remote
-    if sync:
-        typer.echo("Fetching from origin...")
-        _fetch_remote(repo)
-
-        # Fast-forward branches that are behind (skip current - can't update worktree)
-        behind = _get_behind_branches(repo, stack_branches)
-        for branch in behind:
-            if branch == current_branch:
-                typer.echo(
-                    f"Skipping '{branch}' (checked out). "
-                    "Run 'git pull --rebase' to update.",
-                    err=True,
-                )
-                continue
-            typer.echo(f"Fast-forwarding '{branch}'...")
-            if not _fast_forward_branch(repo, branch):
-                typer.echo(f"Warning: Failed to fast-forward '{branch}'", err=True)
-
-    # Check for divergence
-    diverged = _get_diverged_branches(repo, stack_branches)
-    if diverged:
-        if sync:
-            # Auto-rebase diverged branches onto their remote
-            for branch in diverged:
-                typer.echo(f"Rebasing '{branch}' onto 'origin/{branch}'...")
-                result = _rebase_onto_remote(repo, branch)
-                if not result.success:
-                    if git.is_rebase_in_progress(repo):
-                        conflict_files = _get_conflict_files(repo)
-                        _show_conflict_message(
-                            branch, f"origin/{branch}", conflict_files
-                        )
-                        return RestackResult(
-                            restacked_branches=[], conflict_branch=branch
-                        )
-                    else:
-                        typer.echo(
-                            f"Failed to rebase '{branch}' onto remote: "
-                            f"{result.error_output}",
-                            err=True,
-                        )
-                        raise RestackError(f"Cannot rebase '{branch}' onto remote")
-        else:
-            typer.echo(
-                f"Warning: Branches diverged from remote: {', '.join(diverged)}",
-                err=True,
-            )
-            typer.echo(
-                "Run 'git pull --rebase' on each diverged branch first.", err=True
-            )
-            typer.echo(
-                "Or use 'sc restack --sync' to auto-fetch and fast-forward.", err=True
-            )
-            raise RestackError("Cannot restack with diverged branches")
 
     # Build restack plan
     plan = _plan_restack(repo, stack_branches)
@@ -446,15 +286,12 @@ def restack(
     dry_run: Annotated[
         bool, typer.Option("--dry-run", "-n", help="Preview what would happen")
     ] = False,
-    sync: Annotated[
-        bool, typer.Option("--sync", "-s", help="Fetch and fast-forward first")
-    ] = False,
 ) -> None:
     """Restack current branch's stack."""
     repo = git.open_repo()
 
     try:
-        result = _restack(repo, dry_run=dry_run, sync=sync)
+        result = _restack(repo, dry_run=dry_run)
     except RestackError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from None

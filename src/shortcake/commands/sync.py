@@ -261,7 +261,7 @@ def _sync(
         all_branches = set(git.get_all_local_branches(repo))
         if git.get_branch_parent(repo, current_branch, all_branches) is not None:
             try:
-                restack_result = _restack(repo, sync=False)
+                restack_result = _restack(repo)
                 result.restack_result = restack_result
                 if restack_result.restacked_branches:
                     for branch in restack_result.restacked_branches:
