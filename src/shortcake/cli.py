@@ -3,6 +3,7 @@ import typer
 from shortcake.commands.abort import abort
 from shortcake.commands.adopt import adopt
 from shortcake.commands.bottom import bottom
+from shortcake.commands.checkout import checkout, co
 from shortcake.commands.continue_ import continue_cmd
 from shortcake.commands.create import create
 from shortcake.commands.down import down
@@ -27,6 +28,8 @@ def main() -> None:
 app.command()(abort)
 app.command()(adopt)
 app.command()(bottom)
+app.command()(checkout)
+app.command()(co)
 app.command(name="continue")(continue_cmd)
 app.command()(create)
 app.command()(down)

@@ -102,9 +102,9 @@ Decision: Start with `gh` CLI, migrate to library if needed.
 
 ## Checklist
 
-- [ ] Implement `sc submit`
-- [ ] Implement `sc checkout` / `sc co`
-- [ ] GitHub PR creation
-- [ ] GitHub PR updates
-- [ ] Stack visualization in PR body
+- [x] Implement `sc submit`
+- [x] Implement `sc checkout` / `sc co`
+- [x] GitHub PR creation
+- [x] GitHub PR updates
+- [x] Stack visualization in PR body
 - [ ] Enhance `sc ls` with PR info (commit counts, PR status) - cached for performance
