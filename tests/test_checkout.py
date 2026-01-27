@@ -101,6 +101,23 @@ def test_checkout_default_branch_not_adopted(temp_repo: Repo) -> None:
     assert result.adopted is False
 
 
+def test_checkout_local_branch_adoption_fails(temp_repo: Repo) -> None:
+    """Test local checkout when adoption fails (no unique commits)."""
+    # Create feature branch at same commit as main (no unique commits)
+    main_sha = temp_repo.head()
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    switch_branch(temp_repo, "feature")
+
+    # Switch to main first
+    switch_branch(temp_repo, "main")
+
+    # Checkout feature - adoption should fail silently (no commits relative to main)
+    result = _checkout(temp_repo, "feature", adopt=True)
+
+    assert result.branch == "feature"
+    assert result.adopted is False  # Can't adopt, no unique commits
+
+
 # Tests for _checkout with remote branches
 
 
