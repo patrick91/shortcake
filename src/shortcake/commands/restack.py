@@ -100,30 +100,33 @@ def _plan_restack(repo: Repo, branches: list[str]) -> list[RestackStep]:
     needs_restack_set: set[str] = set()
 
     for branch in branches:
-        parent = git.get_branch_parent(repo, branch, all_branches)
-        if parent is None:
+        # Get parent info which includes the correct merge base
+        # (parent of the first commit with Shortcake-Parent trailer)
+        parent_info = git.get_branch_parent_info(repo, branch, all_branches)
+        if parent_info is None:
             continue
+
+        parent, merge_base = parent_info
 
         if not git.branch_exists(repo, parent):
             continue
+
+        # Check for orphan commits (no common history with parent)
+        if merge_base is None:
+            raise RestackError(
+                f"Cannot restack '{branch}': no common history with parent "
+                f"'{parent}'. The branches may have unrelated histories."
+            )
 
         # A branch needs rebasing if:
         # 1. Its parent has diverged (merge_base != parent_head)
         # 2. Its parent is in the needs_restack set (will move)
         if _needs_restack(repo, branch, parent) or parent in needs_restack_set:
-            branch_head = git.get_branch_head(repo, branch)
-            parent_head = git.get_branch_head(repo, parent)
-            merge_base = git.get_merge_base(repo, branch_head, parent_head)
-            if merge_base is None:
-                raise RestackError(
-                    f"Cannot restack '{branch}': no common history with parent "
-                    f"'{parent}'. The branches may have unrelated histories."
-                )
             plan.append(
                 RestackStep(
                     branch=branch,
                     onto=parent,
-                    # dulwich returns SHA as 40 ASCII hex bytes, decode to string
+                    # merge_base is the parent of the first commit with trailer
                     merge_base=merge_base.decode(),
                 )
             )
