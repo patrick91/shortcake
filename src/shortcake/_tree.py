@@ -18,6 +18,11 @@ class BranchNode:
     children: list["BranchNode"] = field(default_factory=list)
     is_current: bool = False
     warning: BranchWarning | None = None
+    # PR info (populated asynchronously)
+    pr_number: int | None = None
+    pr_is_draft: bool = False
+    pr_is_merged: bool = False
+    pr_url: str | None = None
 
 
 @dataclass
@@ -141,6 +146,8 @@ class StackTree:
         """
         Render the tree as a string with box-drawing characters.
 
+        PR numbers are wrapped in Rich link markup if a URL is available.
+
         Returns:
             Rendered tree string, or empty string if no branches.
         """
@@ -150,12 +157,27 @@ class StackTree:
         def get_node_label(node: BranchNode) -> str:
             """Get the display label for a node."""
             marker = "◉" if node.is_current else "◯"
+
+            # PR suffix with Rich link if URL available
+            pr_suffix = ""
+            if node.pr_number:
+                pr_text = f"#{node.pr_number}"
+                if node.pr_url:
+                    pr_text = f"[cyan underline link={node.pr_url}]{pr_text}[/]"
+                pr_suffix = f" {pr_text}"
+                if node.pr_is_merged:
+                    pr_suffix += " [dim]merged[/]"
+                elif node.pr_is_draft:
+                    pr_suffix += " [dim]draft[/]"
+
+            # Warning/status suffix
             suffix = " (current)" if node.is_current else ""
             if node.warning == BranchWarning.ORPHAN:
                 suffix += " (parent missing)"
             elif node.warning == BranchWarning.CYCLE:
                 suffix += " (circular ref)"
-            return f"{marker} {node.name}{suffix}"
+
+            return f"{marker} {node.name}{pr_suffix}{suffix}"
 
         def render_branch(node: BranchNode, prefix: str = "") -> list[str]:
             """Render a single branch and its children, bottom-up."""
@@ -193,6 +215,19 @@ class StackTree:
             # Render the parent with merge connectors
             # Format: ◉─┴─┴─ name (for 3 children)
             marker = "◉" if node.is_current else "◯"
+
+            # PR suffix with Rich link if URL available
+            pr_suffix = ""
+            if node.pr_number:
+                pr_text = f"#{node.pr_number}"
+                if node.pr_url:
+                    pr_text = f"[cyan underline link={node.pr_url}]{pr_text}[/]"
+                pr_suffix = f" {pr_text}"
+                if node.pr_is_merged:
+                    pr_suffix += " [dim]merged[/]"
+                elif node.pr_is_draft:
+                    pr_suffix += " [dim]draft[/]"
+
             suffix = " (current)" if node.is_current else ""
             if node.warning == BranchWarning.ORPHAN:
                 suffix += " (parent missing)"
@@ -204,7 +239,9 @@ class StackTree:
                 merge_connector = "─┘"
             else:
                 merge_connector = "─" + "┴─" * (len(node.children) - 2) + "┘"
-            result.append(f"{prefix}{marker}{merge_connector} {node.name}{suffix}")
+            result.append(
+                f"{prefix}{marker}{merge_connector} {node.name}{pr_suffix}{suffix}"
+            )
 
             return result
 
