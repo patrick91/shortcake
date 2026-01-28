@@ -38,6 +38,9 @@ Rebasing 'extend-data-file' onto 'add-data-file'...
 
 Conflict while rebasing 'extend-data-file' onto 'add-data-file'.
 
+Fix conflicts in the following files:
+  data.txt
+
 Then:
   1. Stage your changes:     git add <files>
   2. Continue the restack:   sc continue
@@ -81,6 +84,9 @@ $ sc restack
 Rebasing 'extend-data-file' onto 'add-data-file'...
 
 Conflict while rebasing 'extend-data-file' onto 'add-data-file'.
+
+Fix conflicts in the following files:
+  data.txt
 
 Then:
   1. Stage your changes:     git add <files>
