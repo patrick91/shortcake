@@ -23,6 +23,7 @@ class RestackResult:
     restacked_branches: list[str]
     conflict_branch: str | None = None
     current_branch_untracked: bool = False
+    skipped_empty_commits: bool = False
 
 
 def _needs_restack(repo: Repo, branch: str, parent: str) -> bool:
@@ -135,21 +136,11 @@ def _plan_restack(repo: Repo, branches: list[str]) -> list[RestackStep]:
     return plan
 
 
-@dataclass
-class RebaseResult:
-    """Result of a rebase operation."""
-
-    success: bool
-    error_output: str = ""
-
-
-def _rebase_branch(repo: Repo, branch: str, onto: str, merge_base: str) -> RebaseResult:
+def _rebase_branch(
+    repo: Repo, branch: str, onto: str, merge_base: str
+) -> git.RebaseResult:
     """Rebase branch onto target."""
-    try:
-        git.rebase_branch(repo, branch, onto, merge_base)
-        return RebaseResult(success=True)
-    except git.RebaseFailure as e:
-        return RebaseResult(success=False, error_output=str(e))
+    return git.rebase_branch(repo, branch, onto, merge_base)
 
 
 def _get_conflict_files(repo: Repo | str) -> list[str]:
@@ -253,6 +244,7 @@ def _restack(repo: Repo, dry_run: bool = False) -> RestackResult:
 
     # Execute restack
     restacked = []
+    any_skipped_empty = False
     for i, step in enumerate(plan):
         state.current_index = i
         state.save(repo)
@@ -271,6 +263,10 @@ def _restack(repo: Repo, dry_run: bool = False) -> RestackResult:
                 restacked_branches=restacked, conflict_branch=step.branch
             )
 
+        if result.skipped_empty:
+            typer.echo(f"  Skipped empty commit (changes already in '{step.onto}')")
+            any_skipped_empty = True
+
         restacked.append(step.branch)
 
     # Success - clean up state
@@ -279,7 +275,9 @@ def _restack(repo: Repo, dry_run: bool = False) -> RestackResult:
     # Return to original branch
     git.switch_branch(repo, current_branch, force=True)
 
-    return RestackResult(restacked_branches=restacked)
+    return RestackResult(
+        restacked_branches=restacked, skipped_empty_commits=any_skipped_empty
+    )
 
 
 # Typer command

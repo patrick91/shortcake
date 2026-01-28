@@ -39,6 +39,7 @@ from shortcake._git._core import (
 from shortcake._git._rebase import (
     DULWICH_REBASE_ERRORS,
     RebaseFailure,
+    RebaseResult,
     cherry_pick,
     get_cherry_pick_head,
     get_merge_base,
@@ -69,6 +70,7 @@ __all__ = [
     "DULWICH_IO_ERRORS",
     "DULWICH_REBASE_ERRORS",
     "RebaseFailure",
+    "RebaseResult",
     "amend_commit",
     "amend_commit_message",
     "branch_exists",
