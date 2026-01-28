@@ -1,8 +1,12 @@
 """Tests for PR cache module."""
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dulwich.repo import Repo
+
+if TYPE_CHECKING:
+    import pytest
 
 from shortcake._cache import (
     CachedPRInfo,
@@ -120,3 +124,22 @@ def test_cached_pr_info_defaults() -> None:
     assert info.number == 123
     assert info.is_draft is False
     assert info.is_merged is False
+
+
+def test_save_cache_oserror(temp_repo: Repo, monkeypatch: "pytest.MonkeyPatch") -> None:
+    """Test save_pr_cache handles OSError gracefully."""
+    import builtins
+
+    original_open = builtins.open
+
+    def mock_open(*args, **kwargs):
+        if "w" in args[1] if len(args) > 1 else kwargs.get("mode", ""):
+            raise OSError("Permission denied")
+        return original_open(*args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", mock_open)
+
+    # Should not raise, just silently fail
+    cache = {"feature": CachedPRInfo(number=123)}
+    save_pr_cache(temp_repo, cache)
+    # No assertion needed - we just verify it doesn't raise

@@ -712,4 +712,45 @@ def test_render_pr_without_url_no_link() -> None:
 
     # Should have plain #123, not link markup
     assert "#123" in output
+
+
+def test_render_parent_with_multiple_children_and_pr() -> None:
+    """Test rendering parent node with multiple children and PR info."""
+    # Create parent with multiple children - the parent has PR info
+    child_a = BranchNode(name="feature-a")
+    child_b = BranchNode(name="feature-b")
+    root = BranchNode(
+        name="main",
+        is_current=True,
+        children=[child_a, child_b],
+        pr_number=99,
+        pr_is_draft=True,
+        pr_url="https://github.com/owner/repo/pull/99",
+    )
+
+    tree = StackTree(roots=[root])
+    output = tree.render()
+
+    # Should show PR info on the parent node with merge connector
+    assert "#99" in output
+    assert "[dim]draft[/]" in output
+    assert "main" in output
+
+
+def test_render_parent_with_multiple_children_pr_merged() -> None:
+    """Test parent with multiple children shows merged status."""
+    child_a = BranchNode(name="feature-a")
+    child_b = BranchNode(name="feature-b")
+    root = BranchNode(
+        name="main",
+        children=[child_a, child_b],
+        pr_number=100,
+        pr_is_merged=True,
+    )
+
+    tree = StackTree(roots=[root])
+    output = tree.render()
+
+    assert "#100" in output
+    assert "[dim]merged[/]" in output
     assert "[link=" not in output

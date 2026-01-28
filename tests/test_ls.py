@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import httpx
 import respx
@@ -661,3 +662,276 @@ def test_ls_with_cached_merged_pr(repo_with_feature: Repo) -> None:
 
     output = tree.render()
     assert "#789 [dim]merged[/]" in output
+
+
+def test_ls_cli_with_cache(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """Test ls CLI shows PR info from cache."""
+    import os
+
+    from typer.testing import CliRunner
+
+    from shortcake._cache import update_pr_cache
+    from shortcake.cli import app
+
+    _adopt(repo_with_feature)
+    update_pr_cache(
+        repo_with_feature,
+        "feature",
+        123,
+        is_draft=False,
+        url="https://github.com/owner/repo/pull/123",
+    )
+
+    os.chdir(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(app, ["ls"])
+
+    assert result.exit_code == 0
+    assert "#123" in result.output
+    assert "feature" in result.output
+
+
+def test_ls_cli_no_tracked_branches(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test ls CLI with no tracked branches."""
+    import os
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    os.chdir(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(app, ["ls"])
+
+    assert result.exit_code == 0
+    assert "No tracked branches found" in result.output
+
+
+@respx.mock
+def test_ls_cli_refresh_no_token(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Test ls --refresh when no GitHub token is available."""
+    import os
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    _adopt(repo_with_feature)
+
+    # Remove token environment variables
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    # Mock gh auth token to return nothing
+    monkeypatch.setattr(
+        "shortcake._github.subprocess.run",
+        lambda *args, **kwargs: type(
+            "Result", (), {"returncode": 1, "stdout": "", "stderr": ""}
+        )(),
+    )
+
+    # Mock gh config file to not exist
+    monkeypatch.setattr("shortcake._github.Path.exists", lambda self: False)
+
+    os.chdir(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(app, ["ls", "--refresh"])
+
+    assert result.exit_code == 0
+    assert "Cannot fetch PR info" in result.output
+
+
+@respx.mock
+def test_ls_cli_refresh_fetches_pr(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Test ls --refresh fetches PR info from GitHub."""
+    import os
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    _adopt(repo_with_feature)
+
+    # Set token
+    monkeypatch.setenv("GH_TOKEN", "fake-token")
+
+    # Set up remote
+    config = repo_with_feature.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Mock API with full PR response
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 456,
+                    "head": {"ref": "feature"},
+                    "base": {"ref": "main"},
+                    "draft": True,
+                    "html_url": "https://github.com/owner/repo/pull/456",
+                    "title": "Test PR",
+                    "body": "Test body",
+                    "state": "open",
+                }
+            ],
+        )
+    )
+
+    os.chdir(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(app, ["ls", "--refresh"])
+
+    assert result.exit_code == 0
+
+
+@respx.mock
+def test_fetch_pr_info_updates_cache(repo_with_feature: Repo, monkeypatch: Any) -> None:
+    """Test _fetch_pr_info updates the PR cache."""
+    from shortcake._cache import load_pr_cache
+    from shortcake.commands.ls import _fetch_pr_info
+
+    _adopt(repo_with_feature)
+
+    # Set token
+    monkeypatch.setenv("GH_TOKEN", "fake-token")
+
+    # Set up remote
+    config = repo_with_feature.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Mock API with full PR response
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 789,
+                    "head": {"ref": "feature"},
+                    "base": {"ref": "main"},
+                    "draft": False,
+                    "html_url": "https://github.com/owner/repo/pull/789",
+                    "title": "Test PR",
+                    "body": "Test body",
+                    "state": "open",
+                }
+            ],
+        )
+    )
+
+    tree, tracked = _build_tree(repo_with_feature)
+    _fetch_pr_info(repo_with_feature, tree, tracked)
+
+    # Check cache was updated
+    cache = load_pr_cache(repo_with_feature)
+    assert "feature" in cache
+    assert cache["feature"].number == 789
+
+
+@respx.mock
+def test_fetch_pr_info_merged_pr(repo_with_feature: Repo, monkeypatch: Any) -> None:
+    """Test _fetch_pr_info handles merged PRs."""
+    from shortcake._cache import load_pr_cache
+    from shortcake.commands.ls import _fetch_pr_info
+
+    _adopt(repo_with_feature)
+
+    # Set token
+    monkeypatch.setenv("GH_TOKEN", "fake-token")
+
+    # Set up remote
+    config = repo_with_feature.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Mock API - returns no PRs on first call (open), merged PR on second call (closed)
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        side_effect=[
+            httpx.Response(200, json=[]),  # First call: open PRs (empty)
+            httpx.Response(  # Second call: closed PRs
+                200,
+                json=[
+                    {
+                        "number": 555,
+                        "merged_at": "2024-01-15T10:30:00Z",
+                    }
+                ],
+            ),
+        ]
+    )
+
+    tree, tracked = _build_tree(repo_with_feature)
+    _fetch_pr_info(repo_with_feature, tree, tracked)
+
+    # Check cache was updated with merged PR
+    cache = load_pr_cache(repo_with_feature)
+    assert "feature" in cache
+    assert cache["feature"].number == 555
+    assert cache["feature"].is_merged is True
+
+
+@respx.mock
+def test_fetch_pr_info_api_error(repo_with_feature: Repo, monkeypatch: Any) -> None:
+    """Test _fetch_pr_info handles API errors gracefully."""
+    from shortcake.commands.ls import _fetch_pr_info
+
+    _adopt(repo_with_feature)
+
+    # Set token
+    monkeypatch.setenv("GH_TOKEN", "fake-token")
+
+    # Set up remote
+    config = repo_with_feature.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Mock API - error
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(500, json={"message": "Server error"})
+    )
+
+    tree, tracked = _build_tree(repo_with_feature)
+
+    # Should not raise
+    _fetch_pr_info(repo_with_feature, tree, tracked)
+
+
+def test_fetch_pr_info_client_exception(
+    repo_with_feature: Repo, monkeypatch: Any
+) -> None:
+    """Test _fetch_pr_info handles GitHubClient exceptions gracefully."""
+    from shortcake.commands.ls import _fetch_pr_info
+
+    _adopt(repo_with_feature)
+
+    # Set token
+    monkeypatch.setenv("GH_TOKEN", "fake-token")
+
+    # Set up remote
+    config = repo_with_feature.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Mock GitHubClient to raise an exception when creating client
+    class MockGitHubClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            raise Exception("Connection failed")
+
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("shortcake.commands.ls.GitHubClient", MockGitHubClient)
+
+    tree, tracked = _build_tree(repo_with_feature)
+
+    # Should not raise - outer exception handler catches this
+    _fetch_pr_info(repo_with_feature, tree, tracked)
