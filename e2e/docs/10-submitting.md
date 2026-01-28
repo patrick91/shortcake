@@ -127,6 +127,76 @@ Pushing 'feature-b'...
 Created 1 PR(s)
 ```
 
+## Viewing PR Info in Branch List
+
+After submitting, `sc ls` shows PR numbers for each branch:
+
+```console
+$ # reset-to-main
+$ # github: reset-state
+$ echo "feature code" > feature.py && git add feature.py
+$ sc create -m "Add feature"
+Created branch 'add-feature' from 'main'
+$ sc submit
+Pushing 'add-feature'...
+  Creating PR for 'add-feature'...
+  Created PR #1: https://github.com/<OWNER>/<REPO>/pull/1
+
+Created 1 PR(s)
+$ sc ls
+◉ add-feature #1 (current)
+│
+◯ main
+```
+
+For draft PRs, the draft status is shown:
+
+```console
+$ # reset-to-main
+$ # github: reset-state
+$ echo "draft code" > draft.py && git add draft.py
+$ sc create -m "Draft feature"
+Created branch 'draft-feature' from 'main'
+$ sc submit --draft
+Pushing 'draft-feature'...
+  Creating PR for 'draft-feature'...
+  Created PR #1: https://github.com/<OWNER>/<REPO>/pull/1
+
+Created 1 PR(s)
+$ sc ls
+◉ draft-feature #1 draft (current)
+│
+◯ main
+```
+
+For stacked PRs, all PR numbers are shown:
+
+```console
+$ # reset-to-main
+$ # github: reset-state
+$ echo "feature a" > a.py && git add a.py
+$ sc create -m "Feature A"
+Created branch 'feature-a' from 'main'
+$ echo "feature b" > b.py && git add b.py
+$ sc create -m "Feature B"
+Created branch 'feature-b' from 'feature-a'
+$ sc submit
+Pushing 'feature-a'...
+  Creating PR for 'feature-a'...
+  Created PR #1: https://github.com/<OWNER>/<REPO>/pull/1
+Pushing 'feature-b'...
+  Creating PR for 'feature-b'...
+  Created PR #2: https://github.com/<OWNER>/<REPO>/pull/2
+
+Created 2 PR(s)
+$ sc ls
+◉ feature-b #2 (current)
+│
+◯ feature-a #1
+│
+◯ main
+```
+
 ## Stack Visualization
 
 When submitting a stack, each PR description is automatically updated with a stack visualization:

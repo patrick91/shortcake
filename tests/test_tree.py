@@ -548,3 +548,209 @@ def test_build_branch_with_none_parent() -> None:
     assert len(tree.roots) == 1
     assert tree.roots[0].name == "feature"
     assert tree.roots[0].warning is None  # No warning for None parent
+
+
+# PR info rendering tests
+
+
+def test_branch_node_pr_defaults() -> None:
+    """Test BranchNode PR field defaults."""
+    node = BranchNode(name="test")
+    assert node.pr_number is None
+    assert node.pr_is_draft is False
+    assert node.pr_is_merged is False
+
+
+def test_render_pr_number() -> None:
+    """Test rendering branch with PR number."""
+    child = BranchNode(name="feature", is_current=True, pr_number=123)
+    root = BranchNode(name="main", children=[child])
+
+    tree = StackTree(roots=[root])
+    output = tree.render()
+
+    assert "◉ feature #123 (current)" in output
+
+
+def test_render_pr_draft() -> None:
+    """Test rendering branch with draft PR."""
+    child = BranchNode(name="feature", is_current=True, pr_number=456, pr_is_draft=True)
+    root = BranchNode(name="main", children=[child])
+
+    tree = StackTree(roots=[root])
+    output = tree.render()
+
+    assert "◉ feature #456 [dim]draft[/] (current)" in output
+
+
+def test_render_pr_merged() -> None:
+    """Test rendering branch with merged PR."""
+    child = BranchNode(
+        name="feature", is_current=False, pr_number=789, pr_is_merged=True
+    )
+    root = BranchNode(name="main", is_current=True, children=[child])
+
+    tree = StackTree(roots=[root])
+    output = tree.render()
+
+    assert "◯ feature #789 [dim]merged[/]" in output
+
+
+def test_snapshot_pr_number() -> None:
+    """Snapshot test for branch with PR number."""
+    branches = {"feature": "main"}
+    all_branches = {"main", "feature"}
+    current = "feature"
+
+    tree = StackTree.build(branches, all_branches, current)
+    # Manually set PR info after build
+    for root in tree.roots:
+        for child in root.children:
+            if child.name == "feature":
+                child.pr_number = 123
+
+    assert tree.render() == snapshot("""\
+◉ feature #123 (current)
+│
+◯ main\
+""")
+
+
+def test_snapshot_pr_draft() -> None:
+    """Snapshot test for branch with draft PR."""
+    branches = {"feature": "main"}
+    all_branches = {"main", "feature"}
+    current = "feature"
+
+    tree = StackTree.build(branches, all_branches, current)
+    for root in tree.roots:
+        for child in root.children:
+            if child.name == "feature":
+                child.pr_number = 456
+                child.pr_is_draft = True
+
+    assert tree.render() == snapshot("""\
+◉ feature #456 [dim]draft[/] (current)
+│
+◯ main\
+""")
+
+
+def test_snapshot_pr_merged() -> None:
+    """Snapshot test for branch with merged PR."""
+    branches = {"feature": "main"}
+    all_branches = {"main", "feature"}
+    current = "main"
+
+    tree = StackTree.build(branches, all_branches, current)
+    for root in tree.roots:
+        for child in root.children:
+            if child.name == "feature":
+                child.pr_number = 789
+                child.pr_is_merged = True
+
+    assert tree.render() == snapshot("""\
+◯ feature #789 [dim]merged[/]
+│
+◉ main (current)\
+""")
+
+
+def test_snapshot_pr_with_multiple_children() -> None:
+    """Snapshot test for PR info with merge connector (multiple children)."""
+    branches = {
+        "feature-a": "main",
+        "feature-b": "main",
+    }
+    all_branches = {"main", "feature-a", "feature-b"}
+    current = "main"
+
+    tree = StackTree.build(branches, all_branches, current)
+    # Set PR info on children
+    for root in tree.roots:
+        for child in root.children:
+            if child.name == "feature-a":
+                child.pr_number = 100
+            elif child.name == "feature-b":
+                child.pr_number = 101
+                child.pr_is_draft = True
+
+    assert tree.render() == snapshot("""\
+◯ feature-a #100
+│
+│ ◯ feature-b #101 [dim]draft[/]
+│ │
+◉─┘ main (current)\
+""")
+
+
+def test_render_pr_with_rich_link() -> None:
+    """Test rendering branch with Rich link markup when URL is set."""
+    child = BranchNode(
+        name="feature",
+        is_current=True,
+        pr_number=123,
+        pr_url="https://github.com/owner/repo/pull/123",
+    )
+    root = BranchNode(name="main", children=[child])
+
+    tree = StackTree(roots=[root])
+    output = tree.render()
+
+    assert (
+        "[cyan underline link=https://github.com/owner/repo/pull/123]#123[/]" in output
+    )
+
+
+def test_render_pr_without_url_no_link() -> None:
+    """Test rendering branch without URL doesn't have link markup."""
+    child = BranchNode(name="feature", is_current=True, pr_number=123)
+    root = BranchNode(name="main", children=[child])
+
+    tree = StackTree(roots=[root])
+    output = tree.render()
+
+    # Should have plain #123, not link markup
+    assert "#123" in output
+
+
+def test_render_parent_with_multiple_children_and_pr() -> None:
+    """Test rendering parent node with multiple children and PR info."""
+    # Create parent with multiple children - the parent has PR info
+    child_a = BranchNode(name="feature-a")
+    child_b = BranchNode(name="feature-b")
+    root = BranchNode(
+        name="main",
+        is_current=True,
+        children=[child_a, child_b],
+        pr_number=99,
+        pr_is_draft=True,
+        pr_url="https://github.com/owner/repo/pull/99",
+    )
+
+    tree = StackTree(roots=[root])
+    output = tree.render()
+
+    # Should show PR info on the parent node with merge connector
+    assert "#99" in output
+    assert "[dim]draft[/]" in output
+    assert "main" in output
+
+
+def test_render_parent_with_multiple_children_pr_merged() -> None:
+    """Test parent with multiple children shows merged status."""
+    child_a = BranchNode(name="feature-a")
+    child_b = BranchNode(name="feature-b")
+    root = BranchNode(
+        name="main",
+        children=[child_a, child_b],
+        pr_number=100,
+        pr_is_merged=True,
+    )
+
+    tree = StackTree(roots=[root])
+    output = tree.render()
+
+    assert "#100" in output
+    assert "[dim]merged[/]" in output
+    assert "[link=" not in output
