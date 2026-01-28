@@ -1,40 +1,54 @@
 # Empty Commits During Restack
 
 When commits become empty during rebase (changes already in target),
-shortcake automatically skips them and continues with the restack.
+shortcake automatically skips them while preserving other changes in the stack.
 
-## Setup
+## Setup: Create a Stack
 
-Create a feature branch from main:
+Create a stack with two branches, each adding a different file:
 
 ```console
-$ echo "base content" > file.txt && git add file.txt
-$ sc create -m "Add feature"
-Created branch 'add-feature' from 'main'
+$ echo "feature A" > file_a.txt && git add file_a.txt
+$ sc create -m "Add feature A"
+Created branch 'add-feature-a' from 'main'
+$ echo "feature B" > file_b.txt && git add file_b.txt
+$ sc create -m "Add feature B"
+Created branch 'add-feature-b' from 'add-feature-a'
 ```
 
-## Duplicate Change in Main
+## Simulate Squash Merge of First Branch
 
-Simulate a squash merge that brings the same changes to main:
+Main receives the same changes as the first branch (simulating a squash merge):
 
 ```console
 $ git checkout main
-$ echo "base content" > file.txt && git add file.txt && git commit -m "squash merge"
-[main a6d96fc] squash merge
+$ echo "feature A" > file_a.txt && git add file_a.txt && git commit -m "squash merge feature A"
+[main 24b6c2a] squash merge feature A
  1 file changed, 1 insertion(+)
- create mode 100644 file.txt
+ create mode 100644 file_a.txt
 ```
 
-## Restack Skips Empty
+## Restack Skips Empty, Preserves Other Changes
 
-When restacking, the commit becomes empty because main already has the changes:
+When restacking, the first branch's commit becomes empty but the second branch's changes are preserved:
 
 ```console
-$ git checkout add-feature
+$ git checkout add-feature-b
 $ sc restack
-Rebasing 'add-feature' onto 'main'...
+Rebasing 'add-feature-a' onto 'main'...
   Skipped empty commit (changes already in 'main')
-Restacked 1 branch(es) successfully.
+Rebasing 'add-feature-b' onto 'add-feature-a'...
+Restacked 2 branch(es) successfully.
 ```
 
-The branch is now up to date with main, and the empty commit was automatically skipped.
+## Verify Changes Preserved
+
+The second branch still has its unique changes (file_b.txt):
+
+```console
+$ git diff main --stat
+ file_b.txt | 1 +
+ 1 file changed, 1 insertion(+)
+$ cat file_b.txt
+feature B
+```
