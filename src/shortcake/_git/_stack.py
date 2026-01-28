@@ -84,10 +84,14 @@ def get_branch_parent_info(
                 other_branch_heads.add(get_branch_head(repo, other_branch))
 
     # Walk commits from branch head
+    # Limit depth to avoid walking entire history for untracked branches.
+    # Tracked branches should have trailer in first commit, but we allow
+    # some depth for edge cases (rebased commits, etc).
+    max_depth = 100
     seen: set[bytes] = set()
     to_visit = [branch_head]
 
-    while to_visit:
+    while to_visit and len(seen) < max_depth:
         commit_sha = to_visit.pop(0)
 
         if commit_sha in seen:
