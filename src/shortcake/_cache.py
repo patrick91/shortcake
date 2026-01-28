@@ -19,7 +19,7 @@ class CachedPRInfo:
 
 def _get_cache_path(repo: Repo) -> Path:
     """Get path to PR cache file."""
-    git_dir = Path(repo.path)
+    git_dir = Path(repo.controldir())
     cache_dir = git_dir / "shortcake"
     cache_dir.mkdir(exist_ok=True)
     return cache_dir / "pr-cache.json"
