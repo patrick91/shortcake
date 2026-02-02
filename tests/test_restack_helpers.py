@@ -431,9 +431,10 @@ def test_continue_rebase_in_progress(
     )
     state.save(repo_with_stack)
 
-    # Mock _continue_rebase to return False (simulating ongoing conflict)
+    # Mock _continue_rebase to return conflict result (simulating ongoing conflict)
     monkeypatch.setattr(
-        "shortcake.commands.continue_._continue_rebase", lambda repo: False
+        "shortcake.commands.continue_._continue_rebase",
+        lambda repo: git.RebaseResult(success=False, conflict=True),
     )
 
     # Continue should try to continue the rebase and fail
@@ -449,21 +450,21 @@ def test_continue_rebase_function(temp_repo: Repo) -> None:
     # When no rebase is in progress, git rebase --continue returns failure.
     # This is expected since _continue_rebase is only called after
     # checking is_rebase_in_progress.
-    result = _continue_rebase(temp_repo.path)
-    assert result is False  # No rebase in progress = failure
+    result = _continue_rebase(temp_repo)
+    assert result.success is False  # No rebase in progress = failure
 
 
 def test_continue_rebase_function_error(
     temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test _continue_rebase returns False when git returns non-zero."""
+    """Test _continue_rebase returns failure when git returns non-zero."""
 
     def mock_run(*args, **kwargs):
         return subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="")
 
     monkeypatch.setattr("subprocess.run", mock_run)
-    result = _continue_rebase(temp_repo.path)
-    assert result is False
+    result = _continue_rebase(temp_repo)
+    assert result.success is False
 
 
 def test_cli_restack_dry_run_shows_branches(

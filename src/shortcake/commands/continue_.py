@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from pathlib import Path
 
 import typer
 from dulwich.repo import Repo
@@ -8,7 +7,6 @@ from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
 from shortcake._restack_state import RestackState
 from shortcake.commands.restack import (
-    RebaseResult,
     _get_conflict_files,
     _needs_restack,
     _rebase_branch,
@@ -29,59 +27,15 @@ class ContinueResult:
 
     restacked_branches: list[str]
     conflict_branch: str | None = None
+    skipped_empty: bool = False
 
 
-def _apply_remaining_commits(
-    repo: Repo, branch: str, merge_base: str, original_head: str, after: bytes | None
-) -> RebaseResult:
-    """Apply remaining commits after a conflict resolution.
+def _continue_rebase(repo: Repo) -> git.RebaseResult:
+    """Continue an in-progress git rebase.
 
-    After resolving a cherry-pick conflict, this function applies any commits
-    that come after the resolved commit in the rebase sequence.
-
-    Args:
-        repo: The git repository
-        branch: Branch being rebased (for error context)
-        merge_base: The merge base SHA (commits after this are rebased)
-        original_head: Original branch head before rebase started
-        after: The commit that was just resolved (skip commits up to and including this)
-
-    Returns:
-        RebaseResult indicating success or failure with error details
+    Returns RebaseResult indicating success, conflict, or skipped empty commits.
     """
-    try:
-        commits = git.get_rebase_commits(repo, original_head, merge_base)
-    except (ValueError, KeyError) as e:
-        return RebaseResult(success=False, error_output=str(e))
-    start_index = 0
-    if after is not None:
-        try:
-            start_index = commits.index(after) + 1
-        except ValueError:
-            # Resolved commit not in list - state may be inconsistent.
-            # Start from beginning; already-applied commits will fail safely.
-            typer.echo(
-                "Warning: Could not find resolved commit in rebase sequence. "
-                "Attempting to continue from the beginning.",
-                err=True,
-            )
-            start_index = 0
-    for commit in commits[start_index:]:
-        try:
-            git.cherry_pick(repo, commit)
-        except git.RebaseFailure as e:
-            return RebaseResult(success=False, error_output=str(e))
-    return RebaseResult(success=True)
-
-
-def _continue_rebase(repo: Repo | str | Path) -> bool:
-    """Continue an in-progress rebase. Returns True if successful."""
-    try:
-        repo_obj = repo if isinstance(repo, Repo) else git.open_repo(Path(repo))
-        git.rebase_continue(repo_obj)
-        return True
-    except git.RebaseFailure:
-        return False
+    return git.rebase_continue(repo)
 
 
 def _continue(repo: Repo) -> ContinueResult:
@@ -96,42 +50,33 @@ def _continue(repo: Repo) -> ContinueResult:
 
     # Check if current step still needs to be done (user may have manually aborted)
     current_step = state.plan[state.current_index]
+    any_skipped_empty = False
 
     # If git rebase is in progress, continue it first
     if git.is_rebase_in_progress(repo):
         typer.echo("Continuing rebase...")
-        conflict_head = git.get_cherry_pick_head(repo)
-        if not _continue_rebase(repo):
-            # Still has conflicts
-            conflict_files = _get_conflict_files(repo)
-            _show_conflict_message(
-                current_step.branch, current_step.onto, conflict_files
-            )
+        result = _continue_rebase(repo)
+
+        if not result.success:
+            # Still has conflicts or other error
+            if result.conflict:
+                conflict_files = _get_conflict_files(repo)
+                _show_conflict_message(
+                    current_step.branch, current_step.onto, conflict_files
+                )
+            else:
+                _show_rebase_error(
+                    current_step.branch, current_step.onto, result.error_output
+                )
             return ContinueResult(
                 restacked_branches=[], conflict_branch=current_step.branch
             )
 
-        if conflict_head is not None:
-            result = _apply_remaining_commits(
-                repo,
-                current_step.branch,
-                current_step.merge_base,
-                state.original_refs[current_step.branch],
-                conflict_head,
+        if result.skipped_empty:
+            typer.echo(
+                f"  Skipped empty commit (changes already in '{current_step.onto}')"
             )
-            if not result.success:
-                if git.is_rebase_in_progress(repo):
-                    conflict_files = _get_conflict_files(repo)
-                    _show_conflict_message(
-                        current_step.branch, current_step.onto, conflict_files
-                    )
-                else:
-                    _show_rebase_error(
-                        current_step.branch, current_step.onto, result.error_output
-                    )
-                return ContinueResult(
-                    restacked_branches=[], conflict_branch=current_step.branch
-                )
+            any_skipped_empty = True
 
     # Check if parent branch still exists (may have been deleted during resolution)
     if not git.branch_exists(repo, current_step.onto):
@@ -179,6 +124,10 @@ def _continue(repo: Repo) -> ContinueResult:
                 restacked_branches=restacked, conflict_branch=step.branch
             )
 
+        if result.skipped_empty:
+            typer.echo(f"  Skipped empty commit (changes already in '{step.onto}')")
+            any_skipped_empty = True
+
         restacked.append(step.branch)
 
     # Success - clean up state
@@ -187,7 +136,7 @@ def _continue(repo: Repo) -> ContinueResult:
     # Return to original branch
     git.switch_branch(repo, state.original_branch, force=True)
 
-    return ContinueResult(restacked_branches=restacked)
+    return ContinueResult(restacked_branches=restacked, skipped_empty=any_skipped_empty)
 
 
 # Typer command - named continue_cmd to avoid shadowing builtin
