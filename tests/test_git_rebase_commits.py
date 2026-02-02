@@ -73,3 +73,12 @@ def test_get_rebase_commits_rejects_merge_commit(temp_repo: Repo) -> None:
 
     with pytest.raises(ValueError, match="Non-linear history"):
         git.get_rebase_commits(temp_repo, merge.id, head_sha)
+
+
+def test_get_rebase_commits_linear_chain(repo_with_feature: Repo) -> None:
+    """Test get_rebase_commits returns commits walking the parent chain."""
+    head_sha = repo_with_feature.refs[b"refs/heads/feature"]
+    merge_base = repo_with_feature.refs[b"refs/heads/main"]
+    commits = git.get_rebase_commits(repo_with_feature, head_sha, merge_base)
+    assert len(commits) == 1
+    assert commits[0] == head_sha

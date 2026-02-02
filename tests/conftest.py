@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,18 @@ def switch_branch(repo: Repo, branch: str) -> None:
 def temp_repo(tmp_path: Path) -> Repo:
     """Create a temporary git repo with initial commit on main."""
     repo = Repo.init(tmp_path, default_branch=b"main")
+
+    # Configure git user identity for git CLI operations (needed for rebase)
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=tmp_path,
+        check=True,
+    )
 
     # Create initial commit
     readme = tmp_path / "README.md"

@@ -78,9 +78,7 @@ def test_restack_non_conflict_failure(
 
     # Mock _rebase_branch to fail without creating a conflict state
     def mock_rebase(repo_path, branch, onto, merge_base):
-        from shortcake.commands.restack import RebaseResult
-
-        return RebaseResult(success=False, error_output="fatal: some error")
+        return git.RebaseResult(success=False, error_output="fatal: some error")
 
     monkeypatch.setattr("shortcake.commands.restack._rebase_branch", mock_rebase)
 
@@ -128,13 +126,11 @@ def test_continue_non_conflict_failure_in_remaining(
     call_count = [0]
 
     def mock_rebase(repo_path, branch, onto, merge_base):
-        from shortcake.commands.restack import RebaseResult
-
         call_count[0] += 1
         if call_count[0] == 1:
             # First call (branch_b) - fail without conflict
-            return RebaseResult(success=False, error_output="fatal: some error")
-        return RebaseResult(success=True, error_output="")
+            return git.RebaseResult(success=False, error_output="fatal: some error")
+        return git.RebaseResult(success=True, error_output="")
 
     monkeypatch.setattr("shortcake.commands.continue_._rebase_branch", mock_rebase)
 

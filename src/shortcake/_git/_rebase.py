@@ -1,6 +1,8 @@
 """Rebase operations."""
 
+import os
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from dulwich import porcelain
@@ -9,11 +11,20 @@ from dulwich.repo import Repo
 
 from shortcake._git._core import (
     DULWICH_ERRORS,
-    get_branch_head,
     switch_branch,
 )
 
 DULWICH_REBASE_ERRORS = (*DULWICH_ERRORS, OSError, ValueError, KeyError)
+
+
+@dataclass
+class RebaseResult:
+    """Result of a rebase operation."""
+
+    success: bool
+    conflict: bool = False
+    skipped_empty: bool = False
+    error_output: str = ""
 
 
 class RebaseFailure(RuntimeError):
@@ -98,37 +109,92 @@ def get_cherry_pick_head(repo: Repo) -> bytes | None:
     return data or None
 
 
-def rebase_branch(repo: Repo, branch: str, onto: str, upstream: str) -> None:
-    """Rebase branch onto target using dulwich cherry-pick."""
-    try:
-        head = get_branch_head(repo, branch)
-        commits = get_rebase_commits(repo, head, upstream)
-        switch_branch(repo, branch)
-        porcelain.reset(repo, mode="hard", treeish=onto)
-        for commit in commits:
-            porcelain.cherry_pick(repo, commit)
-    except DULWICH_REBASE_ERRORS as e:
-        raise RebaseFailure(str(e) or "Dulwich rebase failed") from e
+def rebase_branch(repo: Repo, branch: str, onto: str, upstream: str) -> RebaseResult:
+    """Rebase branch onto target using git rebase --onto.
+
+    Uses native git rebase with --empty=drop to properly handle empty commits.
+
+    Args:
+        repo: The git repository
+        branch: Branch to rebase
+        onto: Target to rebase onto
+        upstream: The upstream reference (commits after this are rebased)
+
+    Returns:
+        RebaseResult indicating success, conflict, or skipped empty commits
+    """
+    switch_branch(repo, branch)
+
+    result = subprocess.run(
+        ["git", "rebase", "--onto", onto, upstream, branch, "--empty=drop"],
+        cwd=repo.path,
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode == 0:
+        # Check if any commits were dropped due to being empty
+        skipped = "dropping" in result.stderr.lower()
+        return RebaseResult(success=True, skipped_empty=skipped)
+
+    if is_rebase_in_progress(repo):
+        return RebaseResult(success=False, conflict=True, error_output=result.stderr)
+
+    return RebaseResult(success=False, error_output=result.stderr)
 
 
-def rebase_continue(repo: Repo) -> None:
-    """Continue an in-progress cherry-pick rebase."""
-    try:
-        if get_cherry_pick_head(repo) is not None:
-            porcelain.cherry_pick(repo, None, continue_=True)
-        else:
-            raise RebaseFailure("No cherry-pick in progress.")
-    except DULWICH_REBASE_ERRORS as e:
-        raise RebaseFailure(str(e) or "Rebase continue failed") from e
+def rebase_continue(repo: Repo) -> RebaseResult:
+    """Continue an in-progress git rebase.
+
+    Handles the case where conflict resolution results in no changes
+    (empty commit) by automatically skipping.
+
+    Returns:
+        RebaseResult indicating success, conflict, or skipped empty commits
+    """
+    result = subprocess.run(
+        ["git", "rebase", "--continue"],
+        cwd=repo.path,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "GIT_EDITOR": "true"},
+    )
+
+    if result.returncode == 0:
+        return RebaseResult(success=True)
+
+    # Empty commit after conflict resolution - auto skip
+    combined_output = result.stderr + result.stdout
+    if "nothing to commit" in combined_output:
+        skip_result = subprocess.run(
+            ["git", "rebase", "--skip"],
+            cwd=repo.path,
+            capture_output=True,
+            text=True,
+        )
+        if skip_result.returncode == 0:
+            return RebaseResult(success=True, skipped_empty=True)
+        # Skip failed, check if still in rebase
+        if is_rebase_in_progress(repo):
+            return RebaseResult(
+                success=False, conflict=True, error_output=skip_result.stderr
+            )
+        return RebaseResult(success=False, error_output=skip_result.stderr)
+
+    if is_rebase_in_progress(repo):
+        return RebaseResult(success=False, conflict=True, error_output=result.stderr)
+
+    return RebaseResult(success=False, error_output=result.stderr)
 
 
 def rebase_abort(repo: Repo) -> None:
-    """Abort an in-progress rebase (either git native or dulwich cherry-pick)."""
+    """Abort an in-progress rebase or cherry-pick."""
     import shutil
 
     git_dir = Path(repo.controldir())
     rebase_merge = git_dir / "rebase-merge"
     rebase_apply = git_dir / "rebase-apply"
+    cherry_pick_head = git_dir / "CHERRY_PICK_HEAD"
 
     # Check for git's native rebase state first
     if rebase_merge.exists() or rebase_apply.exists():
@@ -147,14 +213,18 @@ def rebase_abort(repo: Repo) -> None:
                 shutil.rmtree(rebase_apply)
         return
 
-    # Fall back to dulwich cherry-pick abort
-    try:
-        if get_cherry_pick_head(repo) is not None:
-            porcelain.cherry_pick(repo, None, abort=True)
-        else:  # pragma: no cover
-            raise RebaseFailure("No rebase in progress.")
-    except DULWICH_REBASE_ERRORS as e:
-        raise RebaseFailure(str(e) or "Rebase abort failed") from e
+    # Fall back to cherry-pick abort via git CLI
+    if cherry_pick_head.exists():
+        result = subprocess.run(
+            ["git", "cherry-pick", "--abort"],
+            cwd=repo.path,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RebaseFailure(result.stderr or "Cherry-pick abort failed")
+    else:  # pragma: no cover
+        raise RebaseFailure("No rebase in progress.")
 
 
 def cherry_pick(repo: Repo, commit: bytes) -> None:
