@@ -150,3 +150,133 @@ def test_continue_remaining_branch_conflict(
     assert rebase_called[0], f"Mock not called. Output: {result.output}"
     # Should show conflict message with the file
     assert "Conflict" in result.output or "file.txt" in result.output
+
+
+def test_continue_rebase_in_progress_error_not_conflict(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test continue shows rebase error when continue_rebase fails without conflict."""
+    from shortcake.commands import continue_ as continue_module
+
+    monkeypatch.chdir(tmp_path)
+
+    branch_a_sha = git.get_branch_head(repo_with_stack, "branch_a")
+    main_sha = git.get_branch_head(repo_with_stack, "main")
+
+    state = RestackState(
+        version=STATE_VERSION,
+        original_branch="branch_a",
+        plan=[
+            RestackStep(branch="branch_a", onto="main", merge_base=main_sha.decode()),
+        ],
+        current_index=0,
+        original_refs={"branch_a": branch_a_sha.decode()},
+    )
+    state.save(repo_with_stack)
+
+    monkeypatch.setattr(continue_module.git, "is_rebase_in_progress", lambda repo: True)
+    monkeypatch.setattr(
+        continue_module,
+        "_continue_rebase",
+        lambda repo: git.RebaseResult(success=False, error_output="fatal: some error"),
+    )
+
+    result = runner.invoke(app, ["continue"])
+
+    assert result.exit_code == 1
+    assert "Failed to rebase" in result.output
+
+
+def test_continue_rebase_in_progress_skipped_empty(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test continue reports skipped empty after successful continue_rebase."""
+    from shortcake.commands import continue_ as continue_module
+
+    monkeypatch.chdir(tmp_path)
+
+    branch_a_sha = git.get_branch_head(repo_with_stack, "branch_a")
+    main_sha = git.get_branch_head(repo_with_stack, "main")
+
+    state = RestackState(
+        version=STATE_VERSION,
+        original_branch="branch_a",
+        plan=[
+            RestackStep(branch="branch_a", onto="main", merge_base=main_sha.decode()),
+        ],
+        current_index=0,
+        original_refs={"branch_a": branch_a_sha.decode()},
+    )
+    state.save(repo_with_stack)
+
+    # Return True only on first call (the initial check at line 56)
+    is_rebase_calls = [0]
+
+    def mock_is_rebase(repo):
+        is_rebase_calls[0] += 1
+        return is_rebase_calls[0] == 1
+
+    monkeypatch.setattr(continue_module.git, "is_rebase_in_progress", mock_is_rebase)
+    monkeypatch.setattr(
+        continue_module,
+        "_continue_rebase",
+        lambda repo: git.RebaseResult(success=True, skipped_empty=True),
+    )
+
+    result = runner.invoke(app, ["continue"])
+
+    assert result.exit_code == 0
+    assert "Skipped empty commit" in result.output
+    assert "Restack completed successfully" in result.output
+
+
+def test_continue_remaining_branch_skipped_empty(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test continue reports skipped empty for remaining branches."""
+    from shortcake.commands import continue_ as continue_module
+
+    monkeypatch.chdir(tmp_path)
+
+    branch_a_sha = git.get_branch_head(repo_with_stack, "branch_a")
+    branch_b_sha = git.get_branch_head(repo_with_stack, "branch_b")
+    main_sha = git.get_branch_head(repo_with_stack, "main")
+
+    state = RestackState(
+        version=STATE_VERSION,
+        original_branch="branch_b",
+        plan=[
+            RestackStep(branch="branch_a", onto="main", merge_base=main_sha.decode()),
+            RestackStep(
+                branch="branch_b",
+                onto="branch_a",
+                merge_base=branch_a_sha.decode(),
+            ),
+        ],
+        current_index=0,
+        original_refs={
+            "branch_a": branch_a_sha.decode(),
+            "branch_b": branch_b_sha.decode(),
+        },
+    )
+    state.save(repo_with_stack)
+
+    monkeypatch.setattr(
+        continue_module.git, "is_rebase_in_progress", lambda repo: False
+    )
+    monkeypatch.setattr(
+        continue_module, "_needs_restack", lambda repo, branch, onto: False
+    )
+    monkeypatch.setattr(
+        continue_module,
+        "_rebase_branch",
+        lambda repo, branch, onto, merge_base: git.RebaseResult(
+            success=True, skipped_empty=True
+        ),
+    )
+
+    result = runner.invoke(app, ["continue"])
+
+    assert result.exit_code == 0
+    assert "Skipped empty commit" in result.output
+    assert "Restack completed successfully" in result.output
