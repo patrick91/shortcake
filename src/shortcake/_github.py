@@ -274,7 +274,9 @@ class GitHubClient:
             response.raise_for_status()
 
 
-def push_branch(repo: Repo, branch: str, force_with_lease: bool = True) -> bool:
+def push_branch(
+    repo: Repo, branch: str, force_with_lease: bool = True
+) -> tuple[bool, str | None]:
     """Push a branch to origin with force-with-lease semantics.
 
     Uses dulwich for pushing. When force_with_lease is True, checks that
@@ -288,7 +290,8 @@ def push_branch(repo: Repo, branch: str, force_with_lease: bool = True) -> bool:
             work that someone else has pushed.
 
     Returns:
-        True on success, False on failure (including lease check failure).
+        Tuple of (success, error_message). On success, error_message is None.
+        On failure, error_message contains the reason for failure.
     """
     try:
         if force_with_lease:
@@ -315,7 +318,10 @@ def push_branch(repo: Repo, branch: str, force_with_lease: bool = True) -> bool:
                     actual_remote_sha is not None
                     and actual_remote_sha != expected_remote_sha
                 ):
-                    return False
+                    return (
+                        False,
+                        "remote has diverged (use --force to overwrite)",
+                    )
 
         # Proceed with force push (suppress server messages)
         porcelain.push(
@@ -326,6 +332,6 @@ def push_branch(repo: Repo, branch: str, force_with_lease: bool = True) -> bool:
             outstream=io.BytesIO(),
             errstream=io.BytesIO(),
         )
-        return True
-    except Exception:  # pragma: no cover
-        return False
+        return (True, None)
+    except Exception as e:  # pragma: no cover
+        return (False, str(e))
