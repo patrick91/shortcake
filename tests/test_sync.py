@@ -174,6 +174,62 @@ def test_is_squash_merged_with_extra_trunk_changes(
     assert is_squash_merged(temp_repo, "feature", "main")
 
 
+def test_is_squash_merged_with_extra_trunk_deletions(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test squash-merge detection when trunk has additional deletions.
+
+    Regression test: when trunk has file deletions that the branch doesn't have,
+    the code must handle TreeChange objects where change.new is None.
+    Also tests that branch deletions are properly tracked.
+    """
+    # Create two files on main - one will be deleted by branch, one by trunk only
+    branch_deletes = tmp_path / "branch_deletes.txt"
+    branch_deletes.write_text("branch will delete this")
+    trunk_deletes = tmp_path / "trunk_deletes.txt"
+    trunk_deletes.write_text("only trunk will delete this")
+    porcelain.add(temp_repo, paths=[str(branch_deletes), str(trunk_deletes)])
+    porcelain.commit(temp_repo, message=b"Add files to delete later")
+
+    # Create feature branch from main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    # On feature: delete one file AND add a new file
+    branch_deletes.unlink()
+    porcelain.rm(temp_repo, paths=[str(branch_deletes)])
+    feature_file = tmp_path / "feature.txt"
+    feature_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(feature_file)])
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: delete file and add feature")
+    porcelain.commit(temp_repo, message=message.encode())
+
+    # Simulate squash merge with extra deletion:
+    # Apply same changes as branch (delete + add) AND delete another file
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.reset(temp_repo, "hard")
+    # Delete same file branch deleted
+    branch_deletes.unlink()
+    porcelain.rm(temp_repo, paths=[str(branch_deletes)])
+    # Add same file branch added
+    feature_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(feature_file)])
+    # Delete extra file that branch didn't touch
+    trunk_deletes.unlink()
+    porcelain.rm(temp_repo, paths=[str(trunk_deletes)])
+    porcelain.commit(
+        temp_repo, message=b"squash: apply branch changes plus extra delete"
+    )
+
+    # Branch is NOT an ancestor of main (not regular merged)
+    assert not is_merged(temp_repo, "feature", "main")
+    # But tree changes ARE in main (squash merged)
+    # Trunk has extra deletion, but all of feature's changes are present
+    assert is_squash_merged(temp_repo, "feature", "main")
+
+
 def test_is_squash_merged_no_common_ancestor(tmp_path: Path) -> None:
     """Test is_squash_merged returns False when branches have no common ancestor."""
     from dulwich.repo import Repo
