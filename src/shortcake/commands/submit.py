@@ -209,6 +209,7 @@ def _submit(
     repo: Repo,
     dry_run: bool = False,
     draft: bool = False,
+    force: bool = False,
 ) -> SubmitResult:
     """Submit current stack to GitHub.
 
@@ -218,6 +219,7 @@ def _submit(
         repo: The repository.
         dry_run: If True, preview without making changes.
         draft: If True, create draft PRs.
+        force: If True, force push without lease check.
 
     Returns:
         SubmitResult with per-branch results.
@@ -371,8 +373,9 @@ def _submit(
 
             # Push branch
             typer.echo(f"Pushing '{plan.branch}'...")
-            if not push_branch(repo, plan.branch):  # pragma: no cover
-                branch_result.error = "Failed to push"
+            success, error = push_branch(repo, plan.branch, force_with_lease=not force)
+            if not success:
+                branch_result.error = error or "Failed to push"
                 result.branch_results.append(branch_result)
                 continue
 
@@ -539,12 +542,16 @@ def submit(
         bool,
         typer.Option("--dry-run", "-n", help="Preview without making changes"),
     ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Force push, ignoring remote changes"),
+    ] = False,
 ) -> None:
     """Push branches and create/update GitHub PRs for the current stack."""
     repo = git.open_repo()
 
     try:
-        result = _submit(repo, dry_run=dry_run, draft=draft)
+        result = _submit(repo, dry_run=dry_run, draft=draft, force=force)
     except SubmitError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from None

@@ -761,9 +761,10 @@ def test_push_branch_new_branch_no_tracking_ref(temp_repo: Repo) -> None:
     temp_repo.refs[b"refs/heads/feature"] = temp_repo.head()
 
     with patch("shortcake._github.porcelain.push") as mock_push:
-        result = push_branch(temp_repo, "feature")
+        success, error = push_branch(temp_repo, "feature")
 
-    assert result is True
+    assert success is True
+    assert error is None
     mock_push.assert_called_once()
 
 
@@ -787,9 +788,10 @@ def test_push_branch_force_with_lease_passes(temp_repo: Repo) -> None:
         patch("shortcake._github.porcelain.ls_remote", return_value=mock_ls_result),
         patch("shortcake._github.porcelain.push") as mock_push,
     ):
-        result = push_branch(temp_repo, "feature")
+        success, error = push_branch(temp_repo, "feature")
 
-    assert result is True
+    assert success is True
+    assert error is None
     mock_push.assert_called_once()
 
 
@@ -813,9 +815,10 @@ def test_push_branch_force_with_lease_fails(temp_repo: Repo) -> None:
         patch("shortcake._github.porcelain.ls_remote", return_value=mock_ls_result),
         patch("shortcake._github.porcelain.push") as mock_push,
     ):
-        result = push_branch(temp_repo, "feature")
+        success, error = push_branch(temp_repo, "feature")
 
-    assert result is False
+    assert success is False
+    assert error == "remote has diverged (use --force to overwrite)"
     mock_push.assert_not_called()
 
 
@@ -862,8 +865,9 @@ def test_push_branch_disabled_force_with_lease(temp_repo: Repo) -> None:
         patch("shortcake._github.porcelain.ls_remote") as mock_ls,
         patch("shortcake._github.porcelain.push") as mock_push,
     ):
-        result = push_branch(temp_repo, "feature", force_with_lease=False)
+        success, error = push_branch(temp_repo, "feature", force_with_lease=False)
 
-    assert result is True
+    assert success is True
+    assert error is None
     mock_ls.assert_not_called()  # Should not check remote
     mock_push.assert_called_once()
