@@ -415,7 +415,7 @@ def test_submit_creates_pr(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         result = _submit(repo_with_tracked_feature)
@@ -423,6 +423,36 @@ def test_submit_creates_pr(
     assert len(result.branch_results) == 1
     assert result.branch_results[0].action == PRAction.CREATED
     assert result.branch_results[0].pr_number == 123
+
+
+def test_submit_push_failure(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit handles push failure with error message."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch(
+            "shortcake.commands.submit.push_branch",
+            return_value=(False, "remote has diverged (use --force to overwrite)"),
+        ),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = _submit(repo_with_tracked_feature)
+
+    assert len(result.branch_results) == 1
+    assert result.branch_results[0].action == PRAction.SKIPPED
+    assert (
+        result.branch_results[0].error
+        == "remote has diverged (use --force to overwrite)"
+    )
 
 
 def test_submit_updates_existing_pr(
@@ -448,7 +478,7 @@ def test_submit_updates_existing_pr(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         result = _submit(repo_with_tracked_feature)
@@ -492,7 +522,7 @@ def test_submit_updates_pr_base(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         _submit(repo_with_stack)
@@ -521,7 +551,7 @@ def test_submit_handles_auth_error(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
         pytest.raises(SubmitError, match="authentication failed"),
     ):
@@ -547,7 +577,7 @@ def test_submit_handles_rate_limit(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
         pytest.raises(SubmitError, match="rate limit"),
     ):
@@ -573,7 +603,7 @@ def test_submit_handles_403_non_rate_limit(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
         pytest.raises(SubmitError, match="forbidden"),
     ):
@@ -612,7 +642,7 @@ def test_submit_planning_non_fatal_http_error_falls_back(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         result = _submit(repo_with_tracked_feature)
@@ -647,7 +677,7 @@ def test_submit_planning_network_error_falls_back(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         result = _submit(repo_with_tracked_feature)
@@ -679,7 +709,7 @@ def test_submit_handles_401_during_create_pr(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
         pytest.raises(SubmitError, match="authentication failed"),
     ):
@@ -709,7 +739,7 @@ def test_submit_handles_rate_limit_during_create_pr(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
         pytest.raises(SubmitError, match="rate limit"),
     ):
@@ -739,7 +769,7 @@ def test_submit_handles_403_forbidden_during_create_pr(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
         pytest.raises(SubmitError, match="forbidden"),
     ):
@@ -767,7 +797,7 @@ def test_submit_handles_422_error(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         result = _submit(repo_with_tracked_feature)
@@ -798,7 +828,7 @@ def test_submit_handles_other_http_error(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         result = _submit(repo_with_tracked_feature)
@@ -832,7 +862,7 @@ def test_submit_draft_pr(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         _submit(repo_with_tracked_feature, draft=True)
@@ -876,7 +906,7 @@ def test_submit_stack_body_update_error_non_fatal(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         # Should not raise - body update error is non-fatal
@@ -955,7 +985,7 @@ def test_cli_submit_success(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         result = runner.invoke(app, ["submit"])
@@ -986,7 +1016,7 @@ def test_cli_submit_with_errors(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         result = runner.invoke(app, ["submit"])
@@ -1021,7 +1051,7 @@ def test_cli_submit_draft_flag(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         result = runner.invoke(app, ["submit", "--draft"])
@@ -1056,7 +1086,7 @@ def test_cli_submit_updated_only(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         result = runner.invoke(app, ["submit"])
@@ -1081,7 +1111,7 @@ def test_submit_skips_branch_with_merged_pr(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         result = _submit(repo_with_tracked_feature)
@@ -1107,7 +1137,7 @@ def test_submit_handles_network_error(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         result = _submit(repo_with_tracked_feature)
@@ -1131,7 +1161,7 @@ def test_submit_handles_timeout_error(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         result = _submit(repo_with_tracked_feature)
@@ -1173,7 +1203,7 @@ def test_submit_stack_body_update_network_error_non_fatal(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         # Should not raise - network error during body update is non-fatal
@@ -1217,7 +1247,7 @@ def test_submit_merged_pr_lookup_error_ignored(
     mock_client.__exit__ = MagicMock(return_value=False)
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         # Should complete - errors looking up merged PRs are ignored
@@ -1270,7 +1300,7 @@ Original description."""
     mock_client.update_pr.side_effect = track_update
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         _submit(repo_with_tracked_feature)
@@ -1329,7 +1359,7 @@ Description."""
     mock_client.update_pr.side_effect = track_update
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         _submit(repo_with_tracked_feature)
@@ -1390,7 +1420,7 @@ Description."""
     mock_client.update_pr.side_effect = track_update
 
     with (
-        patch("shortcake.commands.submit.push_branch", return_value=True),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         _submit(repo_with_tracked_feature)
