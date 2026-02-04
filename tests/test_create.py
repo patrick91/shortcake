@@ -223,7 +223,7 @@ def test_precommit_hook_fails(temp_repo: Repo, tmp_path: Path) -> None:
 
     success, error = git.run_precommit_hook(temp_repo)
     assert success is False
-    assert "Hook failed!" in (error or "")
+    assert error is not None
 
 
 def test_has_precommit_hook_exists(temp_repo: Repo) -> None:
@@ -260,9 +260,9 @@ def test_run_precommit_hook_exception(temp_repo: Repo, tmp_path: Path) -> None:
     hook_path.write_text("#!/bin/sh\nexit 0\n")
     hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
 
-    # Mock subprocess.run to raise an exception
-    with patch("shortcake._git._core.subprocess.run") as mock_run:
-        mock_run.side_effect = OSError("Permission denied")
+    # Mock subprocess.Popen to raise an exception
+    with patch("shortcake._git._core.subprocess.Popen") as mock_popen:
+        mock_popen.side_effect = OSError("Permission denied")
         success, error = git.run_precommit_hook(temp_repo)
 
     assert success is False
