@@ -102,12 +102,17 @@ def modify(
 
     # Check for staged changes and run hooks if needed
     has_staged = git.has_staged_changes(repo)
+    hooks_already_ran = False
     if not no_verify and has_staged and git.has_precommit_hook(repo):
         typer.echo("Running pre-commit hooks...")
         success, error = git.run_precommit_hook(repo)
         if not success:
             typer.echo(f"Error: Pre-commit hook failed:\n{error}", err=True)
             raise typer.Exit(1)
+        hooks_already_ran = True
+
+    # Skip hooks in commit if we already ran them manually (to avoid duplicate output)
+    skip_hooks = no_verify or hooks_already_ran
 
     if edit:
         # Amend with editor
@@ -120,7 +125,7 @@ def modify(
             typer.echo("Aborted: empty message.", err=True)
             raise typer.Exit(1)
 
-        _modify_amend(repo, new_message, no_verify=no_verify)
+        _modify_amend(repo, new_message, no_verify=skip_hooks)
         typer.echo(f"Amended commit on '{current}'")
     elif message:
         # New commit with -m message
@@ -128,7 +133,7 @@ def modify(
             typer.echo("Error: No staged changes to commit", err=True)
             raise typer.Exit(1)
 
-        _modify_with_new_commit(repo, message, no_verify=no_verify)
+        _modify_with_new_commit(repo, message, no_verify=skip_hooks)
         typer.echo(f"Created commit on '{current}'")
     else:
         # Amend with staged changes, keep existing message
@@ -141,5 +146,5 @@ def modify(
         # Strip and reapply trailers to preserve them
         clean_message = strip_trailers(old_message)
 
-        _modify_amend(repo, clean_message, no_verify=no_verify)
+        _modify_amend(repo, clean_message, no_verify=skip_hooks)
         typer.echo(f"Amended commit on '{current}'")
