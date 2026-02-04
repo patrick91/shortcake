@@ -206,7 +206,7 @@ def has_precommit_hook(repo: Repo) -> bool:
 
 
 def run_precommit_hook(repo: Repo) -> tuple[bool, str | None]:
-    """Run pre-commit hook. Returns (success, error_message)."""
+    """Run pre-commit hook with real-time output. Returns (success, error_message)."""
     hook_path = Path(repo.controldir()) / "hooks" / "pre-commit"
     if not hook_path.exists():
         return True, None
@@ -214,18 +214,20 @@ def run_precommit_hook(repo: Repo) -> tuple[bool, str | None]:
     staged_files = get_staged_files(repo)
 
     try:
-        result = subprocess.run(
+        # Don't capture stdout - let it flow directly to terminal
+        # This preserves ANSI escape sequences and carriage returns
+        process = subprocess.Popen(
             [str(hook_path)],
-            capture_output=True,
-            text=True,
-            cwd=repo.path,  # Working directory
+            cwd=repo.path,
         )
+        process.wait()
+
         # Re-stage files modified by hooks (e.g., formatters)
         if staged_files:
             porcelain.add(repo, paths=staged_files)
 
-        if result.returncode != 0:
-            return False, result.stdout or result.stderr
+        if process.returncode != 0:
+            return False, "Pre-commit hook failed"
         return True, None
     except DULWICH_HOOK_ERRORS as e:
         return False, str(e)
