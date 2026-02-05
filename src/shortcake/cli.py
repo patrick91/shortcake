@@ -10,6 +10,7 @@ from shortcake.commands.down import down
 from shortcake.commands.log import log
 from shortcake.commands.ls import ls
 from shortcake.commands.modify import modify
+from shortcake.commands.pull import pull
 from shortcake.commands.restack import restack
 from shortcake.commands.submit import submit
 from shortcake.commands.sync import sync
@@ -36,6 +37,7 @@ app.command()(down)
 app.command()(log)
 app.command()(ls)
 app.command()(modify)
+app.command()(pull)
 app.command()(restack)
 app.command()(submit)
 app.command()(sync)
