@@ -1648,3 +1648,76 @@ Description."""
     # The parent-branch should now have its PR number from GitHub lookup
     assert "#789" in updated_body
     assert "`parent-branch`" in updated_body
+
+
+def test_submit_historical_branch_lookup_error_ignored(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that errors when looking up historical branches are ignored.
+
+    When a GitHub API error occurs while looking up a historical branch,
+    the error should be silently ignored and the branch shown as (no PR).
+    """
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    # Existing PR body has a branch without a PR number
+    existing_body = f"""{STACK_START_MARKER}
+## Stack
+
+- (no PR) (`parent-branch`)
+- **#456** (`feature`) <-- this PR
+{STACK_END_MARKER}
+
+Description."""
+
+    mock_feature_pr = PRInfo(
+        number=456,
+        url="https://github.com/owner/repo/pull/456",
+        base="main",
+        title="feat: add feature",
+        body=existing_body,
+        state="open",
+        is_draft=False,
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+
+    # Return PR for feature, raise error for parent-branch
+    def get_pr_side_effect(branch: str):
+        if branch == "feature":
+            return mock_feature_pr
+        if branch == "parent-branch":
+            # Simulate GitHub API error
+            raise httpx.HTTPStatusError(
+                "Not found",
+                request=MagicMock(),
+                response=MagicMock(status_code=404),
+            )
+        return None
+
+    mock_client.get_pr_for_branch.side_effect = get_pr_side_effect
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    updated_bodies: list[str] = []
+
+    def track_update(pr_num: int, body: str | None = None, base: str | None = None):
+        if body is not None:
+            updated_bodies.append(body)
+
+    mock_client.update_pr.side_effect = track_update
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        # Should not raise - error is silently ignored
+        _submit(repo_with_tracked_feature)
+
+    # Verify submit completed and parent-branch shows (no PR)
+    assert len(updated_bodies) > 0
+    updated_body = updated_bodies[-1]
+    assert "`parent-branch`" in updated_body
+    assert "(no PR)" in updated_body
