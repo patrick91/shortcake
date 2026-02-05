@@ -263,3 +263,38 @@ def test_modify_with_new_commit_without_trailer(
     new_message = git.get_commit_message(temp_repo, result.new_sha)
     trailers = Trailers.from_message(new_message)
     assert trailers.parent_branch is None
+
+
+# CLI tests
+
+
+def test_modify_cli_with_precommit_hook_success(
+    repo_with_feature: Repo, tmp_path: Path
+) -> None:
+    """Test modify CLI runs pre-commit hooks successfully."""
+    import os
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    _adopt(repo_with_feature)
+
+    # Create a passing pre-commit hook
+    hooks_dir = Path(repo_with_feature.controldir()) / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_path = hooks_dir / "pre-commit"
+    hook_path.write_text("#!/bin/sh\nexit 0\n")
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
+
+    # Stage a file to trigger hook
+    new_file = tmp_path / "test.txt"
+    new_file.write_text("content")
+    porcelain.add(repo_with_feature, paths=[str(new_file)])
+
+    runner = CliRunner()
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["modify", "-m", "feat: with hooks"])
+
+    assert result.exit_code == 0
+    assert "Running pre-commit hooks" in result.output
