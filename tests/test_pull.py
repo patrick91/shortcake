@@ -14,6 +14,7 @@ from shortcake.commands.pull import (
     PullError,
     _fetch,
     _pull,
+    _reset_to_remote,
     pull,  # noqa: F401 - imported for coverage
 )
 
@@ -80,8 +81,10 @@ def test_pull_fast_forward(repo_with_feature: Repo, tmp_path: Path) -> None:
     assert repo_with_feature.refs[b"refs/heads/feature"] == remote_sha
 
 
-def test_pull_diverged_error(repo_with_feature: Repo, tmp_path: Path) -> None:
-    """Test pull error when branches have diverged without --rebase."""
+def test_pull_diverged_resets_by_default(
+    repo_with_feature: Repo, tmp_path: Path
+) -> None:
+    """Test pull resets to remote by default when branches have diverged."""
     # Set up origin remote
     config = repo_with_feature.get_config()
     config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
@@ -97,7 +100,6 @@ def test_pull_diverged_error(repo_with_feature: Repo, tmp_path: Path) -> None:
     porcelain.commit(repo_with_feature, message=b"Local change")
 
     # Create a different commit on "remote" (from original position)
-    # First reset to original, make a commit, then save as remote ref
     repo_with_feature.refs[b"refs/heads/temp"] = original_sha
     switch_branch(repo_with_feature, "temp")
     remote_file = tmp_path / "remote_change.txt"
@@ -111,14 +113,16 @@ def test_pull_diverged_error(repo_with_feature: Repo, tmp_path: Path) -> None:
 
     # Switch back to feature
     switch_branch(repo_with_feature, "feature")
-    # Delete temp branch
     del repo_with_feature.refs[b"refs/heads/temp"]
 
-    with (
-        patch("shortcake.commands.pull._fetch", return_value=True),
-        pytest.raises(PullError, match="has diverged"),
-    ):
-        _pull(repo_with_feature)
+    with patch("shortcake.commands.pull._fetch", return_value=True):
+        result = _pull(repo_with_feature)
+
+    assert result.branch == "feature"
+    assert result.reset is True
+    assert result.new_sha is not None
+    # Verify local branch was reset to remote
+    assert repo_with_feature.refs[b"refs/heads/feature"] == remote_sha
 
 
 def test_pull_diverged_with_rebase(repo_with_feature: Repo, tmp_path: Path) -> None:
@@ -298,7 +302,7 @@ def test_pull_fetch_fails(repo_with_feature: Repo) -> None:
         _pull(repo_with_feature)
 
 
-# Tests for _fetch helper
+# Tests for helper functions
 
 
 def test_fetch_no_remote(temp_repo: Repo) -> None:
@@ -335,6 +339,32 @@ def test_fetch_failure(repo_with_feature: Repo) -> None:
         result = _fetch(repo_with_feature)
 
     assert result is False
+
+
+def test_reset_to_remote(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """Test _reset_to_remote resets branch to remote."""
+    # Set up origin remote
+    config = repo_with_feature.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Save original sha
+    original_sha = repo_with_feature.refs[b"refs/heads/feature"]
+
+    # Create a local commit
+    local_file = tmp_path / "local_change.txt"
+    local_file.write_text("local change")
+    porcelain.add(repo_with_feature, paths=[str(local_file)])
+    porcelain.commit(repo_with_feature, message=b"Local change")
+
+    # Set up remote ref at original position (simulating remote is behind)
+    repo_with_feature.refs[b"refs/remotes/origin/feature"] = original_sha
+
+    # Reset to remote
+    _reset_to_remote(repo_with_feature, "feature")
+
+    # Verify branch was reset
+    assert repo_with_feature.refs[b"refs/heads/feature"] == original_sha
 
 
 # CLI tests
@@ -399,6 +429,46 @@ def test_pull_cli_error(temp_repo: Repo, tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "Error:" in result.output
+
+
+def test_pull_cli_reset_by_default(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """Test pull CLI resets to remote by default when diverged."""
+    # Set up origin remote
+    config = repo_with_feature.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Save original sha
+    original_sha = repo_with_feature.refs[b"refs/heads/feature"]
+
+    # Create a local commit
+    local_file = tmp_path / "local_change.txt"
+    local_file.write_text("local change")
+    porcelain.add(repo_with_feature, paths=[str(local_file)])
+    porcelain.commit(repo_with_feature, message=b"Local change")
+
+    # Create a different commit on "remote" (from original position)
+    repo_with_feature.refs[b"refs/heads/temp"] = original_sha
+    switch_branch(repo_with_feature, "temp")
+    remote_file = tmp_path / "remote_change.txt"
+    remote_file.write_text("remote change")
+    porcelain.add(repo_with_feature, paths=[str(remote_file)])
+    porcelain.commit(repo_with_feature, message=b"Remote change")
+    remote_sha = repo_with_feature.refs[b"refs/heads/temp"]
+
+    # Set up remote ref
+    repo_with_feature.refs[b"refs/remotes/origin/feature"] = remote_sha
+
+    # Switch back to feature
+    switch_branch(repo_with_feature, "feature")
+    del repo_with_feature.refs[b"refs/heads/temp"]
+
+    os.chdir(tmp_path)
+    with patch("shortcake.commands.pull._fetch", return_value=True):
+        result = runner.invoke(app, ["pull"])
+
+    assert result.exit_code == 0
+    assert "Reset" in result.output
 
 
 def test_pull_cli_rebase_flag(repo_with_feature: Repo, tmp_path: Path) -> None:
