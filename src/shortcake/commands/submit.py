@@ -27,6 +27,11 @@ _MERGED_PR_PATTERN = re.compile(r"-\s*#(\d+)\s*\(merged\)\s*\(`([^`]+)`\)")
 _STACK_BRANCH_PATTERN = re.compile(
     r"-\s*(?:\*\*)?(?:#\d+|#\d+\s*\(merged\)|\(no PR\))(?:\*\*)?\s*\(`([^`]+)`\)"
 )
+# Matches any PR number with branch: - #42 (`branch`) or - **#42** (`branch`)
+# Excludes (no PR) and (merged) entries
+_ALL_PR_PATTERN = re.compile(
+    r"-\s*\*{0,2}#(\d+)\*{0,2}\s*\(`([^`]+)`\)(?:\s*<-- this PR)?"
+)
 
 
 def _parse_merged_prs_from_body(body: str) -> dict[str, int]:
@@ -55,6 +60,35 @@ def _parse_merged_prs_from_body(body: str) -> dict[str, int]:
         merged_prs[branch_name] = pr_number
 
     return merged_prs
+
+
+def _parse_all_prs_from_body(body: str) -> dict[str, int]:
+    """Extract all PR numbers from existing stack section.
+
+    Parses lines like:
+    - #42 (`branch-name`)
+    - **#42** (`branch-name`) <-- this PR
+
+    Args:
+        body: The PR body text.
+
+    Returns:
+        Dict mapping branch name to PR number.
+    """
+    if STACK_START_MARKER not in body or STACK_END_MARKER not in body:
+        return {}
+
+    start_idx = body.index(STACK_START_MARKER)
+    end_idx = body.index(STACK_END_MARKER) + len(STACK_END_MARKER)
+    stack_section = body[start_idx:end_idx]
+
+    all_prs: dict[str, int] = {}
+    for match in _ALL_PR_PATTERN.finditer(stack_section):
+        pr_number = int(match.group(1))
+        branch_name = match.group(2)
+        all_prs[branch_name] = pr_number
+
+    return all_prs
 
 
 def _parse_stack_order_from_body(body: str) -> list[str]:
@@ -327,9 +361,10 @@ def _submit(
                     BranchPlan(branch=branch, action=PRAction.CREATED, parent=parent)
                 )
 
-        # Collect historical merged PRs and stack order from existing open PRs
-        # This preserves merged PR info even after branches are deleted locally
+        # Collect historical PR info and stack order from existing open PRs
+        # This preserves PR info even after branches are deleted locally
         historical_merged_prs: dict[str, int] = {}
+        historical_prs: dict[str, int] = {}  # All PRs (including non-merged)
         historical_stack_order: list[str] = []
         for plan in plans:
             if plan.action == PRAction.UPDATED and plan.existing_pr_number:
@@ -342,6 +377,12 @@ def _submit(
                             if branch_name not in historical_merged_prs:
                                 historical_merged_prs[branch_name] = pr_num
 
+                        # Parse all PRs (including non-merged) from this PR's body
+                        parsed_all = _parse_all_prs_from_body(existing_pr.body)
+                        for branch_name, pr_num in parsed_all.items():
+                            if branch_name not in historical_prs:
+                                historical_prs[branch_name] = pr_num
+
                         # Parse stack order (only if we don't have one yet)
                         if not historical_stack_order:
                             historical_stack_order = _parse_stack_order_from_body(
@@ -350,6 +391,27 @@ def _submit(
                 except (httpx.HTTPStatusError, httpx.RequestError):
                     # Non-fatal: continue without historical data
                     pass
+
+        # For historical branches not in local repo, try to look up their PRs
+        # Skip branches that are already known to be merged
+        local_branches = set(stack_branches)
+        for hist_branch in historical_stack_order:
+            if (
+                hist_branch not in local_branches
+                and hist_branch not in pr_numbers
+                and hist_branch not in historical_merged_prs
+            ):
+                # First check if we already have the PR number from parsing
+                if hist_branch in historical_prs:
+                    pr_numbers[hist_branch] = historical_prs[hist_branch]
+                else:
+                    # Try to look up on GitHub
+                    try:
+                        existing_pr = gh.get_pr_for_branch(hist_branch)
+                        if existing_pr:
+                            pr_numbers[hist_branch] = existing_pr.number
+                    except (httpx.HTTPStatusError, httpx.RequestError):
+                        pass
 
         # Dry run: show plan and return
         if dry_run:

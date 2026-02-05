@@ -18,6 +18,7 @@ from shortcake.commands.submit import (
     SubmitError,
     _build_stack_section,
     _get_commit_title,
+    _parse_all_prs_from_body,
     _parse_merged_prs_from_body,
     _parse_stack_order_from_body,
     _submit,
@@ -122,6 +123,64 @@ def test_parse_merged_prs_from_body_no_merged() -> None:
 {STACK_END_MARKER}"""
 
     result = _parse_merged_prs_from_body(body)
+
+    assert result == {}
+
+
+def test_parse_all_prs_from_body_basic() -> None:
+    """Test parsing all PRs from a stack section."""
+    body = f"""{STACK_START_MARKER}
+## Stack
+
+- #100 (`top-branch`)
+- **#99** (`current-branch`) <-- this PR
+- #42 (`another-branch`)
+{STACK_END_MARKER}
+
+Some other content here."""
+
+    result = _parse_all_prs_from_body(body)
+
+    assert result == {"top-branch": 100, "current-branch": 99, "another-branch": 42}
+
+
+def test_parse_all_prs_from_body_excludes_no_pr() -> None:
+    """Test that (no PR) entries are excluded."""
+    body = f"""{STACK_START_MARKER}
+## Stack
+
+- #100 (`branch-a`)
+- (no PR) (`branch-b`)
+- **#99** (`branch-c`) <-- this PR
+{STACK_END_MARKER}"""
+
+    result = _parse_all_prs_from_body(body)
+
+    assert result == {"branch-a": 100, "branch-c": 99}
+    assert "branch-b" not in result
+
+
+def test_parse_all_prs_from_body_excludes_merged() -> None:
+    """Test that merged PRs are also captured (they have PR numbers)."""
+    body = f"""{STACK_START_MARKER}
+## Stack
+
+- #100 (`branch-a`)
+- #42 (merged) (`merged-branch`)
+{STACK_END_MARKER}"""
+
+    result = _parse_all_prs_from_body(body)
+
+    # Note: merged PRs are NOT captured by _parse_all_prs_from_body
+    # because the pattern doesn't match "(merged)" suffix
+    assert result == {"branch-a": 100}
+
+
+def test_parse_all_prs_from_body_no_markers() -> None:
+    """Test parsing all PRs when no stack section exists."""
+    body = "Just a regular PR body without stack section"
+
+    result = _parse_all_prs_from_body(body)
 
     assert result == {}
 
@@ -1442,3 +1501,150 @@ Description."""
     # Order should be preserved (feature at top, then merged branches below)
     assert feature_pos < first_merged_pos
     assert first_merged_pos < second_merged_pos
+
+
+def test_submit_preserves_historical_prs_from_existing_body(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that non-merged PRs from existing stack section are preserved.
+
+    This handles the case where a branch doesn't exist locally but its PR
+    number is already recorded in the stack visualization.
+    """
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    # Existing PR body has a branch with PR that doesn't exist locally
+    existing_body = f"""{STACK_START_MARKER}
+## Stack
+
+- #789 (`parent-branch`)
+- **#456** (`feature`) <-- this PR
+{STACK_END_MARKER}
+
+Description."""
+
+    mock_pr = PRInfo(
+        number=456,
+        url="https://github.com/owner/repo/pull/456",
+        base="main",
+        title="feat: add feature",
+        body=existing_body,
+        state="open",
+        is_draft=False,
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+
+    # Return the mock PR only for 'feature' branch, return None for 'parent-branch'
+    # to simulate that the branch doesn't exist on remote either
+    def get_pr_side_effect(branch: str):
+        if branch == "feature":
+            return mock_pr
+        return None  # 'parent-branch' doesn't have an open PR on GitHub
+
+    mock_client.get_pr_for_branch.side_effect = get_pr_side_effect
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    updated_bodies: list[str] = []
+
+    def track_update(pr_num: int, body: str | None = None, base: str | None = None):
+        if body is not None:
+            updated_bodies.append(body)
+
+    mock_client.update_pr.side_effect = track_update
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        _submit(repo_with_tracked_feature)
+
+    # Verify the PR number from the historical stack is preserved
+    assert len(updated_bodies) > 0
+    updated_body = updated_bodies[-1]
+
+    # The parent-branch PR number should be preserved from the existing body
+    assert "#789" in updated_body
+    assert "`parent-branch`" in updated_body
+
+
+def test_submit_looks_up_historical_branch_on_github(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that historical branches not in local repo are looked up on GitHub.
+
+    When a branch is in the stack visualization but not locally, and it's not
+    in the parsed PR numbers, we should try to look it up via GitHub API.
+    """
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    # Existing PR body has a branch without a PR number (maybe it was (no PR) before)
+    existing_body = f"""{STACK_START_MARKER}
+## Stack
+
+- (no PR) (`parent-branch`)
+- **#456** (`feature`) <-- this PR
+{STACK_END_MARKER}
+
+Description."""
+
+    mock_feature_pr = PRInfo(
+        number=456,
+        url="https://github.com/owner/repo/pull/456",
+        base="main",
+        title="feat: add feature",
+        body=existing_body,
+        state="open",
+        is_draft=False,
+    )
+
+    mock_parent_pr = PRInfo(
+        number=789,
+        url="https://github.com/owner/repo/pull/789",
+        base="main",
+        title="feat: parent feature",
+        body="",
+        state="open",
+        is_draft=False,
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+
+    # Return the appropriate PR for each branch
+    def get_pr_side_effect(branch: str):
+        if branch == "feature":
+            return mock_feature_pr
+        if branch == "parent-branch":
+            return mock_parent_pr  # Found on GitHub!
+        return None
+
+    mock_client.get_pr_for_branch.side_effect = get_pr_side_effect
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    updated_bodies: list[str] = []
+
+    def track_update(pr_num: int, body: str | None = None, base: str | None = None):
+        if body is not None:
+            updated_bodies.append(body)
+
+    mock_client.update_pr.side_effect = track_update
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        _submit(repo_with_tracked_feature)
+
+    # Verify that parent-branch was looked up on GitHub and its PR number included
+    assert len(updated_bodies) > 0
+    updated_body = updated_bodies[-1]
+
+    # The parent-branch should now have its PR number from GitHub lookup
+    assert "#789" in updated_body
+    assert "`parent-branch`" in updated_body
