@@ -80,8 +80,10 @@ def test_pull_fast_forward(repo_with_feature: Repo, tmp_path: Path) -> None:
     assert repo_with_feature.refs[b"refs/heads/feature"] == remote_sha
 
 
-def test_pull_diverged_error(repo_with_feature: Repo, tmp_path: Path) -> None:
-    """Test pull error when branches have diverged without --rebase."""
+def test_pull_diverged_error_with_no_rebase(
+    repo_with_feature: Repo, tmp_path: Path
+) -> None:
+    """Test pull error when branches have diverged with --no-rebase."""
     # Set up origin remote
     config = repo_with_feature.get_config()
     config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
@@ -114,11 +116,12 @@ def test_pull_diverged_error(repo_with_feature: Repo, tmp_path: Path) -> None:
     # Delete temp branch
     del repo_with_feature.refs[b"refs/heads/temp"]
 
+    # With rebase=False (--no-rebase), should fail
     with (
         patch("shortcake.commands.pull._fetch", return_value=True),
         pytest.raises(PullError, match="has diverged"),
     ):
-        _pull(repo_with_feature)
+        _pull(repo_with_feature, rebase=False)
 
 
 def test_pull_diverged_with_rebase(repo_with_feature: Repo, tmp_path: Path) -> None:
@@ -401,8 +404,8 @@ def test_pull_cli_error(temp_repo: Repo, tmp_path: Path) -> None:
     assert "Error:" in result.output
 
 
-def test_pull_cli_rebase_flag(repo_with_feature: Repo, tmp_path: Path) -> None:
-    """Test pull CLI with --rebase flag."""
+def test_pull_cli_rebase_by_default(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """Test pull CLI rebases by default when diverged."""
     import subprocess
 
     # Set up git user config
@@ -451,7 +454,8 @@ def test_pull_cli_rebase_flag(repo_with_feature: Repo, tmp_path: Path) -> None:
 
     os.chdir(tmp_path)
     with patch("shortcake.commands.pull._fetch", return_value=True):
-        result = runner.invoke(app, ["pull", "--rebase"])
+        # No --rebase flag needed - it's the default now
+        result = runner.invoke(app, ["pull"])
 
     assert result.exit_code == 0
     assert "Rebased" in result.output
