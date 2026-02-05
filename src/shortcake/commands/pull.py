@@ -151,20 +151,21 @@ def _pull(
 
 
 def pull(
-    rebase: Annotated[
+    no_rebase: Annotated[
         bool,
-        typer.Option("--rebase", "-r", help="Rebase if fast-forward not possible"),
+        typer.Option("--no-rebase", help="Fail instead of rebasing when diverged"),
     ] = False,
 ) -> None:
     """Update current branch from remote.
 
-    Fetches from origin and fast-forwards the current branch.
-    If the branch has diverged, use --rebase to rebase onto the remote.
+    Fetches from origin and updates the current branch. If the branch has
+    diverged (common after amending), automatically rebases local commits
+    onto the remote.
     """
     repo = git.open_repo()
 
     try:
-        result = _pull(repo, rebase=rebase)
+        result = _pull(repo, rebase=not no_rebase)
     except PullError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from None
