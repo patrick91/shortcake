@@ -28,24 +28,27 @@ Fast-forwarded 'feature' to abc1234
 ## Pull with Diverged Branches
 
 When branches have diverged (common after amending with `sc modify`), pull
-automatically rebases your local commits onto the remote:
+automatically resets to match the remote:
 
 ```console
 $ sc pull
-Rebased 'feature' onto origin/feature (def5678)
+Reset 'feature' to origin/feature (def5678)
 ```
 
 This is equivalent to:
 1. `git fetch origin`
-2. `git rebase origin/feature`
+2. `git reset --hard origin/feature`
 
-## Disable Auto-Rebase
+This is the expected behavior for stacked PR workflows where the remote is the
+source of truth after force-pushing amended commits.
 
-Use `--no-rebase` to fail instead of rebasing when diverged:
+## Preserve Local Commits with Rebase
+
+Use `--rebase` to keep local commits by rebasing them onto remote:
 
 ```console
-$ sc pull --no-rebase
-Error: Branch 'feature' has diverged from 'origin/feature'. Use --rebase to rebase onto the remote branch.
+$ sc pull --rebase
+Rebased 'feature' onto origin/feature (abc1234)
 ```
 
 ## Common Scenarios
@@ -72,7 +75,7 @@ You: sc pull  ← gets coworker's commits
 
 | Option | Description |
 |--------|-------------|
-| `--no-rebase` | Fail instead of rebasing when branches have diverged |
+| `--rebase`, `-r` | Rebase local commits onto remote instead of resetting |
 
 ## Error Cases
 

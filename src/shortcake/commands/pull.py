@@ -26,6 +26,7 @@ class PullResult:
     branch: str
     already_up_to_date: bool = False
     fast_forwarded: bool = False
+    reset: bool = False
     rebased: bool = False
     new_sha: str | None = None
 
@@ -44,6 +45,17 @@ def _fetch(repo: Repo) -> bool:
         return True
     except git.DULWICH_IO_ERRORS:
         return False
+
+
+def _reset_to_remote(repo: Repo, branch: str) -> None:
+    """Reset current branch to match origin/branch."""
+    subprocess.run(
+        ["git", "reset", "--hard", f"origin/{branch}"],
+        cwd=repo.path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
 
 
 def _rebase_onto_remote(repo: Repo, branch: str) -> bool:
@@ -69,7 +81,7 @@ def _pull(
 
     Args:
         repo: The git repository.
-        rebase: If True, rebase when fast-forward not possible.
+        rebase: If True, rebase local commits onto remote instead of resetting.
 
     Returns:
         PullResult with details of what was done.
@@ -126,46 +138,50 @@ def _pull(
             new_sha=remote_ref[:7].decode(),
         )
 
-    # Branches have diverged
-    if not rebase:
-        raise PullError(
-            f"Branch '{branch}' has diverged from 'origin/{branch}'. "
-            "Use --rebase to rebase onto the remote branch."
+    # Branches have diverged - either reset or rebase
+    if rebase:
+        # Rebase local commits onto remote
+        if not _rebase_onto_remote(repo, branch):
+            raise PullError(
+                "Conflict during rebase. Resolve conflicts and run "
+                "'git rebase --continue', or run 'sc abort' to abort."
+            )
+        return PullResult(
+            branch=branch,
+            rebased=True,
+            new_sha=git.get_branch_head(repo, branch)[:7].decode(),
         )
-
-    # Rebase onto remote
-    if not _rebase_onto_remote(repo, branch):
-        raise PullError(
-            "Conflict during rebase. Resolve conflicts and run "
-            "'git rebase --continue', or run 'sc abort' to abort."
+    else:
+        # Reset to remote (default - remote is source of truth)
+        _reset_to_remote(repo, branch)
+        return PullResult(
+            branch=branch,
+            reset=True,
+            new_sha=remote_ref[:7].decode(),
         )
-
-    return PullResult(
-        branch=branch,
-        rebased=True,
-        new_sha=git.get_branch_head(repo, branch)[:7].decode(),
-    )
 
 
 # Typer command
 
 
 def pull(
-    no_rebase: Annotated[
+    rebase: Annotated[
         bool,
-        typer.Option("--no-rebase", help="Fail instead of rebasing when diverged"),
+        typer.Option(
+            "--rebase", "-r", help="Rebase local commits onto remote instead of reset"
+        ),
     ] = False,
 ) -> None:
     """Update current branch from remote.
 
     Fetches from origin and updates the current branch. If the branch has
-    diverged (common after amending), automatically rebases local commits
-    onto the remote.
+    diverged (common after amending), resets to match remote. Use --rebase
+    to preserve local commits by rebasing them onto remote.
     """
     repo = git.open_repo()
 
     try:
-        result = _pull(repo, rebase=not no_rebase)
+        result = _pull(repo, rebase=rebase)
     except PullError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from None
@@ -174,6 +190,10 @@ def pull(
         typer.echo("Already up to date.")
     elif result.fast_forwarded:
         typer.echo(f"Fast-forwarded '{result.branch}' to {result.new_sha}")
+    elif result.reset:
+        typer.echo(
+            f"Reset '{result.branch}' to origin/{result.branch} ({result.new_sha})"
+        )
     elif result.rebased:
         typer.echo(
             f"Rebased '{result.branch}' onto origin/{result.branch} ({result.new_sha})"
