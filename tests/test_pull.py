@@ -178,6 +178,60 @@ def test_pull_diverged_with_rebase(repo_with_feature: Repo, tmp_path: Path) -> N
     assert result.new_sha is not None
 
 
+def test_pull_rebase_conflict(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """Test error when rebase has conflicts."""
+    import subprocess
+
+    # Set up git user config
+    subprocess.run(
+        ["git", "config", "user.email", "test@test.com"],
+        cwd=tmp_path,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "Test User"],
+        cwd=tmp_path,
+        check=True,
+    )
+
+    # Set up origin remote
+    config = repo_with_feature.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Save original sha
+    original_sha = repo_with_feature.refs[b"refs/heads/feature"]
+
+    # Create a local commit modifying the same file
+    conflict_file = tmp_path / "conflict.txt"
+    conflict_file.write_text("local version")
+    porcelain.add(repo_with_feature, paths=[str(conflict_file)])
+    porcelain.commit(repo_with_feature, message=b"Local change")
+    local_sha = repo_with_feature.refs[b"refs/heads/feature"]
+
+    # Create "remote" commit modifying the same file
+    repo_with_feature.refs[b"refs/heads/temp"] = original_sha
+    switch_branch(repo_with_feature, "temp")
+    conflict_file.write_text("remote version")
+    porcelain.add(repo_with_feature, paths=[str(conflict_file)])
+    porcelain.commit(repo_with_feature, message=b"Remote change")
+    remote_sha = repo_with_feature.refs[b"refs/heads/temp"]
+
+    # Set up remote ref
+    repo_with_feature.refs[b"refs/remotes/origin/feature"] = remote_sha
+
+    # Switch back to feature
+    repo_with_feature.refs[b"refs/heads/feature"] = local_sha
+    switch_branch(repo_with_feature, "feature")
+    del repo_with_feature.refs[b"refs/heads/temp"]
+
+    with (
+        patch("shortcake.commands.pull._fetch", return_value=True),
+        pytest.raises(PullError, match="Conflict during rebase"),
+    ):
+        _pull(repo_with_feature, rebase=True)
+
+
 def test_pull_no_remote(temp_repo: Repo) -> None:
     """Test error when no remote configured."""
     with pytest.raises(PullError, match="No remote 'origin' configured"):
