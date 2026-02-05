@@ -27,25 +27,29 @@ Fast-forwarded 'feature' to abc1234
 
 ## Pull with Diverged Branches
 
-When both local and remote have different commits, pull will fail by default:
+When branches have diverged (common after amending with `sc modify`), pull
+automatically resets to match the remote:
 
 ```console
 $ sc pull
-Error: Branch 'feature' has diverged from 'origin/feature'. Use --rebase to rebase onto the remote branch.
-```
-
-## Pull with Rebase
-
-Use `--rebase` (or `-r`) to rebase your local commits onto the remote:
-
-```console
-$ sc pull --rebase
-Rebased 'feature' onto origin/feature (def5678)
+Reset 'feature' to origin/feature (def5678)
 ```
 
 This is equivalent to:
 1. `git fetch origin`
-2. `git rebase origin/feature`
+2. `git reset --hard origin/feature`
+
+This is the expected behavior for stacked PR workflows where the remote is the
+source of truth after force-pushing amended commits.
+
+## Preserve Local Commits with Rebase
+
+Use `--rebase` to keep local commits by rebasing them onto remote:
+
+```console
+$ sc pull --rebase
+Rebased 'feature' onto origin/feature (abc1234)
+```
 
 ## Common Scenarios
 
@@ -53,8 +57,8 @@ This is equivalent to:
 
 ```
 Machine A: sc create -m "Start feature" → make changes → git push
-Machine B: sc co feature → make changes → git push
-Machine A: sc pull  ← gets changes from Machine B
+Machine B: sc co feature → sc modify → git push --force
+Machine A: sc pull  ← rebases onto Machine B's changes
 ```
 
 ### Collaboration
@@ -69,9 +73,9 @@ You: sc pull  ← gets coworker's commits
 
 ## Options
 
-| Option | Short | Description |
-|--------|-------|-------------|
-| `--rebase` | `-r` | Rebase local commits onto remote if branches have diverged |
+| Option | Description |
+|--------|-------------|
+| `--rebase`, `-r` | Rebase local commits onto remote instead of resetting |
 
 ## Error Cases
 
