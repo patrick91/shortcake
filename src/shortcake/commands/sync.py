@@ -98,7 +98,7 @@ def _reparent_branch(repo: Repo, child: str, new_parent: str) -> None:
     if parent_info is None:
         return  # Not tracked, nothing to do
 
-    old_parent, merge_base = parent_info
+    _, merge_base = parent_info
     if merge_base is None:
         return  # Orphan commit, nothing to do
 
