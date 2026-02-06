@@ -179,11 +179,13 @@ def is_merged(repo: Repo, branch: str, trunk: str) -> bool:
 def is_squash_merged(repo: Repo, branch: str, trunk: str) -> bool:
     """Check if branch was squash-merged into trunk.
 
-    A branch is squash-merged if its tree changes are already in trunk,
-    even though its commits aren't ancestors of trunk.
+    A branch is squash-merged if all the files it changed (relative to the
+    merge-base) were also changed in trunk, even though its commits aren't
+    ancestors of trunk.
 
-    This compares the trees: if the branch's changes relative to the
-    merge-base are already present in trunk, it's considered merged.
+    This uses path-based comparison rather than exact SHA matching, so it
+    correctly detects squash merges even when trunk has additional modifications
+    to the same files after the merge.
     """
     branch_head = get_branch_head(repo, branch)
     trunk_head = get_branch_head(repo, trunk)
@@ -217,29 +219,27 @@ def is_squash_merged(repo: Repo, branch: str, trunk: str) -> bool:
     if branch_tree == trunk_tree:
         return True
 
-    # Check if all files changed in branch are the same in trunk
-    # Get diff from merge_base to branch
     from dulwich.diff_tree import tree_changes
 
-    branch_changes = {}
+    # Get paths changed by branch
+    branch_changed_paths = set()
     for change in tree_changes(repo.object_store, merge_base_tree, branch_tree):
-        # change.new is None for deletions, change.old is None for additions
         path = change.new.path if change.new else change.old.path
-        if change.new and change.new.sha:
-            branch_changes[path] = change.new.sha
-        else:  # file deletion
-            branch_changes[path] = None
+        branch_changed_paths.add(path)
 
-    # Check if trunk has the same changes
+    if not branch_changed_paths:  # pragma: no cover
+        return True
+
+    # Get paths changed by trunk
+    trunk_changed_paths = set()
     for change in tree_changes(repo.object_store, merge_base_tree, trunk_tree):
         path = change.new.path if change.new else change.old.path
-        if path in branch_changes:
-            trunk_sha = change.new.sha if change.new else None
-            if trunk_sha == branch_changes[path]:
-                del branch_changes[path]
+        trunk_changed_paths.add(path)
 
-    # If all branch changes are accounted for in trunk, it's squash-merged
-    return len(branch_changes) == 0
+    # If all files changed by branch are also changed by trunk, the branch
+    # is squash-merged. This handles the case where trunk has additional
+    # modifications to the same files after the squash merge.
+    return branch_changed_paths.issubset(trunk_changed_paths)
 
 
 def get_merged_branches(

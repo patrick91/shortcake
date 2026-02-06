@@ -94,17 +94,23 @@ def _reparent_branch(repo: Repo, child: str, new_parent: str) -> None:
     subsequent commits on top of it.
     """
     all_branches = set(git.get_all_local_branches(repo))
-    old_parent = git.get_branch_parent(repo, child, all_branches)
-    if old_parent is None:
+    parent_info = git.get_branch_parent_info(repo, child, all_branches)
+    if parent_info is None:
         return  # Not tracked, nothing to do
+
+    _, merge_base = parent_info
+    if merge_base is None:
+        return  # Orphan commit, nothing to do
 
     # Get the new parent's head as the base for commits
     new_parent_head = git.get_branch_head(repo, new_parent)
 
-    # Get commits on child branch relative to old parent
+    # Get commits on child branch relative to merge base.
+    # Use merge_base (parent of the first commit with the trailer) instead
+    # of old_parent_head, because the old parent branch may have diverged
+    # (e.g., been rebased) since the child was created.
     child_head = git.get_branch_head(repo, child)
-    old_parent_head = git.get_branch_head(repo, old_parent)
-    commits = git.get_commits_between(repo, child_head, old_parent_head)
+    commits = git.get_commits_between(repo, child_head, merge_base)
 
     if not commits:  # pragma: no cover
         return
