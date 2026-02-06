@@ -179,13 +179,11 @@ def is_merged(repo: Repo, branch: str, trunk: str) -> bool:
 def is_squash_merged(repo: Repo, branch: str, trunk: str) -> bool:
     """Check if branch was squash-merged into trunk.
 
-    A branch is squash-merged if all the files it changed (relative to the
-    merge-base) were also changed in trunk, even though its commits aren't
-    ancestors of trunk.
-
-    This uses path-based comparison rather than exact SHA matching, so it
-    correctly detects squash merges even when trunk has additional modifications
-    to the same files after the merge.
+    Walks trunk commits from HEAD back to merge-base and checks if any commit
+    has ALL files changed by the branch with matching blob SHAs. This avoids
+    false positives from independent changes to the same files, while still
+    detecting squash merges even when trunk has additional modifications after
+    the merge.
     """
     branch_head = get_branch_head(repo, branch)
     trunk_head = get_branch_head(repo, trunk)
@@ -220,26 +218,52 @@ def is_squash_merged(repo: Repo, branch: str, trunk: str) -> bool:
         return True
 
     from dulwich.diff_tree import tree_changes
+    from dulwich.object_store import tree_lookup_path
 
-    # Get paths changed by branch
-    branch_changed_paths = set()
+    # Build dict of {path: blob_sha} from branch changes relative to merge base.
+    # blob_sha is None for deletions (file removed by branch).
+    branch_changes: dict[bytes, bytes | None] = {}
     for change in tree_changes(repo.object_store, merge_base_tree, branch_tree):
-        path = change.new.path if change.new else change.old.path
-        branch_changed_paths.add(path)
+        if change.new is None or change.new.sha is None:
+            # Deletion: file was removed by branch
+            branch_changes[change.old.path] = None
+        else:
+            # Addition or modification
+            branch_changes[change.new.path] = change.new.sha
 
-    if not branch_changed_paths:  # pragma: no cover
+    if not branch_changes:  # pragma: no cover
         return True
 
-    # Get paths changed by trunk
-    trunk_changed_paths = set()
-    for change in tree_changes(repo.object_store, merge_base_tree, trunk_tree):
-        path = change.new.path if change.new else change.old.path
-        trunk_changed_paths.add(path)
+    # Walk trunk commits from trunk_head back to merge_base.
+    # At each commit, check if ALL branch-changed files match the branch's blobs.
+    for entry in Walker(repo.object_store, [trunk_head], exclude=[merge_base]):
+        commit_tree = entry.commit.tree
+        all_match = True
 
-    # If all files changed by branch are also changed by trunk, the branch
-    # is squash-merged. This handles the case where trunk has additional
-    # modifications to the same files after the squash merge.
-    return branch_changed_paths.issubset(trunk_changed_paths)
+        for path, expected_blob in branch_changes.items():
+            if expected_blob is None:
+                # Branch deleted this file — check it's absent in this commit
+                try:
+                    tree_lookup_path(repo.__getitem__, commit_tree, path)
+                    all_match = False
+                    break
+                except KeyError:
+                    continue
+            else:
+                # Branch added/modified this file — check blob SHA matches
+                try:
+                    _, blob_sha = tree_lookup_path(repo.__getitem__, commit_tree, path)
+                except KeyError:
+                    all_match = False
+                    break
+                if blob_sha != expected_blob:
+                    all_match = False
+                    break
+
+        if all_match:
+            return True
+
+    return False
 
 
 def get_merged_branches(

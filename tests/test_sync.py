@@ -275,6 +275,80 @@ def test_is_squash_merged_trunk_modified_same_files_further(
     assert is_squash_merged(temp_repo, "feature", "main")
 
 
+def test_is_squash_merged_false_positive_independent_changes(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test that independent changes to same files are NOT detected as squash-merged.
+
+    Regression test: if trunk independently modifies the same files as a branch
+    (without actually merging the branch), is_squash_merged should return False.
+    """
+    # Create a shared file on main
+    shared_file = tmp_path / "shared.txt"
+    shared_file.write_text("original content")
+    porcelain.add(temp_repo, paths=[str(shared_file)])
+    porcelain.commit(temp_repo, message=b"Add shared file")
+
+    # Create feature branch from main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    # Modify shared file on feature
+    shared_file.write_text("modified by feature")
+    porcelain.add(temp_repo, paths=[str(shared_file)])
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: modify shared file")
+    porcelain.commit(temp_repo, message=message.encode())
+
+    # Independently modify same file on main with DIFFERENT content
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.reset(temp_repo, "hard")
+    shared_file.write_text("independently modified on main")
+    porcelain.add(temp_repo, paths=[str(shared_file)])
+    porcelain.commit(temp_repo, message=b"chore: independent change to shared file")
+
+    # Branch is NOT an ancestor of main
+    assert not is_merged(temp_repo, "feature", "main")
+    # Should NOT be detected as squash-merged (different content, not a merge)
+    assert not is_squash_merged(temp_repo, "feature", "main")
+
+
+def test_is_squash_merged_deletion_not_applied(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test is_squash_merged returns False when branch deletes a file but trunk doesn't.
+
+    Covers the case where tree_lookup_path finds the file still exists on a
+    trunk commit, meaning the deletion was not applied.
+    """
+    # Create a file on main
+    to_delete = tmp_path / "to_delete.txt"
+    to_delete.write_text("will be deleted by branch")
+    porcelain.add(temp_repo, paths=[str(to_delete)])
+    porcelain.commit(temp_repo, message=b"Add file to delete")
+
+    # Create feature branch from main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    # Delete the file on feature branch
+    to_delete.unlink()
+    porcelain.rm(temp_repo, paths=[str(to_delete)])
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: delete file")
+    porcelain.commit(temp_repo, message=message.encode())
+
+    # On main, modify the file instead of deleting it
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.reset(temp_repo, "hard")
+    to_delete.write_text("modified on trunk, not deleted")
+    porcelain.add(temp_repo, paths=[str(to_delete)])
+    porcelain.commit(temp_repo, message=b"chore: modify file on trunk")
+
+    # Should NOT be detected as squash-merged (branch deleted file, trunk didn't)
+    assert not is_squash_merged(temp_repo, "feature", "main")
+
+
 def test_is_squash_merged_no_common_ancestor(tmp_path: Path) -> None:
     """Test is_squash_merged returns False when branches have no common ancestor."""
     from dulwich.repo import Repo
