@@ -62,3 +62,40 @@ Pulling main from remote...
 Checking for merged branches...
 Deleted branch new-feature
 ```
+
+### Sync with Squash-Merged Branches
+
+Sync detects squash merges — when a branch's changes are applied to trunk
+as a single commit (not a fast-forward merge):
+
+```console
+$ echo "squash feature" > squash.py && git add squash.py
+$ sc create -m "Squash feature"
+Created branch 'squash-feature' from 'main'
+$ # Simulate squash merge: apply same change on main as a new commit
+$ git checkout main > /dev/null
+$ echo "squash feature" > squash.py && git add squash.py && git commit -m "squash: add squash feature" > /dev/null
+$ sc sync --yes
+Pulling main from remote...
+Checking for merged branches...
+Deleted branch squash-feature
+```
+
+### Sync Does Not Delete Branches with Independent Changes
+
+When trunk independently modifies the same files as a branch (without
+actually merging the branch), sync correctly keeps the branch:
+
+```console
+$ echo "original" > shared.txt && git add shared.txt && git commit -m "Add shared file" > /dev/null
+$ echo "branch change" > shared.txt && git add shared.txt
+$ sc create -m "Modify shared file"
+Created branch 'modify-shared-file' from 'main'
+$ # Independently modify same file on main with different content
+$ git checkout main > /dev/null
+$ echo "independent main change" > shared.txt && git add shared.txt && git commit -m "chore: independent change" > /dev/null
+$ sc sync --yes
+Pulling main from remote...
+Checking for merged branches...
+Everything up to date.
+```
