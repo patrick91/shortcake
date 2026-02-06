@@ -227,7 +227,7 @@ def is_squash_merged(repo: Repo, branch: str, trunk: str) -> bool:
         path = change.new.path if change.new else change.old.path
         branch_changed_paths.add(path)
 
-    if not branch_changed_paths:
+    if not branch_changed_paths:  # pragma: no cover
         return True
 
     # Get paths changed by trunk

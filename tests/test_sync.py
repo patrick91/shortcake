@@ -718,6 +718,51 @@ def test_reparent_branch_untracked(temp_repo: Repo, tmp_path: Path) -> None:
     assert git.branch_exists(temp_repo, "feature")
 
 
+def test_reparent_branch_orphan_commit(tmp_path: Path) -> None:
+    """Test _reparent_branch returns early for orphan commit."""
+    import time
+
+    from dulwich.objects import Blob, Commit, Tree
+
+    repo = Repo.init(tmp_path, default_branch=b"main")
+
+    # Create initial commit on main
+    readme = tmp_path / "README.md"
+    readme.write_text("# Test")
+    porcelain.add(repo, paths=[str(readme)])
+    porcelain.commit(repo, message=b"Initial commit")
+
+    # Create an orphan commit with a Shortcake-Parent trailer
+    blob = Blob.from_string(b"orphan content")
+    repo.object_store.add_object(blob)
+
+    tree = Tree()
+    tree.add(b"orphan.txt", 0o100644, blob.id)
+    repo.object_store.add_object(tree)
+
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: orphan feature")
+
+    commit = Commit()
+    commit.tree = tree.id
+    commit.author = b"Test <test@test.com>"
+    commit.committer = b"Test <test@test.com>"
+    commit.author_time = commit.commit_time = int(time.time())
+    commit.author_timezone = commit.commit_timezone = 0
+    commit.message = message.encode()
+    commit.parents = []  # No parents - orphan
+    repo.object_store.add_object(commit)
+
+    repo.refs[b"refs/heads/feature"] = commit.id
+
+    # Reparent should return early (orphan commit, merge_base is None)
+    _reparent_branch(repo, "feature", "main")
+
+    # Branch should still exist and be unchanged
+    assert git.branch_exists(repo, "feature")
+    assert repo.refs[b"refs/heads/feature"] == commit.id
+
+
 def test_reparent_branch_no_commits(temp_repo: Repo, tmp_path: Path) -> None:
     """Test _reparent_branch when branch has no commits relative to parent."""
     # Create tracked feature branch at same commit as main
