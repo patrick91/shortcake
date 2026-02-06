@@ -230,6 +230,51 @@ def test_is_squash_merged_with_extra_trunk_deletions(
     assert is_squash_merged(temp_repo, "feature", "main")
 
 
+def test_is_squash_merged_trunk_modified_same_files_further(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test squash-merge detection when trunk further modifies the same files.
+
+    Regression test: after a squash merge, trunk may have additional commits
+    that modify the exact same files the branch changed. The file SHAs will
+    differ, but the branch should still be detected as merged.
+    """
+    # Create a file on main that will be modified by both branch and trunk
+    shared_file = tmp_path / "shared.txt"
+    shared_file.write_text("original content")
+    porcelain.add(temp_repo, paths=[str(shared_file)])
+    porcelain.commit(temp_repo, message=b"Add shared file")
+
+    # Create feature branch from main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    # Modify the shared file on feature
+    shared_file.write_text("modified by feature")
+    porcelain.add(temp_repo, paths=[str(shared_file)])
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: modify shared file")
+    porcelain.commit(temp_repo, message=message.encode())
+
+    # Simulate squash merge into main, then additional changes to same file
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.reset(temp_repo, "hard")
+    # Apply branch's changes (simulating squash merge)
+    shared_file.write_text("modified by feature")
+    porcelain.add(temp_repo, paths=[str(shared_file)])
+    porcelain.commit(temp_repo, message=b"squash: modify shared file")
+    # Then make additional changes to the SAME file
+    shared_file.write_text("modified by feature, then modified again on trunk")
+    porcelain.add(temp_repo, paths=[str(shared_file)])
+    porcelain.commit(temp_repo, message=b"chore: further modifications")
+
+    # Branch is NOT an ancestor of main
+    assert not is_merged(temp_repo, "feature", "main")
+    # Should still be detected as squash-merged despite different file SHAs
+    assert is_squash_merged(temp_repo, "feature", "main")
+
+
 def test_is_squash_merged_no_common_ancestor(tmp_path: Path) -> None:
     """Test is_squash_merged returns False when branches have no common ancestor."""
     from dulwich.repo import Repo
@@ -345,6 +390,59 @@ def test_reparent_branch(repo_with_merged_and_children: Repo) -> None:
     new_parent = git.get_branch_parent(
         repo_with_merged_and_children, "branch_b", all_branches
     )
+    assert new_parent == "main"
+
+
+def test_reparent_branch_when_parent_diverged(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test reparenting when the parent branch was rebased/diverged.
+
+    Regression test: if branch_a was rebased (its head changed), and branch_b
+    still has commits based on the OLD branch_a, _reparent_branch should still
+    correctly update branch_b's trailer.
+    """
+    # Create branch_a from main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+
+    # Commit on branch_a
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("branch a content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers_a = Trailers(parent_branch="main")
+    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a").encode())
+    old_branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # Create branch_b from branch_a
+    temp_repo.refs[b"refs/heads/branch_b"] = old_branch_a_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+
+    # Commit on branch_b
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("branch b content")
+    porcelain.add(temp_repo, paths=[str(file_b)])
+    trailers_b = Trailers(parent_branch="branch_a")
+    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: branch b").encode())
+
+    # Now simulate branch_a being rebased (new commit with different SHA)
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    porcelain.reset(temp_repo, "hard", treeish=main_sha)
+    file_a.write_text("branch a content rebased")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    porcelain.commit(
+        temp_repo, message=trailers_a.apply_to("feat: branch a rebased").encode()
+    )
+    # branch_a now has a different head than what branch_b was based on
+
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    porcelain.reset(temp_repo, "hard")
+
+    # Reparent branch_b to main (as if branch_a was merged and deleted)
+    _reparent_branch(temp_repo, "branch_b", "main")
+
+    # Verify trailer was updated to main (not still branch_a)
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    new_parent = git.get_branch_parent(temp_repo, "branch_b", all_branches)
     assert new_parent == "main"
 
 
@@ -618,6 +716,51 @@ def test_reparent_branch_untracked(temp_repo: Repo, tmp_path: Path) -> None:
 
     # Branch should still exist and be unchanged
     assert git.branch_exists(temp_repo, "feature")
+
+
+def test_reparent_branch_orphan_commit(tmp_path: Path) -> None:
+    """Test _reparent_branch returns early for orphan commit."""
+    import time
+
+    from dulwich.objects import Blob, Commit, Tree
+
+    repo = Repo.init(tmp_path, default_branch=b"main")
+
+    # Create initial commit on main
+    readme = tmp_path / "README.md"
+    readme.write_text("# Test")
+    porcelain.add(repo, paths=[str(readme)])
+    porcelain.commit(repo, message=b"Initial commit")
+
+    # Create an orphan commit with a Shortcake-Parent trailer
+    blob = Blob.from_string(b"orphan content")
+    repo.object_store.add_object(blob)
+
+    tree = Tree()
+    tree.add(b"orphan.txt", 0o100644, blob.id)
+    repo.object_store.add_object(tree)
+
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: orphan feature")
+
+    commit = Commit()
+    commit.tree = tree.id
+    commit.author = b"Test <test@test.com>"
+    commit.committer = b"Test <test@test.com>"
+    commit.author_time = commit.commit_time = int(time.time())
+    commit.author_timezone = commit.commit_timezone = 0
+    commit.message = message.encode()
+    commit.parents = []  # No parents - orphan
+    repo.object_store.add_object(commit)
+
+    repo.refs[b"refs/heads/feature"] = commit.id
+
+    # Reparent should return early (orphan commit, merge_base is None)
+    _reparent_branch(repo, "feature", "main")
+
+    # Branch should still exist and be unchanged
+    assert git.branch_exists(repo, "feature")
+    assert repo.refs[b"refs/heads/feature"] == commit.id
 
 
 def test_reparent_branch_no_commits(temp_repo: Repo, tmp_path: Path) -> None:
