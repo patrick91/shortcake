@@ -13,7 +13,7 @@ from shortcake import _git as git
 from shortcake._cache import update_pr_cache
 from shortcake._exceptions import ShortcakeError
 from shortcake._github import GitHubClient, get_github_token, get_repo_info, push_branch
-from shortcake.commands.restack import _get_stack_in_order
+from shortcake.commands.restack import RestackError, _get_stack_in_order, _restack
 
 # Markers for stack section in PR body
 STACK_START_MARKER = "<!-- shortcake:start -->"
@@ -290,6 +290,21 @@ def _submit(
             "Expected format: git@github.com:owner/repo.git or https://github.com/owner/repo.git"
         )
     owner, repo_name = repo_info
+
+    # Restack before pushing (ensures branches are up-to-date with parents)
+    if not dry_run:
+        try:
+            restack_result = _restack(repo)
+            if restack_result.conflict_branch:
+                raise SubmitError(
+                    f"Conflict while restacking '{restack_result.conflict_branch}'. "
+                    "Resolve conflicts and run 'sc continue', then re-run 'sc submit'."
+                )
+            if restack_result.restacked_branches:
+                for branch in restack_result.restacked_branches:
+                    typer.echo(f"Restacked {branch}.")
+        except RestackError as e:
+            raise SubmitError(str(e)) from None
 
     # Get stack in order (bottom to top)
     stack_branches = _get_stack_in_order(repo, current_branch)

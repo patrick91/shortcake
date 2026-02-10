@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 
 from shortcake._github import GitHubClient, PRInfo
 from shortcake.cli import app
+from shortcake.commands.restack import RestackError, RestackResult
 from shortcake.commands.submit import (
     STACK_END_MARKER,
     STACK_START_MARKER,
@@ -26,6 +27,16 @@ from shortcake.commands.submit import (
 )
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _mock_restack():
+    """Mock _restack to return no-op result by default."""
+    with patch(
+        "shortcake.commands.submit._restack",
+        return_value=RestackResult(restacked_branches=[]),
+    ):
+        yield
 
 
 # Helper to set up origin remote
@@ -1721,3 +1732,101 @@ Description."""
     updated_body = updated_bodies[-1]
     assert "`parent-branch`" in updated_body
     assert "(no PR)" in updated_body
+
+
+# Tests for restack integration
+
+
+def test_submit_calls_restack(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit calls _restack before pushing."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_pr = PRInfo(
+        number=123,
+        url="https://github.com/owner/repo/pull/123",
+        base="main",
+        title="feat: add feature",
+        body="",
+        state="open",
+        is_draft=False,
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.side_effect = [None, mock_pr]
+    mock_client.has_merged_pr.return_value = False
+    mock_client.create_pr.return_value = mock_pr
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    restack_mock = MagicMock(return_value=RestackResult(restacked_branches=["feature"]))
+
+    with (
+        patch("shortcake.commands.submit._restack", restack_mock),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = _submit(repo_with_tracked_feature)
+
+    restack_mock.assert_called_once_with(repo_with_tracked_feature)
+    assert len(result.branch_results) == 1
+
+
+def test_submit_restack_conflict_raises_submit_error(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit raises SubmitError on restack conflict."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    restack_mock = MagicMock(
+        return_value=RestackResult(restacked_branches=[], conflict_branch="feature")
+    )
+
+    with (
+        patch("shortcake.commands.submit._restack", restack_mock),
+        pytest.raises(SubmitError, match="Conflict while restacking"),
+    ):
+        _submit(repo_with_tracked_feature)
+
+
+def test_submit_restack_error_raises_submit_error(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit converts RestackError to SubmitError."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    restack_mock = MagicMock(side_effect=RestackError("Restack already in progress."))
+
+    with (
+        patch("shortcake.commands.submit._restack", restack_mock),
+        pytest.raises(SubmitError, match="Restack already in progress"),
+    ):
+        _submit(repo_with_tracked_feature)
+
+
+def test_submit_skips_restack_on_dry_run(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit skips restack when doing dry run."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    restack_mock = MagicMock(return_value=RestackResult(restacked_branches=[]))
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit._restack", restack_mock),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        _submit(repo_with_tracked_feature, dry_run=True)
+
+    restack_mock.assert_not_called()

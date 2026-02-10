@@ -218,6 +218,36 @@ The visualization shows:
 - Which PR you're currently viewing (marked with `**bold**`)
 - The parent-child relationships
 
+## Restacking Before Submit
+
+Submit automatically restacks branches before pushing to ensure they're up-to-date with their parents:
+
+```console
+$ # reset-to-main
+$ # github: reset-state
+$ # github: setup-mock-with-remote
+$ echo "feature a" > a.py && git add a.py
+$ sc create -m "Feature A"
+Created branch 'feature-a' from 'main'
+$ echo "feature b" > b.py && git add b.py
+$ sc create -m "Feature B"
+Created branch 'feature-b' from 'feature-a'
+$ git checkout feature-a > /dev/null 2>&1
+$ echo "updated a" >> a.py && git add a.py && git commit -m "update feature a" > /dev/null 2>&1
+$ git checkout feature-b > /dev/null 2>&1
+$ sc submit
+Rebasing 'feature-b' onto 'feature-a'...
+Restacked feature-b.
+Pushing 'feature-a'...
+  Creating PR for 'feature-a'...
+  Created PR #1: https://github.com/<OWNER>/<REPO>/pull/1
+Pushing 'feature-b'...
+  Creating PR for 'feature-b'...
+  Created PR #2: https://github.com/<OWNER>/<REPO>/pull/2
+
+Created 2 PR(s)
+```
+
 ## Error Handling
 
 ### Auth Failure
