@@ -998,9 +998,9 @@ def test_github_client_transferred_repo_creates_pr_with_new_owner() -> None:
             json={"owner": {"login": "new-owner"}, "name": "repo"},
         )
     )
-    create_route = respx.post(
-        "https://api.github.com/repos/new-owner/repo/pulls"
-    ).mock(return_value=httpx.Response(201, json=PR_JSON))
+    create_route = respx.post("https://api.github.com/repos/new-owner/repo/pulls").mock(
+        return_value=httpx.Response(201, json=PR_JSON)
+    )
 
     with GitHubClient("token", "old-owner", "repo") as client:
         _real_resolve_repo_identity(client)
