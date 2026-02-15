@@ -124,13 +124,35 @@ class GitHubClient:
                 "X-GitHub-Api-Version": "2022-11-28",
             },
             timeout=30.0,
+            follow_redirects=True,
         )
 
     def __enter__(self) -> "GitHubClient":
+        self._resolve_repo_identity()
         return self
 
     def __exit__(self, *args: object) -> None:
         self.client.close()
+
+    def _resolve_repo_identity(self) -> None:
+        """Check and update owner/repo in case the repo was renamed or transferred.
+
+        GitHub serves API requests for old owner/repo URLs but the
+        ``head`` filter on PRs uses the current owner. This queries the
+        repo endpoint once to learn the canonical owner/repo.
+        """
+        try:
+            response = self.client.get(f"/repos/{self.owner}/{self.repo}")
+            if response.status_code == 200:
+                data = response.json()
+                actual_owner = data.get("owner", {}).get("login")
+                actual_repo = data.get("name")
+                if actual_owner:
+                    self.owner = actual_owner
+                if actual_repo:
+                    self.repo = actual_repo
+        except httpx.RequestError:
+            pass  # Network error, proceed with original values
 
     def get_pr_for_branch(self, branch: str) -> PRInfo | None:
         """Find an existing open PR for the given branch.

@@ -15,6 +15,10 @@ from shortcake._github import (
     push_branch,
 )
 
+# Save reference to real method before conftest autouse fixture patches it out
+_real_resolve_repo_identity = GitHubClient._resolve_repo_identity
+
+
 # Tests for get_github_token
 
 
@@ -871,3 +875,138 @@ def test_push_branch_disabled_force_with_lease(temp_repo: Repo) -> None:
     assert error is None
     mock_ls.assert_not_called()  # Should not check remote
     mock_push.assert_called_once()
+
+
+# Tests for repo identity resolution (renamed/transferred repos)
+
+REPO_RESPONSE = {
+    "owner": {"login": "owner"},
+    "name": "repo",
+}
+
+PR_JSON = {
+    "number": 42,
+    "html_url": "https://github.com/new-owner/repo/pull/42",
+    "base": {"ref": "main"},
+    "title": "Feature PR",
+    "body": "Body",
+    "state": "open",
+    "draft": False,
+}
+
+
+@respx.mock
+def test_github_client_resolves_transferred_repo_owner() -> None:
+    """Test that _resolve_repo_identity detects transferred repo."""
+    respx.get("https://api.github.com/repos/old-owner/repo").mock(
+        return_value=httpx.Response(
+            200,
+            json={"owner": {"login": "new-owner"}, "name": "repo"},
+        )
+    )
+
+    with GitHubClient("token", "old-owner", "repo") as client:
+        _real_resolve_repo_identity(client)
+        assert client.owner == "new-owner"
+        assert client.repo == "repo"
+
+
+@respx.mock
+def test_github_client_resolves_renamed_repo() -> None:
+    """Test that _resolve_repo_identity detects renamed repo."""
+    respx.get("https://api.github.com/repos/owner/old-repo").mock(
+        return_value=httpx.Response(
+            200,
+            json={"owner": {"login": "owner"}, "name": "new-repo"},
+        )
+    )
+
+    with GitHubClient("token", "owner", "old-repo") as client:
+        _real_resolve_repo_identity(client)
+        assert client.owner == "owner"
+        assert client.repo == "new-repo"
+
+
+@respx.mock
+def test_github_client_identity_unchanged_when_not_transferred() -> None:
+    """Test that owner/repo stay the same for non-transferred repos."""
+    respx.get("https://api.github.com/repos/owner/repo").mock(
+        return_value=httpx.Response(200, json=REPO_RESPONSE)
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        _real_resolve_repo_identity(client)
+        assert client.owner == "owner"
+        assert client.repo == "repo"
+
+
+@respx.mock
+def test_github_client_identity_resolution_network_error() -> None:
+    """Test that network errors during identity resolution are non-fatal."""
+    respx.get("https://api.github.com/repos/owner/repo").mock(
+        side_effect=httpx.ConnectError("connection failed")
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        _real_resolve_repo_identity(client)
+        assert client.owner == "owner"
+        assert client.repo == "repo"
+
+
+@respx.mock
+def test_github_client_identity_resolution_api_error() -> None:
+    """Test that API errors during identity resolution are non-fatal."""
+    respx.get("https://api.github.com/repos/owner/repo").mock(
+        return_value=httpx.Response(404, json={"message": "Not Found"})
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        _real_resolve_repo_identity(client)
+        assert client.owner == "owner"
+        assert client.repo == "repo"
+
+
+@respx.mock
+def test_github_client_transferred_repo_uses_new_owner_for_prs() -> None:
+    """Test that after identity resolution, PR queries use the new owner."""
+    respx.get("https://api.github.com/repos/old-owner/repo").mock(
+        return_value=httpx.Response(
+            200,
+            json={"owner": {"login": "new-owner"}, "name": "repo"},
+        )
+    )
+    pr_route = respx.get("https://api.github.com/repos/new-owner/repo/pulls").mock(
+        return_value=httpx.Response(200, json=[PR_JSON])
+    )
+
+    with GitHubClient("token", "old-owner", "repo") as client:
+        _real_resolve_repo_identity(client)
+        result = client.get_pr_for_branch("feature")
+
+    assert result is not None
+    assert result.number == 42
+    assert pr_route.called
+    assert pr_route.calls.last.request.url.params["head"] == "new-owner:feature"
+
+
+@respx.mock
+def test_github_client_transferred_repo_creates_pr_with_new_owner() -> None:
+    """Test that create_pr uses the resolved owner."""
+    respx.get("https://api.github.com/repos/old-owner/repo").mock(
+        return_value=httpx.Response(
+            200,
+            json={"owner": {"login": "new-owner"}, "name": "repo"},
+        )
+    )
+    create_route = respx.post(
+        "https://api.github.com/repos/new-owner/repo/pulls"
+    ).mock(return_value=httpx.Response(201, json=PR_JSON))
+
+    with GitHubClient("token", "old-owner", "repo") as client:
+        _real_resolve_repo_identity(client)
+        result = client.create_pr(
+            head="feature", base="main", title="Test", body="", draft=False
+        )
+
+    assert result.number == 42
+    assert create_route.called
