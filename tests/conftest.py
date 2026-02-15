@@ -5,7 +5,18 @@ import pytest
 from dulwich import porcelain
 from dulwich.repo import Repo
 
+from shortcake._github import GitHubClient
 from shortcake._trailers import Trailers
+
+
+@pytest.fixture(autouse=True)
+def _skip_repo_identity_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Skip GitHubClient._resolve_repo_identity for all tests by default.
+
+    The identity resolution makes a real API call on __enter__. Tests that
+    need to exercise it should call _real_resolve_repo_identity() explicitly.
+    """
+    monkeypatch.setattr(GitHubClient, "_resolve_repo_identity", lambda self: None)
 
 
 def switch_branch(repo: Repo, branch: str) -> None:
