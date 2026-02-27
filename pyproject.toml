@@ -1,17 +1,34 @@
 [project]
 name = "shortcake"
 version = "0.1.0"
-description = "A CLI built with typer and uv"
+description = "Add your description here"
 readme = "README.md"
+authors = [
+    { name = "Patrick Arminio", email = "patrick.arminio@gmail.com" }
+]
 requires-python = ">=3.14"
 dependencies = [
-    "typer>=0.9.0",
+    "typer>=0.15.0",
+    "dulwich[merge]>=1.0.0",
+    "rich-toolkit>=0.12.0",
     "pydantic>=2.0.0",
-    "rtoml>=0.11.0",
-    "gitpython>=3.1.45",
-    "httpx>=0.28.1",
-    "rich-toolkit>=0.17.0",
-    "wcwidth>=0.2.14",
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=6.0.0",
+]
+
+[dependency-groups]
+typing = ["ty>=0.0.1"]
+linting = ["ruff>=0.11.0"]
+dev = [
+    "inline-snapshot>=0.31.1",
+    "pytest-benchmark>=5.2.3",
+    "respx>=0.22.0",
 ]
 
 [project.scripts]
@@ -19,73 +36,22 @@ shortcake = "shortcake.cli:app"
 sc = "shortcake.cli:app"
 
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.9.8,<0.10.0"]
+build-backend = "uv_build"
 
-[dependency-groups]
-dev = [
-    "pytest>=8.0.0",
-    "pytest-xdist>=3.5.0",
-    "pytest-cov>=4.1.0",
-    "respx>=0.21.0",
-    "httpx>=0.27.0",
-    "inline-snapshot>=0.13.0",
-    "ruff>=0.1.0",
-    "pre-commit>=3.0.0",
-]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-addopts = [
-    "-v",
-    "--strict-markers",
-    "--tb=short",
-]
-markers = [
-    "unit: Unit tests (fast, isolated)",
-    "integration: Integration tests (multiple components)",
-    "e2e: End-to-end tests (full workflows)",
-    "github: Tests requiring GitHub API mocking",
-    "slow: Tests that take longer to run",
-]
-
-[tool.coverage.run]
-source = ["shortcake"]
-omit = ["tests/*", "**/__pycache__/*"]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if __name__ == .__main__.:",
-    "if TYPE_CHECKING:",
-]
+[tool.ty.rules]
+# Ignore due to dulwich's incomplete type annotations
+invalid-argument-type = "ignore"
+invalid-assignment = "ignore"
+unresolved-attribute = "ignore"
+unsupported-operator = "ignore"
 
 [tool.ruff]
-line-length = 100
-target-version = "py312"
+target-version = "py313"  # ruff doesn't support py314 yet
+line-length = 88
 
 [tool.ruff.lint]
-select = [
-    "E",  # pycodestyle errors
-    "W",  # pycodestyle warnings
-    "F",  # pyflakes
-    "I",  # isort
-    "B",  # flake8-bugbear
-    "C4", # flake8-comprehensions
-    "UP", # pyupgrade
-]
-ignore = [
-    "E501",  # line too long (handled by line-length setting)
-]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
-[tool.ruff.format]
-quote-style = "double"
-indent-style = "space"
-skip-magic-trailing-comma = false
-line-ending = "auto"
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["RUF012"]  # Mutable class attributes in test mocks don't need ClassVar
