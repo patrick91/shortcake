@@ -10,7 +10,6 @@
   --color-surface-active: #1b1b21;
   --color-border: rgba(255, 255, 255, 0.06);
   --color-border-strong: rgba(255, 255, 255, 0.1);
-  --color-border-accent: rgba(52, 211, 153, 0.4);
   --color-guide: #27272b;
   --color-text-primary: #e4e4e8;
   --color-text-secondary: #8b8b97;
@@ -27,8 +26,6 @@
 
   --font-sans: 'Bricolage Grotesque', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
-
-  --shadow-accent-glow: 0 0 24px -8px rgba(52, 211, 153, 0.35);
 
   --animate-fade-in: fade-in 350ms ease;
 }

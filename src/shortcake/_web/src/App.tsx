@@ -349,6 +349,7 @@ export default function App() {
       themeType: 'dark',
       overflow: 'scroll',
       lineDiffType: 'word',
+      unsafeCSS: '[data-diffs-header] { position: sticky; top: 0; z-index: 10; }',
     }),
     [diffStyle],
   );
@@ -402,9 +403,9 @@ export default function App() {
   }, [branches, parentIndexMap]);
 
   return (
-    <main className="relative min-h-screen grid grid-cols-[280px_1fr] gap-2.5 p-2.5 animate-fade-in max-[960px]:grid-cols-1 max-[960px]:grid-rows-[auto_1fr]">
-      <section className="border border-border rounded-xl bg-surface overflow-hidden flex flex-col">
-        <div className="px-[1.15rem] pt-[1.15rem] pb-[0.9rem] border-b border-border">
+    <main className="relative h-screen grid grid-cols-[280px_1fr] animate-fade-in max-[960px]:grid-cols-1 max-[960px]:grid-rows-[auto_1fr] overflow-hidden">
+      <section className="border-r border-border bg-surface overflow-hidden flex flex-col">
+        <div className="px-[1.15rem] h-[60px] shrink-0 flex flex-col justify-center border-b border-border">
           <p className="font-mono text-[0.68rem] font-medium uppercase tracking-[0.13em] text-accent m-0 mb-[0.3rem]">
             Shortcake
           </p>
@@ -436,7 +437,7 @@ export default function App() {
             return (
               <React.Fragment key={branch.name}>
                 <button
-                  className={`relative appearance-none rounded-md py-[5px] px-[7px] text-left text-text-primary cursor-pointer transition-[background,border-color,box-shadow] duration-150 ease-in-out ${active ? 'bg-accent-bg border border-border-accent shadow-accent-glow' : 'bg-transparent border border-transparent hover:bg-surface-hover hover:border-border'}`}
+                  className={`relative appearance-none rounded-md py-[5px] px-[7px] text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${active ? 'bg-accent-bg' : 'bg-transparent hover:bg-surface-hover'}`}
                   style={{
                     anchorName: `--branch-${index}`,
                     marginInlineStart: `${branchPadding}px`,
@@ -484,8 +485,8 @@ export default function App() {
         </div>
       </section>
 
-      <section className="border border-border rounded-xl bg-surface overflow-hidden flex flex-col min-w-0">
-        <header className="px-[1.15rem] pt-[1.15rem] pb-[0.9rem] border-b border-border flex justify-between items-center gap-4">
+      <section className="bg-surface overflow-hidden flex flex-col min-w-0">
+        <header className="px-[1.15rem] h-[60px] shrink-0 border-b border-border flex justify-between items-center gap-4">
           <div>
             <p className="font-mono text-[0.68rem] font-medium uppercase tracking-[0.13em] text-accent m-0 mb-[0.3rem]">
               Diff
@@ -581,31 +582,15 @@ export default function App() {
             </aside>
 
             <div className="diff-content flex-1 min-w-0 overflow-auto">
-              {diffPatches.map((patch, index) => {
-                const file = fileInfos[index];
-                return (
+              {diffPatches.map((patch, index) => (
                   <div
                     className={index > 0 ? 'border-t border-border' : undefined}
                     key={`${diff.branch}-${index}`}
                     ref={(el) => { fileRefs.current[index] = el; }}
                   >
-                    <div className="flex items-center justify-between gap-3 px-3.5 py-2 bg-surface-active border-b border-border font-mono text-[0.74rem] text-text-primary sticky top-0 z-[2]">
-                      <span className="whitespace-nowrap overflow-hidden text-ellipsis min-w-0">
-                        {file?.path ?? `File ${index + 1}`}
-                      </span>
-                      <span className="flex gap-1.5 text-[0.68rem] shrink-0">
-                        {file && file.additions > 0 && (
-                          <span className="text-stat-add">+{file.additions}</span>
-                        )}
-                        {file && file.deletions > 0 && (
-                          <span className="text-stat-del">-{file.deletions}</span>
-                        )}
-                      </span>
-                    </div>
                     <PatchDiff patch={patch} options={diffOptions} />
                   </div>
-                );
-              })}
+              ))}
             </div>
           </div>
         )}
