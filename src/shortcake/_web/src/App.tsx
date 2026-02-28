@@ -454,12 +454,6 @@ export default function App() {
                       </span>
                     )}
                   </span>
-                  <span
-                    className={`relative z-[2] block mt-0.5 text-[0.72rem] font-mono ${active ? 'text-text-secondary' : 'text-text-muted'}`}
-                  >
-                    ← {branch.parent} · {branch.commitCount} commit
-                    {branch.commitCount === 1 ? '' : 's'}
-                  </span>
                 </button>
                 {lastChildIdx !== undefined && (
                   <div
