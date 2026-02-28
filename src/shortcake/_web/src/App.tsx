@@ -48,10 +48,10 @@ type TreeEntry = DirEntry | FileEntry;
 const API_BASE = import.meta.env.VITE_SHORTCAKE_API_URL ?? '';
 const FILE_TREE_INDENT_BASE = 8;
 const FILE_TREE_INDENT_STEP = 10;
-const STACK_CARD_INDENT_BASE = 12;
-const STACK_CARD_INDENT_STEP = 8;
-const STACK_GUIDE_OFFSET = 8;
-const STACK_GUIDE_STEP = 8;
+const STACK_CARD_INDENT_BASE = 0;
+const STACK_CARD_INDENT_STEP = 12;
+const STACK_GUIDE_OFFSET = 4;
+const STACK_GUIDE_STEP = 12;
 
 function splitPatchIntoFiles(patch: string): string[] {
   if (patch.trim() === '') {
@@ -473,7 +473,7 @@ export default function App() {
                     style={{
                       '--at': `--branch-${index}`,
                       left: `${STACK_GUIDE_OFFSET + (branch.depth - 1) * STACK_GUIDE_STEP}px`,
-                      width: '12px',
+                      width: '8px',
                     } as React.CSSProperties}
                   />
                 )}
