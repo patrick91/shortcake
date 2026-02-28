@@ -49,9 +49,9 @@ const API_BASE = import.meta.env.VITE_SHORTCAKE_API_URL ?? '';
 const FILE_TREE_INDENT_BASE = 8;
 const FILE_TREE_INDENT_STEP = 10;
 const STACK_CARD_INDENT_BASE = 0;
-const STACK_CARD_INDENT_STEP = 12;
-const STACK_GUIDE_OFFSET = 4;
-const STACK_GUIDE_STEP = 12;
+const STACK_CARD_INDENT_STEP = 10;
+const STACK_GUIDE_OFFSET = 2;
+const STACK_GUIDE_STEP = 10;
 
 function splitPatchIntoFiles(patch: string): string[] {
   if (patch.trim() === '') {
