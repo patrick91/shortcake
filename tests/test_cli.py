@@ -71,6 +71,7 @@ def test_cli_help(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     assert "Shortcake" in result.output
     assert "adopt" in result.output
     assert "ls" in result.output
+    assert "ui" in result.output
 
 
 def test_cli_ls_no_tracked(
