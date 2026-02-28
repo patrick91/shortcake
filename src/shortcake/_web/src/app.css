@@ -111,16 +111,7 @@ body::before {
   height: 0;
   border-top: 1px solid var(--color-border-strong);
   pointer-events: none;
-  z-index: 1;
-}
-
-.stack-guide-horizontal--last {
-  border-top: none;
-  height: 6px;
-  top: calc(anchor(var(--at) center) - 6px);
-  border-bottom: 1px solid var(--color-border-strong);
-  border-left: 1px solid var(--color-border-strong);
-  border-radius: 0 0 0 6px;
+  z-index: 2;
 }
 
 @keyframes fade-in {

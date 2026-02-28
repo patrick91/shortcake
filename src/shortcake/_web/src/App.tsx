@@ -432,8 +432,6 @@ export default function App() {
               STACK_CARD_INDENT_BASE + branch.depth * STACK_CARD_INDENT_STEP;
             const parentIndex = parentIndexMap.get(branch.parent) ?? -1;
             const lastChildIdx = lastChildIndexMap.get(index);
-            const isLastChild =
-              parentIndex >= 0 && lastChildIndexMap.get(parentIndex) === index;
 
             return (
               <React.Fragment key={branch.name}>
@@ -477,7 +475,7 @@ export default function App() {
                 {branch.depth > 0 && parentIndex >= 0 && (
                   <div
                     aria-hidden
-                    className={`stack-guide-horizontal ${isLastChild ? 'stack-guide-horizontal--last' : ''}`}
+                    className="stack-guide-horizontal"
                     style={{
                       '--at': `--branch-${index}`,
                       left: `${STACK_GUIDE_OFFSET + (branch.depth - 1) * STACK_GUIDE_STEP}px`,
