@@ -439,7 +439,7 @@ export default function App() {
                   className={`relative appearance-none rounded-lg py-[9px] px-[11px] text-left text-text-primary cursor-pointer transition-[background,border-color,box-shadow] duration-150 ease-in-out ${active ? 'bg-accent-bg border border-border-accent shadow-accent-glow' : 'bg-transparent border border-transparent hover:bg-surface-hover hover:border-border'}`}
                   style={{
                     anchorName: `--branch-${index}`,
-                    paddingInlineStart: `${branchPadding}px`,
+                    marginInlineStart: `${branchPadding}px`,
                   } as React.CSSProperties}
                   onClick={() => setSelectedBranch(branch.name)}
                   type="button"
@@ -473,7 +473,7 @@ export default function App() {
                     style={{
                       '--at': `--branch-${index}`,
                       left: `${STACK_GUIDE_OFFSET + (branch.depth - 1) * STACK_GUIDE_STEP}px`,
-                      width: '8px',
+                      width: '12px',
                     } as React.CSSProperties}
                   />
                 )}
