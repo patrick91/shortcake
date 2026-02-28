@@ -390,6 +390,17 @@ export default function App() {
     return map;
   }, [branches]);
 
+  const lastChildIndexMap = useMemo(() => {
+    const map = new Map<number, number>();
+    for (let i = 0; i < branches.length; i++) {
+      const parentIdx = parentIndexMap.get(branches[i]!.parent);
+      if (parentIdx !== undefined) {
+        map.set(parentIdx, i);
+      }
+    }
+    return map;
+  }, [branches, parentIndexMap]);
+
   return (
     <main className="relative min-h-screen grid grid-cols-[280px_1fr] gap-2.5 p-2.5 animate-fade-in max-[960px]:grid-cols-1 max-[960px]:grid-rows-[auto_1fr]">
       <section className="border border-border rounded-xl bg-surface overflow-hidden flex flex-col">
@@ -420,6 +431,9 @@ export default function App() {
             const branchPadding =
               STACK_CARD_INDENT_BASE + branch.depth * STACK_CARD_INDENT_STEP;
             const parentIndex = parentIndexMap.get(branch.parent) ?? -1;
+            const lastChildIdx = lastChildIndexMap.get(index);
+            const isLastChild =
+              parentIndex >= 0 && lastChildIndexMap.get(parentIndex) === index;
 
             return (
               <React.Fragment key={branch.name}>
@@ -449,13 +463,23 @@ export default function App() {
                     {branch.commitCount === 1 ? '' : 's'}
                   </span>
                 </button>
+                {lastChildIdx !== undefined && (
+                  <div
+                    aria-hidden
+                    className="stack-guide-vertical"
+                    style={{
+                      '--from': `--branch-${index}`,
+                      '--to': `--branch-${lastChildIdx}`,
+                      left: `${STACK_GUIDE_OFFSET + branch.depth * STACK_GUIDE_STEP}px`,
+                    } as React.CSSProperties}
+                  />
+                )}
                 {branch.depth > 0 && parentIndex >= 0 && (
                   <div
                     aria-hidden
-                    className="stack-connector"
+                    className={`stack-guide-horizontal ${isLastChild ? 'stack-guide-horizontal--last' : ''}`}
                     style={{
-                      '--from': `--branch-${parentIndex}`,
-                      '--to': `--branch-${index}`,
+                      '--at': `--branch-${index}`,
                       left: `${STACK_GUIDE_OFFSET + (branch.depth - 1) * STACK_GUIDE_STEP}px`,
                       width: '12px',
                     } as React.CSSProperties}
