@@ -440,6 +440,7 @@ export default function App() {
                   style={{
                     anchorName: `--branch-${index}`,
                     marginInlineStart: `${branchPadding}px`,
+                    marginInlineEnd: '8px',
                   } as React.CSSProperties}
                   onClick={() => setSelectedBranch(branch.name)}
                   type="button"
