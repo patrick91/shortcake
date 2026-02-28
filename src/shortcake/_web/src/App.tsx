@@ -479,7 +479,7 @@ export default function App() {
                     style={{
                       '--at': `--branch-${index}`,
                       left: `${STACK_GUIDE_OFFSET + (branch.depth - 1) * STACK_GUIDE_STEP}px`,
-                      width: '12px',
+                      width: '6px',
                     } as React.CSSProperties}
                   />
                 )}
