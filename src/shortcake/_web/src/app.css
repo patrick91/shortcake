@@ -98,8 +98,8 @@ body::before {
 
 .stack-guide-vertical {
   position: absolute;
-  top: anchor(var(--from) center);
-  bottom: anchor(var(--to) center);
+  top: anchor(var(--from) 40%);
+  bottom: anchor(var(--to) 40%);
   width: 0;
   border-left: 1px solid var(--color-guide);
   pointer-events: none;
@@ -108,7 +108,7 @@ body::before {
 
 .stack-guide-horizontal {
   position: absolute;
-  top: anchor(var(--at) center);
+  top: anchor(var(--at) 40%);
   height: 0;
   border-top: 1px solid var(--color-guide);
   pointer-events: none;
