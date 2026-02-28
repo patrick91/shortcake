@@ -6,6 +6,7 @@ import shutil
 import socket
 import subprocess
 import threading
+import webbrowser
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -307,8 +308,14 @@ def _run_dev_server(
             str(port),
             "--strictPort",
         ]
+
         if open_browser:
-            command.append("--open")
+            open_browser = False  # Only open once across retries.
+            threading.Timer(
+                1.5,
+                webbrowser.open,
+                args=(f"http://{host}:{port}",),
+            ).start()
 
         process = subprocess.run(
             command,
