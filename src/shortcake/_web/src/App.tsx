@@ -422,7 +422,7 @@ export default function App() {
         ) : null}
 
         <div
-          className="relative flex flex-col gap-0 p-1.5 overflow-y-auto flex-1 max-[960px]:max-h-[200px]"
+          className="relative flex flex-col gap-0 p-1.5 overflow-y-auto overflow-x-clip flex-1 max-[960px]:max-h-[200px]"
           role="list"
           aria-label="Tracked stack branches"
         >

@@ -11,6 +11,7 @@
   --color-border: rgba(255, 255, 255, 0.06);
   --color-border-strong: rgba(255, 255, 255, 0.1);
   --color-border-accent: rgba(52, 211, 153, 0.4);
+  --color-guide: #27272b;
   --color-text-primary: #e4e4e8;
   --color-text-secondary: #8b8b97;
   --color-text-muted: #4e4e58;
@@ -100,7 +101,7 @@ body::before {
   top: anchor(var(--from) center);
   bottom: anchor(var(--to) center);
   width: 0;
-  border-left: 1px solid var(--color-border-strong);
+  border-left: 1px solid var(--color-guide);
   pointer-events: none;
   z-index: 1;
 }
@@ -109,9 +110,9 @@ body::before {
   position: absolute;
   top: anchor(var(--at) center);
   height: 0;
-  border-top: 1px solid var(--color-border-strong);
+  border-top: 1px solid var(--color-guide);
   pointer-events: none;
-  z-index: 2;
+  z-index: 1;
 }
 
 @keyframes fade-in {
