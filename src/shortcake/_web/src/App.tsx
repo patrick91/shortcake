@@ -50,7 +50,7 @@ const FILE_TREE_INDENT_BASE = 8;
 const FILE_TREE_INDENT_STEP = 10;
 const STACK_CARD_INDENT_BASE = 0;
 const STACK_CARD_INDENT_STEP = 10;
-const STACK_GUIDE_OFFSET = 2;
+const STACK_GUIDE_OFFSET = 6;
 const STACK_GUIDE_STEP = 10;
 
 function splitPatchIntoFiles(patch: string): string[] {
@@ -436,7 +436,7 @@ export default function App() {
             return (
               <React.Fragment key={branch.name}>
                 <button
-                  className={`relative appearance-none rounded-lg py-[9px] px-[11px] text-left text-text-primary cursor-pointer transition-[background,border-color,box-shadow] duration-150 ease-in-out ${active ? 'bg-accent-bg border border-border-accent shadow-accent-glow' : 'bg-transparent border border-transparent hover:bg-surface-hover hover:border-border'}`}
+                  className={`relative appearance-none rounded-lg py-[9px] px-[7px] text-left text-text-primary cursor-pointer transition-[background,border-color,box-shadow] duration-150 ease-in-out ${active ? 'bg-accent-bg border border-border-accent shadow-accent-glow' : 'bg-transparent border border-transparent hover:bg-surface-hover hover:border-border'}`}
                   style={{
                     anchorName: `--branch-${index}`,
                     marginInlineStart: `${branchPadding}px`,
@@ -473,7 +473,7 @@ export default function App() {
                     style={{
                       '--at': `--branch-${index}`,
                       left: `${STACK_GUIDE_OFFSET + (branch.depth - 1) * STACK_GUIDE_STEP}px`,
-                      width: '8px',
+                      width: '6px',
                     } as React.CSSProperties}
                   />
                 )}
