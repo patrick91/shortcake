@@ -450,7 +450,7 @@ export default function App() {
                       {branch.name}
                     </span>
                     {branch.isCurrent && (
-                      <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-[rgba(52,211,153,0.1)] border border-[rgba(52,211,153,0.18)] px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
+                      <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-[rgba(52,211,153,0.1)] border border-[rgba(52,211,153,0.18)] ml-1.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
                         current
                       </span>
                     )}
