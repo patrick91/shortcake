@@ -22,6 +22,14 @@ type DiffResponse = {
   patch: string;
 };
 
+type WorkingDiffResponse = {
+  patch: string;
+};
+
+type DiffSelection =
+  | { type: 'branch'; name: string }
+  | { type: 'working' };
+
 type FileInfo = {
   path: string;
   name: string;
@@ -253,8 +261,9 @@ function FileTreeEntries({
 
 export default function App() {
   const [stack, setStack] = useState<StackResponse | null>(null);
-  const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
+  const [selection, setSelection] = useState<DiffSelection | null>(null);
   const [diff, setDiff] = useState<DiffResponse | null>(null);
+  const [workingPatch, setWorkingPatch] = useState<string | null>(null);
   const [isStackLoading, setIsStackLoading] = useState(true);
   const [isDiffLoading, setIsDiffLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -276,20 +285,20 @@ export default function App() {
 
         setStack(data);
         if (data.branches.length === 0) {
-          setSelectedBranch(null);
+          setSelection(null);
           return;
         }
 
         const firstBranch = data.branches[0];
         if (!firstBranch) {
-          setSelectedBranch(null);
+          setSelection(null);
           return;
         }
 
         const preferred =
           data.branches.find((branch) => branch.name === data.currentBranch)?.name ??
           firstBranch.name;
-        setSelectedBranch(preferred);
+        setSelection({ type: 'branch', name: preferred });
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Failed to load stack');
@@ -304,8 +313,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!selectedBranch) {
+    if (!selection) {
       setDiff(null);
+      setWorkingPatch(null);
       return;
     }
 
@@ -315,14 +325,26 @@ export default function App() {
       setIsDiffLoading(true);
       setError(null);
       try {
-        const data = await fetchJSON<DiffResponse>(
-          `/api/diff?branch=${encodeURIComponent(selectedBranch)}`,
-        );
-        if (!cancelled) setDiff(data);
+        if (selection.type === 'working') {
+          const data = await fetchJSON<WorkingDiffResponse>('/api/diff/working');
+          if (!cancelled) {
+            setWorkingPatch(data.patch);
+            setDiff(null);
+          }
+        } else {
+          const data = await fetchJSON<DiffResponse>(
+            `/api/diff?branch=${encodeURIComponent(selection.name)}`,
+          );
+          if (!cancelled) {
+            setDiff(data);
+            setWorkingPatch(null);
+          }
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Failed to load diff');
           setDiff(null);
+          setWorkingPatch(null);
         }
       } finally {
         if (!cancelled) setIsDiffLoading(false);
@@ -331,14 +353,14 @@ export default function App() {
 
     void loadDiff();
     return () => { cancelled = true; };
-  }, [selectedBranch]);
+  }, [selection]);
 
   useEffect(() => {
     setCollapsedDirs(new Set());
     setFileFilter('');
     setActiveFileIndex(null);
     fileRefs.current = {};
-  }, [selectedBranch]);
+  }, [selection]);
 
   const diffOptions = useMemo<PatchDiffProps<undefined>['options']>(
     () => ({
@@ -354,9 +376,11 @@ export default function App() {
     [diffStyle],
   );
 
+  const activePatch = selection?.type === 'working' ? workingPatch : diff?.patch;
+
   const diffPatches = useMemo(
-    () => splitPatchIntoFiles(diff?.patch ?? ''),
-    [diff?.patch],
+    () => splitPatchIntoFiles(activePatch ?? ''),
+    [activePatch],
   );
 
   const fileInfos = useMemo(
@@ -427,8 +451,27 @@ export default function App() {
           role="list"
           aria-label="Tracked stack branches"
         >
+          <button
+            className={`relative appearance-none rounded-md py-[5px] px-[7px] mx-[8px] mb-1 text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${selection?.type === 'working' ? 'bg-accent-bg' : 'bg-transparent hover:bg-surface-hover'}`}
+            onClick={() => setSelection({ type: 'working' })}
+            type="button"
+          >
+            <span className="relative z-[2] flex items-center gap-[7px]">
+              <span className="text-[0.82rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
+                Working Changes
+              </span>
+              <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-text-muted bg-surface-hover border border-border px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
+                git diff
+              </span>
+            </span>
+          </button>
+
+          {branches.length > 0 && (
+            <div className="border-t border-border mx-2 my-1" />
+          )}
+
           {branches.map((branch, index) => {
-            const active = branch.name === selectedBranch;
+            const active = selection?.type === 'branch' && branch.name === selection.name;
             const branchPadding =
               STACK_CARD_INDENT_BASE + branch.depth * STACK_CARD_INDENT_STEP;
             const parentIndex = parentIndexMap.get(branch.parent) ?? -1;
@@ -443,7 +486,7 @@ export default function App() {
                     marginInlineStart: `${branchPadding}px`,
                     marginInlineEnd: '8px',
                   } as React.CSSProperties}
-                  onClick={() => setSelectedBranch(branch.name)}
+                  onClick={() => setSelection({ type: 'branch', name: branch.name })}
                   type="button"
                 >
                   <span className="relative z-[2] flex items-center gap-[7px]">
@@ -492,7 +535,9 @@ export default function App() {
               Diff
             </p>
             <h2>
-              {diff ? (
+              {selection?.type === 'working' ? (
+                'Uncommitted changes'
+              ) : diff ? (
                 <>
                   {diff.branch}{' '}
                   <span className="text-text-muted font-normal">&rarr;</span>{' '}
@@ -541,19 +586,21 @@ export default function App() {
           <p className="m-[1.15rem] text-text-muted text-[0.88rem]">Loading diff…</p>
         ) : null}
 
-        {!isDiffLoading && diff && diff.patch.trim() === '' ? (
+        {!isDiffLoading && activePatch !== undefined && activePatch !== null && activePatch.trim() === '' ? (
           <p className="m-[1.15rem] text-text-muted text-[0.88rem]">
-            No file differences between this branch and its parent.
+            {selection?.type === 'working'
+              ? 'No uncommitted changes.'
+              : 'No file differences between this branch and its parent.'}
           </p>
         ) : null}
 
-        {!isDiffLoading && diff && diff.patch.trim() !== '' && diffPatches.length === 0 ? (
+        {!isDiffLoading && activePatch && activePatch.trim() !== '' && diffPatches.length === 0 ? (
           <p className="m-[1.15rem] text-danger text-[0.88rem]">
             Could not render this diff patch.
           </p>
         ) : null}
 
-        {!isDiffLoading && diff && diffPatches.length > 0 && (
+        {!isDiffLoading && activePatch && diffPatches.length > 0 && (
           <div className="flex flex-1 min-h-0">
             <aside className="w-[260px] min-w-[260px] border-r border-border flex flex-col overflow-hidden max-[1100px]:hidden">
               <div className="px-3.5 py-2.5 text-[0.8rem] font-semibold text-text-secondary border-b border-border">
@@ -585,7 +632,7 @@ export default function App() {
               {diffPatches.map((patch, index) => (
                   <div
                     className={index > 0 ? 'border-t border-border' : undefined}
-                    key={`${diff.branch}-${index}`}
+                    key={`${selection?.type === 'working' ? 'working' : diff?.branch}-${index}`}
                     ref={(el) => { fileRefs.current[index] = el; }}
                   >
                     <PatchDiff patch={patch} options={diffOptions} />

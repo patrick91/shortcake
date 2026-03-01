@@ -151,6 +151,27 @@ def _build_diff_payload(repo: Repo, branch: str) -> dict[str, Any]:
     }
 
 
+def _git_working_diff(repo_path: Path) -> str:
+    """Return git diff for uncommitted changes (staged + unstaged vs HEAD)."""
+    result = subprocess.run(
+        ["git", "diff", "--no-color", "--find-renames", "--full-index", "HEAD"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        message = result.stderr.strip() or "Failed to build working diff"
+        raise ValueError(message)
+    return result.stdout
+
+
+def _build_working_diff_payload(repo: Repo) -> dict[str, Any]:
+    """Build payload for working tree diff endpoint."""
+    patch = _git_working_diff(Path(repo.path))
+    return {"patch": patch}
+
+
 def _write_json(
     handler: BaseHTTPRequestHandler,
     status: int,
@@ -196,6 +217,13 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
                     _write_json(self, 200, _build_diff_payload(repo, branch))
                 except ValueError as exc:
                     _write_json(self, 400, {"error": str(exc)})
+                except Exception as exc:
+                    _write_json(self, 500, {"error": str(exc)})
+                return
+
+            if parsed.path == "/api/diff/working":
+                try:
+                    _write_json(self, 200, _build_working_diff_payload(repo))
                 except Exception as exc:
                     _write_json(self, 500, {"error": str(exc)})
                 return
