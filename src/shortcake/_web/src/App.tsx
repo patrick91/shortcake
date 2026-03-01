@@ -1,7 +1,43 @@
-import { PatchDiff, type PatchDiffProps } from '@pierre/diffs/react';
+import {
+  PatchDiff,
+  type PatchDiffProps,
+  type DiffLineAnnotation,
+  type AnnotationSide,
+  type SelectedLineRange,
+} from '@pierre/diffs/react';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 type DiffStyle = 'unified' | 'split';
+
+type DiffComment = {
+  id: string;
+  file: string;
+  startLine: number;
+  endLine: number;
+  side: AnnotationSide;
+  text: string;
+};
+
+type CommentMeta = {
+  commentId: string;
+  text: string;
+  isInput: boolean;
+};
+
+type ActiveInput = {
+  file: string;
+  startLine: number;
+  endLine: number;
+  side: AnnotationSide;
+} | null;
+
+function formatLineRef(file: string, startLine: number, endLine: number): string {
+  return startLine === endLine ? `${file}:${startLine}` : `${file}:${startLine}-${endLine}`;
+}
+
+function formatLineLabel(startLine: number, endLine: number): string {
+  return startLine === endLine ? `Line ${startLine}` : `Lines ${startLine}-${endLine}`;
+}
 
 type StackBranch = {
   name: string;
@@ -259,6 +295,258 @@ function FileTreeEntries({
   );
 }
 
+function CommentInput({
+  onSubmit,
+  onCancel,
+  initialText = '',
+  lineLabel,
+}: {
+  onSubmit: (text: string) => void;
+  onCancel: () => void;
+  initialText?: string;
+  lineLabel?: string;
+}) {
+  const [text, setText] = useState(initialText);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    textareaRef.current?.focus();
+  }, []);
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      if (text.trim()) onSubmit(text.trim());
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      onCancel();
+    }
+  };
+
+  return (
+    <div
+      className="flex flex-col gap-1.5 p-2.5 my-1 bg-surface-hover border border-border rounded-md"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {lineLabel && (
+        <span className="font-mono text-[0.65rem] text-text-muted">{lineLabel}</span>
+      )}
+      <textarea
+        ref={textareaRef}
+        className="w-full min-h-[60px] bg-surface border border-border rounded-md text-text-primary font-mono text-[0.75rem] p-2 resize-y outline-none focus:border-border-strong placeholder:text-text-muted"
+        placeholder="Add a comment..."
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={handleKeyDown}
+      />
+      <div className="flex items-center gap-1.5 justify-end">
+        <span className="text-[0.65rem] text-text-muted mr-auto">
+          {navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+Enter to submit
+        </span>
+        <button
+          type="button"
+          className="appearance-none border border-border bg-transparent text-text-secondary text-[0.72rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-surface-hover hover:text-text-primary transition-colors duration-100"
+          onClick={onCancel}
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          className="appearance-none border border-accent bg-accent/10 text-accent text-[0.72rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-accent/20 transition-colors duration-100 disabled:opacity-40 disabled:cursor-not-allowed"
+          disabled={!text.trim()}
+          onClick={() => { if (text.trim()) onSubmit(text.trim()); }}
+        >
+          Add
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SavedComment({
+  comment,
+  onEdit,
+  onDelete,
+}: {
+  comment: DiffComment;
+  onEdit: () => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <div className="flex items-start gap-2 p-2.5 my-1 bg-surface-hover border border-border rounded-md group">
+      <div className="flex-1 min-w-0">
+        <span className="font-mono text-[0.65rem] text-text-muted">
+          {formatLineLabel(comment.startLine, comment.endLine)}
+        </span>
+        <p className="text-text-primary font-mono text-[0.75rem] m-0 mt-0.5 whitespace-pre-wrap break-words">
+          {comment.text}
+        </p>
+      </div>
+      <div className="flex gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-100">
+        <button
+          type="button"
+          className="appearance-none border-none bg-transparent text-text-muted text-[0.65rem] cursor-pointer hover:text-text-primary p-0.5"
+          onClick={(e) => { e.stopPropagation(); onEdit(); }}
+          title="Edit"
+        >
+          ✎
+        </button>
+        <button
+          type="button"
+          className="appearance-none border-none bg-transparent text-text-muted text-[0.65rem] cursor-pointer hover:text-danger p-0.5"
+          onClick={(e) => { e.stopPropagation(); onDelete(comment.id); }}
+          title="Delete"
+        >
+          ✕
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DiffFileSection({
+  patch,
+  fileInfo,
+  comments,
+  activeInput,
+  editingComment,
+  onRangeSelected,
+  onStartEdit,
+  onAddComment,
+  onUpdateComment,
+  onDeleteComment,
+  onCancelInput,
+  diffStyle,
+}: {
+  patch: string;
+  fileInfo: FileInfo;
+  comments: DiffComment[];
+  activeInput: ActiveInput;
+  editingComment: DiffComment | null;
+  onRangeSelected: (file: string, startLine: number, endLine: number, side: AnnotationSide) => void;
+  onStartEdit: (comment: DiffComment) => void;
+  onAddComment: (file: string, startLine: number, endLine: number, side: AnnotationSide, text: string) => void;
+  onUpdateComment: (id: string, text: string) => void;
+  onDeleteComment: (id: string) => void;
+  onCancelInput: () => void;
+  diffStyle: DiffStyle;
+}) {
+  const fileComments = comments.filter((c) => c.file === fileInfo.path);
+
+  const handleSelectionEnd = useCallback(
+    (range: SelectedLineRange | null) => {
+      if (!range) return;
+      const start = Math.min(range.start, range.end);
+      const end = Math.max(range.start, range.end);
+      const side: AnnotationSide = range.side ?? 'additions';
+      onRangeSelected(fileInfo.path, start, end, side);
+    },
+    [fileInfo.path, onRangeSelected],
+  );
+
+  const options = useMemo<PatchDiffProps<CommentMeta>['options']>(
+    () => ({
+      diffStyle,
+      diffIndicators: 'classic',
+      hunkSeparators: 'metadata',
+      theme: 'pierre-dark',
+      themeType: 'dark',
+      overflow: 'scroll',
+      lineDiffType: 'word',
+      enableLineSelection: true,
+      onLineSelectionEnd: handleSelectionEnd,
+      unsafeCSS: `
+        [data-diffs-header] { position: sticky; top: 0; z-index: 10; }
+        [data-selected-line] { background: rgba(250, 204, 21, 0.10) !important; }
+      `,
+    }),
+    [diffStyle, handleSelectionEnd],
+  );
+
+  const selectedLines = useMemo<SelectedLineRange | null>(() => {
+    if (activeInput && activeInput.file === fileInfo.path) {
+      return { start: activeInput.startLine, end: activeInput.endLine, side: activeInput.side };
+    }
+    if (editingComment && editingComment.file === fileInfo.path) {
+      return { start: editingComment.startLine, end: editingComment.endLine, side: editingComment.side };
+    }
+    return null;
+  }, [activeInput, editingComment, fileInfo.path]);
+
+  const lineAnnotations = useMemo<DiffLineAnnotation<CommentMeta>[]>(() => {
+    const annotations: DiffLineAnnotation<CommentMeta>[] = [];
+
+    for (const comment of fileComments) {
+      annotations.push({
+        lineNumber: comment.endLine,
+        side: comment.side,
+        metadata: { commentId: comment.id, text: comment.text, isInput: false },
+      });
+    }
+
+    if (activeInput && activeInput.file === fileInfo.path && !editingComment) {
+      annotations.push({
+        lineNumber: activeInput.endLine,
+        side: activeInput.side,
+        metadata: { commentId: '__input__', text: '', isInput: true },
+      });
+    }
+
+    return annotations;
+  }, [fileComments, activeInput, editingComment, fileInfo.path]);
+
+  const renderAnnotation = useCallback(
+    (annotation: DiffLineAnnotation<CommentMeta>) => {
+      const { metadata } = annotation;
+
+      if (metadata.isInput && activeInput) {
+        return (
+          <CommentInput
+            lineLabel={formatLineLabel(activeInput.startLine, activeInput.endLine)}
+            onSubmit={(text) =>
+              onAddComment(fileInfo.path, activeInput.startLine, activeInput.endLine, activeInput.side, text)
+            }
+            onCancel={onCancelInput}
+          />
+        );
+      }
+
+      const comment = fileComments.find((c) => c.id === metadata.commentId);
+      if (!comment) return null;
+
+      if (editingComment && editingComment.id === comment.id) {
+        return (
+          <CommentInput
+            initialText={comment.text}
+            lineLabel={formatLineLabel(comment.startLine, comment.endLine)}
+            onSubmit={(text) => onUpdateComment(comment.id, text)}
+            onCancel={onCancelInput}
+          />
+        );
+      }
+
+      return (
+        <SavedComment
+          comment={comment}
+          onEdit={() => onStartEdit(comment)}
+          onDelete={onDeleteComment}
+        />
+      );
+    },
+    [fileComments, editingComment, activeInput, fileInfo.path, onAddComment, onUpdateComment, onDeleteComment, onCancelInput, onStartEdit],
+  );
+
+  return (
+    <PatchDiff<CommentMeta>
+      patch={patch}
+      options={options}
+      lineAnnotations={lineAnnotations}
+      renderAnnotation={renderAnnotation}
+      selectedLines={selectedLines}
+    />
+  );
+}
+
 export default function App() {
   const [stack, setStack] = useState<StackResponse | null>(null);
   const [selection, setSelection] = useState<DiffSelection | null>(null);
@@ -272,6 +560,10 @@ export default function App() {
   const [fileFilter, setFileFilter] = useState('');
   const [activeFileIndex, setActiveFileIndex] = useState<number | null>(null);
   const fileRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const [comments, setComments] = useState<DiffComment[]>([]);
+  const [activeInput, setActiveInput] = useState<ActiveInput>(null);
+  const [editingComment, setEditingComment] = useState<DiffComment | null>(null);
+  const [copyFeedback, setCopyFeedback] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -284,21 +576,15 @@ export default function App() {
         if (cancelled) return;
 
         setStack(data);
-        if (data.branches.length === 0) {
-          setSelection(null);
-          return;
-        }
 
-        const firstBranch = data.branches[0];
-        if (!firstBranch) {
-          setSelection(null);
-          return;
+        const currentBranch = data.branches.find((b) => b.name === data.currentBranch);
+        if (currentBranch) {
+          setSelection({ type: 'branch', name: currentBranch.name });
+        } else if (data.branches[0]) {
+          setSelection({ type: 'branch', name: data.branches[0].name });
+        } else {
+          setSelection({ type: 'working' });
         }
-
-        const preferred =
-          data.branches.find((branch) => branch.name === data.currentBranch)?.name ??
-          firstBranch.name;
-        setSelection({ type: 'branch', name: preferred });
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : 'Failed to load stack');
@@ -360,21 +646,10 @@ export default function App() {
     setFileFilter('');
     setActiveFileIndex(null);
     fileRefs.current = {};
+    setComments([]);
+    setActiveInput(null);
+    setEditingComment(null);
   }, [selection]);
-
-  const diffOptions = useMemo<PatchDiffProps<undefined>['options']>(
-    () => ({
-      diffStyle,
-      diffIndicators: 'classic',
-      hunkSeparators: 'metadata',
-      theme: 'pierre-dark',
-      themeType: 'dark',
-      overflow: 'scroll',
-      lineDiffType: 'word',
-      unsafeCSS: '[data-diffs-header] { position: sticky; top: 0; z-index: 10; }',
-    }),
-    [diffStyle],
-  );
 
   const activePatch = selection?.type === 'working' ? workingPatch : diff?.patch;
 
@@ -406,6 +681,57 @@ export default function App() {
     setActiveFileIndex(index);
     fileRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, []);
+
+  const handleRangeSelected = useCallback(
+    (file: string, startLine: number, endLine: number, side: AnnotationSide) => {
+      setEditingComment(null);
+      setActiveInput({ file, startLine, endLine, side });
+    },
+    [],
+  );
+
+  const handleStartEdit = useCallback((comment: DiffComment) => {
+    setEditingComment(comment);
+    setActiveInput({ file: comment.file, startLine: comment.startLine, endLine: comment.endLine, side: comment.side });
+  }, []);
+
+  const handleAddComment = useCallback(
+    (file: string, startLine: number, endLine: number, side: AnnotationSide, text: string) => {
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      setComments((prev) => [...prev, { id, file, startLine, endLine, side, text }]);
+      setActiveInput(null);
+      setEditingComment(null);
+    },
+    [],
+  );
+
+  const handleUpdateComment = useCallback((id: string, text: string) => {
+    setComments((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, text } : c)),
+    );
+    setActiveInput(null);
+    setEditingComment(null);
+  }, []);
+
+  const handleDeleteComment = useCallback((id: string) => {
+    setComments((prev) => prev.filter((c) => c.id !== id));
+  }, []);
+
+  const handleCancelInput = useCallback(() => {
+    setActiveInput(null);
+    setEditingComment(null);
+  }, []);
+
+  const handleCopyComments = useCallback(() => {
+    if (comments.length === 0) return;
+    const markdown = comments
+      .map((c) => `- \`${formatLineRef(c.file, c.startLine, c.endLine)}\` - ${c.text}`)
+      .join('\n');
+    void navigator.clipboard.writeText(markdown).then(() => {
+      setCopyFeedback(true);
+      setTimeout(() => setCopyFeedback(false), 2000);
+    });
+  }, [comments]);
 
   const branches = stack?.branches ?? [];
 
@@ -550,6 +876,15 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
+            {comments.length > 0 && (
+              <button
+                type="button"
+                className="appearance-none border border-accent bg-accent/10 text-accent text-[0.7rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-accent/20 transition-colors duration-100 whitespace-nowrap"
+                onClick={handleCopyComments}
+              >
+                {copyFeedback ? 'Copied!' : `Copy ${comments.length} comment${comments.length === 1 ? '' : 's'}`}
+              </button>
+            )}
             {!isDiffLoading && diffPatches.length > 0 && (
               <span className="font-mono text-[0.68rem] text-text-secondary bg-surface-hover border border-border px-2 py-[3px] rounded-full whitespace-nowrap">
                 {diffPatches.length} file{diffPatches.length === 1 ? '' : 's'}
@@ -629,15 +964,32 @@ export default function App() {
             </aside>
 
             <div className="diff-content flex-1 min-w-0 overflow-auto">
-              {diffPatches.map((patch, index) => (
+              {diffPatches.map((patch, index) => {
+                const info = fileInfos[index];
+                if (!info) return null;
+                return (
                   <div
                     className={index > 0 ? 'border-t border-border' : undefined}
                     key={`${selection?.type === 'working' ? 'working' : diff?.branch}-${index}`}
                     ref={(el) => { fileRefs.current[index] = el; }}
                   >
-                    <PatchDiff patch={patch} options={diffOptions} />
+                    <DiffFileSection
+                      patch={patch}
+                      fileInfo={info}
+                      comments={comments}
+                      activeInput={activeInput}
+                      editingComment={editingComment}
+                      onRangeSelected={handleRangeSelected}
+                      onStartEdit={handleStartEdit}
+                      onAddComment={handleAddComment}
+                      onUpdateComment={handleUpdateComment}
+                      onDeleteComment={handleDeleteComment}
+                      onCancelInput={handleCancelInput}
+                      diffStyle={diffStyle}
+                    />
                   </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
