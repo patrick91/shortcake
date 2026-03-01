@@ -15,6 +15,7 @@ from shortcake.commands.restack import restack
 from shortcake.commands.submit import submit
 from shortcake.commands.sync import sync
 from shortcake.commands.top import top
+from shortcake.commands.ui import ui
 from shortcake.commands.up import up
 
 app = typer.Typer(no_args_is_help=True)
@@ -42,4 +43,5 @@ app.command()(restack)
 app.command()(submit)
 app.command()(sync)
 app.command()(top)
+app.command()(ui)
 app.command()(up)

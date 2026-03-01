@@ -1,0 +1,788 @@
+import io
+import json
+import shutil
+import socket
+import subprocess
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+from dulwich.repo import Repo
+
+from shortcake.commands.ui import (
+    _build_diff_payload,
+    _build_request_handler,
+    _build_stack_payload,
+    _build_working_diff_payload,
+    _find_open_port,
+    _git_diff_patch,
+    _git_working_diff,
+    _resolve_frontend_dir,
+    _resolve_js_runtime,
+    _run_dev_server,
+    _run_install,
+    _runtime_candidates,
+    _start_api_server,
+    _write_json,
+    ui,
+)
+
+
+def test_build_stack_payload_linear_stack(repo_with_stack: Repo) -> None:
+    """Tracked branches are returned in stack order with metadata."""
+    payload = _build_stack_payload(repo_with_stack)
+
+    assert payload["currentBranch"] == "branch_b"
+    assert [branch["name"] for branch in payload["branches"]] == [
+        "branch_a",
+        "branch_b",
+    ]
+
+    branch_a = payload["branches"][0]
+    branch_b = payload["branches"][1]
+
+    assert branch_a["parent"] == "main"
+    assert branch_a["commitCount"] == 1
+    assert branch_a["isCurrent"] is False
+
+    assert branch_b["parent"] == "branch_a"
+    assert branch_b["commitCount"] == 1
+    assert branch_b["isCurrent"] is True
+
+
+def test_build_stack_payload_no_tracked_branches(temp_repo: Repo) -> None:
+    """Untracked repositories return an empty stack."""
+    payload = _build_stack_payload(temp_repo)
+
+    assert payload["branches"] == []
+
+
+def test_build_diff_payload_for_tracked_branch(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Diff payload includes patch for the requested tracked branch."""
+    monkeypatch.chdir(tmp_path)
+
+    payload = _build_diff_payload(repo_with_stack, "branch_b")
+
+    assert payload["branch"] == "branch_b"
+    assert payload["parent"] == "branch_a"
+    assert "diff --git a/b.txt b/b.txt" in payload["patch"]
+    assert "+branch b content" in payload["patch"]
+
+
+def test_build_diff_payload_untracked_branch_error(temp_repo: Repo) -> None:
+    """Diff endpoint rejects untracked branches."""
+    with pytest.raises(ValueError, match="not tracked"):
+        _build_diff_payload(temp_repo, "main")
+
+
+def test_build_diff_payload_missing_parent_error(
+    repo_with_stack: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Diff endpoint rejects when parent branch is missing locally."""
+    # Delete the parent branch so it doesn't exist
+    del repo_with_stack.refs[b"refs/heads/main"]
+
+    with pytest.raises(ValueError, match="does not exist locally"):
+        _build_diff_payload(repo_with_stack, "branch_a")
+
+
+def test_resolve_js_runtime_prefer_pybun(monkeypatch: pytest.MonkeyPatch) -> None:
+    """pybun should be preferred when both runtimes are present."""
+
+    def fake_which(name: str) -> str | None:
+        if name == "pybun":
+            return "/usr/local/bin/pybun"
+        if name == "bun":
+            return "/usr/local/bin/bun"
+        return None
+
+    monkeypatch.setattr(shutil, "which", fake_which)
+    assert _resolve_js_runtime() == "pybun"
+
+
+def test_resolve_js_runtime_fallback_and_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Runtime resolution falls back to bun, then none."""
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: "/usr/local/bin/bun" if name == "bun" else None,
+    )
+    assert _resolve_js_runtime() == "bun"
+
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    assert _resolve_js_runtime() is None
+
+
+def test_runtime_candidates_pybun_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """pybun runtime should try bun as fallback when available."""
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: "/usr/local/bin/bun" if name == "bun" else None,
+    )
+
+    assert _runtime_candidates("pybun") == ["pybun", "bun"]
+    assert _runtime_candidates("bun") == ["bun"]
+
+
+def test_resolve_frontend_dir_prefers_repo_src_web(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The repo-local src/shortcake/_web directory should be preferred."""
+    repo_path = Path(temp_repo.path)
+    src_web_dir = repo_path / "src" / "shortcake" / "_web"
+    src_web_dir.mkdir(parents=True)
+    (src_web_dir / "package.json").write_text("{}")
+    (src_web_dir / "index.html").write_text("<!doctype html>")
+
+    monkeypatch.delenv("SHORTCAKE_UI_DIR", raising=False)
+    assert _resolve_frontend_dir(repo_path) == src_web_dir
+
+
+def test_resolve_frontend_dir_from_packaged_fallback(temp_repo: Repo) -> None:
+    """If repo has no web/, fall back to packaged shortcake._web assets."""
+    repo_path = Path(temp_repo.path)
+    frontend_dir = _resolve_frontend_dir(repo_path)
+    assert frontend_dir is not None
+    assert (frontend_dir / "package.json").is_file()
+    assert (frontend_dir / "index.html").is_file()
+
+
+def test_resolve_frontend_dir_explicit_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """SHORTCAKE_UI_DIR env var overrides all other candidates."""
+    ui_dir = tmp_path / "custom_ui"
+    ui_dir.mkdir()
+    (ui_dir / "package.json").write_text("{}")
+    (ui_dir / "index.html").write_text("<!doctype html>")
+
+    monkeypatch.setenv("SHORTCAKE_UI_DIR", str(ui_dir))
+    assert _resolve_frontend_dir(tmp_path / "nonexistent") == ui_dir
+
+
+def test_resolve_frontend_dir_returns_none_when_no_candidates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Returns None when no valid frontend directory exists anywhere."""
+    monkeypatch.delenv("SHORTCAKE_UI_DIR", raising=False)
+    import builtins
+
+    real_import = builtins.__import__
+
+    def fail_web_import(name: str, *args: object, **kwargs: object) -> object:
+        if name == "shortcake._web":
+            raise ImportError("no web")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fail_web_import)
+    # Patch the module-level __file__ so parent path fallback also yields nothing
+    monkeypatch.setattr(
+        "shortcake.commands.ui.__file__",
+        str(tmp_path / "fake" / "commands" / "ui.py"),
+    )
+
+    result = _resolve_frontend_dir(tmp_path / "no" / "repo" / "here")
+    assert result is None
+
+
+def test_find_open_port_uses_requested_port_when_available() -> None:
+    """When the starting port is free, it should be returned as-is."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        host, free_port = sock.getsockname()
+
+    assert _find_open_port(host, free_port, max_tries=1) == free_port
+
+
+def test_find_open_port_falls_forward_when_taken() -> None:
+    """When the starting port is occupied, search should advance."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        host, occupied_port = sock.getsockname()
+        sock.listen(1)
+
+        selected = _find_open_port(host, occupied_port, max_tries=20)
+
+    assert selected != occupied_port
+    assert selected > occupied_port
+
+
+def test_find_open_port_exhausted_raises() -> None:
+    """Raises ValueError when no port is available within max_tries."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        host, occupied_port = sock.getsockname()
+        sock.listen(1)
+
+        with pytest.raises(ValueError, match="Could not find an available port"):
+            _find_open_port(host, occupied_port, max_tries=1)
+
+
+# --- _write_json ---
+
+
+def test_write_json() -> None:
+    """_write_json writes correct HTTP response."""
+    handler = MagicMock()
+    handler.wfile = io.BytesIO()
+
+    _write_json(handler, 200, {"ok": True})
+
+    handler.send_response.assert_called_once_with(200)
+    handler.send_header.assert_any_call("Content-Type", "application/json")
+    handler.send_header.assert_any_call("Cache-Control", "no-store")
+    handler.send_header.assert_any_call("Access-Control-Allow-Origin", "*")
+    handler.end_headers.assert_called_once()
+
+    body = handler.wfile.getvalue()
+    assert json.loads(body) == {"ok": True}
+
+
+# --- _git_diff_patch / _git_working_diff ---
+
+
+def test_git_diff_patch(repo_with_stack: Repo) -> None:
+    """_git_diff_patch returns patch text for a branch diff."""
+    repo_path = Path(repo_with_stack.path)
+    patch = _git_diff_patch(repo_path, "branch_a", "branch_b")
+    assert "diff --git" in patch
+    assert "b.txt" in patch
+
+
+def test_git_diff_patch_error(temp_repo: Repo) -> None:
+    """_git_diff_patch raises ValueError on git failure."""
+    with pytest.raises(ValueError):
+        _git_diff_patch(Path(temp_repo.path), "nonexistent", "also-nonexistent")
+
+
+def test_git_working_diff(repo_with_stack: Repo, tmp_path: Path) -> None:
+    """_git_working_diff returns diff for uncommitted changes."""
+    repo_path = Path(repo_with_stack.path)
+    # Create an uncommitted change
+    (tmp_path / "uncommitted.txt").write_text("new content")
+    subprocess.run(["git", "add", "uncommitted.txt"], cwd=tmp_path, check=True)
+
+    patch = _git_working_diff(repo_path)
+    assert "uncommitted.txt" in patch
+
+
+def test_git_working_diff_no_changes(repo_with_stack: Repo) -> None:
+    """_git_working_diff returns empty string when there are no changes."""
+    repo_path = Path(repo_with_stack.path)
+    patch = _git_working_diff(repo_path)
+    assert patch == ""
+
+
+def test_git_working_diff_error(tmp_path: Path) -> None:
+    """_git_working_diff raises ValueError on git failure (non-repo dir)."""
+    with pytest.raises(ValueError):
+        _git_working_diff(tmp_path)
+
+
+def test_build_working_diff_payload(repo_with_stack: Repo) -> None:
+    """_build_working_diff_payload returns patch in expected format."""
+    payload = _build_working_diff_payload(repo_with_stack)
+    assert "patch" in payload
+    assert isinstance(payload["patch"], str)
+
+
+# --- HTTP request handler ---
+
+
+class FakeHandler:
+    """Minimal stand-in for BaseHTTPRequestHandler for testing do_GET."""
+
+    def __init__(self, path: str) -> None:
+        self.path = path
+        self._status: int | None = None
+        self._headers: list[tuple[str, str]] = []
+        self.wfile = io.BytesIO()
+
+    def send_response(self, code: int) -> None:
+        self._status = code
+
+    def send_header(self, key: str, value: str) -> None:
+        self._headers.append((key, value))
+
+    def end_headers(self) -> None:
+        pass
+
+    def log_message(self, fmt: str, *args: object) -> None:
+        pass
+
+    def response_json(self) -> dict:
+        return json.loads(self.wfile.getvalue())
+
+
+def _make_handler(repo: Repo, path: str) -> FakeHandler:
+    """Create a handler class from repo and invoke do_GET with the given path."""
+    handler_cls = _build_request_handler(repo)
+    fake = FakeHandler(path)
+    # Bind the do_GET method to our fake handler
+    handler_cls.do_GET(fake)  # type: ignore[arg-type]
+    return fake
+
+
+def test_handler_health(temp_repo: Repo) -> None:
+    fake = _make_handler(temp_repo, "/api/health")
+    assert fake._status == 200
+    assert fake.response_json() == {"ok": True}
+
+
+def test_handler_stack(repo_with_stack: Repo) -> None:
+    fake = _make_handler(repo_with_stack, "/api/stack")
+    assert fake._status == 200
+    data = fake.response_json()
+    assert "branches" in data
+    assert len(data["branches"]) == 2
+
+
+def test_handler_stack_error(temp_repo: Repo) -> None:
+    """Stack endpoint returns 500 on unexpected error."""
+    with patch(
+        "shortcake.commands.ui._build_stack_payload",
+        side_effect=RuntimeError("boom"),
+    ):
+        fake = _make_handler(temp_repo, "/api/stack")
+    assert fake._status == 500
+    assert "boom" in fake.response_json()["error"]
+
+
+def test_handler_diff_missing_branch_param(temp_repo: Repo) -> None:
+    fake = _make_handler(temp_repo, "/api/diff")
+    assert fake._status == 400
+    assert "Missing" in fake.response_json()["error"]
+
+
+def test_handler_diff_success(repo_with_stack: Repo) -> None:
+    fake = _make_handler(repo_with_stack, "/api/diff?branch=branch_b")
+    assert fake._status == 200
+    data = fake.response_json()
+    assert data["branch"] == "branch_b"
+
+
+def test_handler_diff_value_error(temp_repo: Repo) -> None:
+    """Diff endpoint returns 400 for ValueError (untracked branch)."""
+    fake = _make_handler(temp_repo, "/api/diff?branch=main")
+    assert fake._status == 400
+    assert "not tracked" in fake.response_json()["error"]
+
+
+def test_handler_diff_unexpected_error(repo_with_stack: Repo) -> None:
+    """Diff endpoint returns 500 for unexpected exceptions."""
+    with patch(
+        "shortcake.commands.ui._build_diff_payload",
+        side_effect=RuntimeError("unexpected"),
+    ):
+        fake = _make_handler(repo_with_stack, "/api/diff?branch=branch_b")
+    assert fake._status == 500
+    assert "unexpected" in fake.response_json()["error"]
+
+
+def test_handler_working_diff(repo_with_stack: Repo) -> None:
+    fake = _make_handler(repo_with_stack, "/api/diff/working")
+    assert fake._status == 200
+    assert "patch" in fake.response_json()
+
+
+def test_handler_working_diff_error(temp_repo: Repo) -> None:
+    """Working diff endpoint returns 500 on error."""
+    with patch(
+        "shortcake.commands.ui._build_working_diff_payload",
+        side_effect=RuntimeError("fail"),
+    ):
+        fake = _make_handler(temp_repo, "/api/diff/working")
+    assert fake._status == 500
+    assert "fail" in fake.response_json()["error"]
+
+
+def test_handler_404(temp_repo: Repo) -> None:
+    fake = _make_handler(temp_repo, "/api/nonexistent")
+    assert fake._status == 404
+    assert "Not found" in fake.response_json()["error"]
+
+
+def test_handler_log_message_suppressed(temp_repo: Repo) -> None:
+    """log_message is overridden to suppress output."""
+    handler_cls = _build_request_handler(temp_repo)
+    fake = FakeHandler("/api/health")
+    # Calling log_message should not raise
+    handler_cls.log_message(fake, "test %s", "arg")  # type: ignore[arg-type]
+
+
+# --- _start_api_server ---
+
+
+def test_start_api_server(temp_repo: Repo) -> None:
+    """_start_api_server starts a server that responds to health checks."""
+    import urllib.request
+
+    server = _start_api_server(temp_repo, "127.0.0.1", 0)
+    try:
+        port = server.server_address[1]
+        resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health")
+        data = json.loads(resp.read())
+        assert data == {"ok": True}
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+# --- _run_install ---
+
+
+def test_run_install_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """_run_install returns the successful runtime."""
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kw: MagicMock(returncode=0),
+    )
+    result = _run_install("bun", tmp_path)
+    assert result == "bun"
+
+
+def test_run_install_fallback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """_run_install tries fallback runtimes."""
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: "/bin/bun" if name == "bun" else None,
+    )
+
+    call_count = 0
+
+    def fake_run(cmd: list[str], **kw: object) -> MagicMock:
+        nonlocal call_count
+        call_count += 1
+        # First candidate (pybun) fails, second (bun) succeeds
+        return MagicMock(returncode=1 if call_count == 1 else 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = _run_install("pybun", tmp_path)
+    assert result == "bun"
+
+
+def test_run_install_all_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """_run_install raises ValueError when all candidates fail."""
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kw: MagicMock(returncode=1),
+    )
+
+    with pytest.raises(ValueError, match="Dependency install failed"):
+        _run_install("bun", tmp_path)
+
+
+# --- _run_dev_server ---
+
+
+def test_run_dev_server_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_run_dev_server returns 0 on successful exit."""
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kw: MagicMock(returncode=0),
+    )
+    result = _run_dev_server(
+        "bun", tmp_path, "127.0.0.1", 5173, "http://localhost:8765", False
+    )
+    assert result == 0
+
+
+def test_run_dev_server_ctrl_c(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """_run_dev_server returns 130 (Ctrl+C) as normal exit."""
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kw: MagicMock(returncode=130),
+    )
+    result = _run_dev_server(
+        "bun", tmp_path, "127.0.0.1", 5173, "http://localhost:8765", False
+    )
+    assert result == 130
+
+
+def test_run_dev_server_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_run_dev_server retries with fallback runtime."""
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: "/bin/bun" if name == "bun" else None,
+    )
+
+    call_count = 0
+
+    def fake_run(cmd: list[str], **kw: object) -> MagicMock:
+        nonlocal call_count
+        call_count += 1
+        return MagicMock(returncode=1 if call_count == 1 else 0)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = _run_dev_server(
+        "pybun", tmp_path, "127.0.0.1", 5173, "http://localhost:8765", False
+    )
+    assert result == 0
+
+
+def test_run_dev_server_all_fail(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_run_dev_server returns last error code when all runtimes fail."""
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kw: MagicMock(returncode=42),
+    )
+    result = _run_dev_server(
+        "bun", tmp_path, "127.0.0.1", 5173, "http://localhost:8765", False
+    )
+    assert result == 42
+
+
+def test_run_dev_server_open_browser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """_run_dev_server opens browser when requested."""
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, **kw: MagicMock(returncode=0),
+    )
+    timer_calls: list[tuple] = []
+
+    def fake_timer(interval: float, fn: object, args: tuple = ()) -> MagicMock:
+        timer_calls.append((interval, fn, args))
+        mock = MagicMock()
+        return mock
+
+    monkeypatch.setattr("threading.Timer", fake_timer)
+    _run_dev_server("bun", tmp_path, "127.0.0.1", 5173, "http://localhost:8765", True)
+    assert len(timer_calls) == 1
+    assert "5173" in timer_calls[0][2][0]
+
+
+# --- ui() command ---
+
+
+def test_ui_no_frontend_dir(
+    monkeypatch: pytest.MonkeyPatch, temp_repo: Repo, tmp_path: Path
+) -> None:
+    """ui() exits with error when frontend directory is not found."""
+    monkeypatch.setattr("shortcake.commands.ui.git.open_repo", lambda: temp_repo)
+    monkeypatch.setattr("shortcake.commands.ui._resolve_frontend_dir", lambda _: None)
+
+    from typer import Exit
+
+    with pytest.raises(Exit):
+        ui()
+
+
+def test_ui_no_runtime(
+    monkeypatch: pytest.MonkeyPatch, temp_repo: Repo, tmp_path: Path
+) -> None:
+    """ui() exits with error when no JS runtime is found."""
+    frontend = tmp_path / "web"
+    frontend.mkdir()
+    monkeypatch.setattr("shortcake.commands.ui.git.open_repo", lambda: temp_repo)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._resolve_frontend_dir", lambda _: frontend
+    )
+    monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: None)
+
+    from typer import Exit
+
+    with pytest.raises(Exit):
+        ui()
+
+
+def test_ui_success(
+    monkeypatch: pytest.MonkeyPatch, temp_repo: Repo, tmp_path: Path
+) -> None:
+    """ui() starts server and dev server, then shuts down cleanly."""
+    frontend = tmp_path / "web"
+    frontend.mkdir()
+
+    mock_server = MagicMock()
+    monkeypatch.setattr("shortcake.commands.ui.git.open_repo", lambda: temp_repo)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._resolve_frontend_dir", lambda _: frontend
+    )
+    monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: "bun")
+    monkeypatch.setattr(
+        "shortcake.commands.ui._start_api_server", lambda *a: mock_server
+    )
+    monkeypatch.setattr("shortcake.commands.ui._run_install", lambda *a: "bun")
+    monkeypatch.setattr("shortcake.commands.ui._run_dev_server", lambda *a: 0)
+
+    ui()
+
+    mock_server.shutdown.assert_called_once()
+    mock_server.server_close.assert_called_once()
+
+
+def test_ui_dev_server_error(
+    monkeypatch: pytest.MonkeyPatch, temp_repo: Repo, tmp_path: Path
+) -> None:
+    """ui() exits with error when dev server exits unexpectedly."""
+    frontend = tmp_path / "web"
+    frontend.mkdir()
+
+    mock_server = MagicMock()
+    monkeypatch.setattr("shortcake.commands.ui.git.open_repo", lambda: temp_repo)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._resolve_frontend_dir", lambda _: frontend
+    )
+    monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: "bun")
+    monkeypatch.setattr(
+        "shortcake.commands.ui._start_api_server", lambda *a: mock_server
+    )
+    monkeypatch.setattr("shortcake.commands.ui._run_install", lambda *a: "bun")
+    monkeypatch.setattr("shortcake.commands.ui._run_dev_server", lambda *a: 1)
+
+    from typer import Exit
+
+    with pytest.raises(Exit):
+        ui()
+
+    mock_server.shutdown.assert_called_once()
+
+
+def test_ui_keyboard_interrupt(
+    monkeypatch: pytest.MonkeyPatch, temp_repo: Repo, tmp_path: Path
+) -> None:
+    """ui() handles KeyboardInterrupt gracefully."""
+    frontend = tmp_path / "web"
+    frontend.mkdir()
+
+    mock_server = MagicMock()
+    monkeypatch.setattr("shortcake.commands.ui.git.open_repo", lambda: temp_repo)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._resolve_frontend_dir", lambda _: frontend
+    )
+    monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: "bun")
+    monkeypatch.setattr(
+        "shortcake.commands.ui._start_api_server", lambda *a: mock_server
+    )
+
+    def raise_interrupt(*a: object) -> None:
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("shortcake.commands.ui._run_install", raise_interrupt)
+
+    ui()
+
+    mock_server.shutdown.assert_called_once()
+
+
+def test_ui_value_error(
+    monkeypatch: pytest.MonkeyPatch, temp_repo: Repo, tmp_path: Path
+) -> None:
+    """ui() handles ValueError from install/dev server."""
+    frontend = tmp_path / "web"
+    frontend.mkdir()
+
+    mock_server = MagicMock()
+    monkeypatch.setattr("shortcake.commands.ui.git.open_repo", lambda: temp_repo)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._resolve_frontend_dir", lambda _: frontend
+    )
+    monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: "bun")
+    monkeypatch.setattr(
+        "shortcake.commands.ui._start_api_server", lambda *a: mock_server
+    )
+
+    def raise_value_error(*a: object) -> None:
+        raise ValueError("install failed")
+
+    monkeypatch.setattr("shortcake.commands.ui._run_install", raise_value_error)
+
+    from typer import Exit
+
+    with pytest.raises(Exit):
+        ui()
+
+    mock_server.shutdown.assert_called_once()
+
+
+def test_ui_skip_install(
+    monkeypatch: pytest.MonkeyPatch, temp_repo: Repo, tmp_path: Path
+) -> None:
+    """ui() skips install when --skip-install is passed."""
+    frontend = tmp_path / "web"
+    frontend.mkdir()
+
+    install_called = False
+
+    def track_install(*a: object) -> str:
+        nonlocal install_called
+        install_called = True
+        return "bun"
+
+    mock_server = MagicMock()
+    monkeypatch.setattr("shortcake.commands.ui.git.open_repo", lambda: temp_repo)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._resolve_frontend_dir", lambda _: frontend
+    )
+    monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: "bun")
+    monkeypatch.setattr(
+        "shortcake.commands.ui._start_api_server", lambda *a: mock_server
+    )
+    monkeypatch.setattr("shortcake.commands.ui._run_install", track_install)
+    monkeypatch.setattr("shortcake.commands.ui._run_dev_server", lambda *a: 0)
+
+    ui(skip_install=True)
+
+    assert not install_called
+
+
+def test_ui_port_fallback_messages(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_repo: Repo,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """ui() prints messages when ports fall forward."""
+    frontend = tmp_path / "web"
+    frontend.mkdir()
+
+    call_count = 0
+
+    def fake_find_port(host: str, port: int, max_tries: int = 100) -> int:
+        nonlocal call_count
+        call_count += 1
+        return port + 1  # Always shift forward
+
+    mock_server = MagicMock()
+    monkeypatch.setattr("shortcake.commands.ui.git.open_repo", lambda: temp_repo)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._resolve_frontend_dir", lambda _: frontend
+    )
+    monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: "bun")
+    monkeypatch.setattr("shortcake.commands.ui._find_open_port", fake_find_port)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._start_api_server", lambda *a: mock_server
+    )
+    monkeypatch.setattr("shortcake.commands.ui._run_install", lambda *a: "bun")
+    monkeypatch.setattr("shortcake.commands.ui._run_dev_server", lambda *a: 0)
+
+    ui()
+
+    captured = capsys.readouterr()
+    assert "is in use" in captured.out

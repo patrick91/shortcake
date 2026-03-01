@@ -28,6 +28,7 @@ linting = ["ruff>=0.11.0"]
 dev = [
     "inline-snapshot>=0.31.1",
     "pytest-benchmark>=5.2.3",
+    "pytest-playwright>=0.6.0",
     "respx>=0.22.0",
 ]
 
@@ -45,6 +46,9 @@ invalid-argument-type = "ignore"
 invalid-assignment = "ignore"
 unresolved-attribute = "ignore"
 unsupported-operator = "ignore"
+
+[tool.pytest.ini_options]
+markers = ["e2e: end-to-end browser tests (requires playwright)"]
 
 [tool.ruff]
 target-version = "py313"  # ruff doesn't support py314 yet
