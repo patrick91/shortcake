@@ -8,3 +8,7 @@ htmlcov/
 dist/
 build/
 .venv/
+src/shortcake/_web/node_modules/
+src/shortcake/_web/dist/
+src/shortcake/_web/*.tsbuildinfo
+src/shortcake/_web/__pycache__/
