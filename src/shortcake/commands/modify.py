@@ -164,7 +164,9 @@ def _modify_target(
         git.switch_branch(repo, target_branch)
 
         # --- Step 5: Forward-apply the patch on target ---
-        _git_apply(repo_path, staged_diff, reverse=False)
+        # Use --3way so git falls back to three-way merge when context
+        # lines differ (e.g. an intermediate branch modified the file).
+        _git_apply(repo_path, staged_diff, three_way=True)
 
         # --- Step 6: Stage and amend target commit ---
         _stage_all(repo_path)
