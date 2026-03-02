@@ -1,4 +1,5 @@
 import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -457,6 +458,48 @@ def test_fold_ignores_untracked_files(temp_repo: Repo, tmp_path: Path) -> None:
     assert "untracked.txt" not in tree_files
 
 
+# --- no_verify tests ---
+
+
+def test_fold_no_verify(temp_repo: Repo, tmp_path: Path) -> None:
+    """_fold() with no_verify=True succeeds despite failing pre-commit hook."""
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+
+    # branch_a
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    switch_branch(temp_repo, "branch_a")
+    (tmp_path / "a.txt").write_text("a content")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
+    trailers_a = Trailers(parent_branch="main")
+    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a").encode())
+    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # branch_b
+    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    switch_branch(temp_repo, "branch_b")
+    (tmp_path / "b.txt").write_text("b content")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "b.txt")])
+    trailers_b = Trailers(parent_branch="branch_a")
+    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: branch b").encode())
+
+    # Create a failing pre-commit hook
+    hooks_dir = Path(temp_repo.controldir()) / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_path = hooks_dir / "pre-commit"
+    hook_path.write_text("#!/bin/sh\nexit 1\n")
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
+
+    # With no_verify=True, should succeed despite failing hook
+    switch_branch(temp_repo, "branch_b")
+    result = _fold(temp_repo, no_verify=True)
+
+    assert result.source_branch == "branch_b"
+    assert result.target_branch == "branch_a"
+    assert not git.branch_exists(temp_repo, "branch_b")
+    # b.txt should be in branch_a
+    assert (tmp_path / "b.txt").exists()
+
+
 # --- CLI tests ---
 
 
@@ -542,3 +585,39 @@ def test_fold_cli_with_reparent(temp_repo: Repo, tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "Folded 'branch_b' into 'branch_a'" in result.output
     assert "Re-parented 'branch_c' to 'branch_a'" in result.output
+
+
+def test_fold_cli_no_verify(repo_with_stack: Repo, tmp_path: Path) -> None:
+    """CLI: sc fold --no-verify works."""
+    switch_branch(repo_with_stack, "branch_b")
+    os.chdir(tmp_path)
+
+    # Create a failing pre-commit hook
+    hooks_dir = Path(repo_with_stack.controldir()) / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_path = hooks_dir / "pre-commit"
+    hook_path.write_text("#!/bin/sh\nexit 1\n")
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
+
+    result = runner.invoke(app, ["fold", "--no-verify"])
+
+    assert result.exit_code == 0
+    assert "Folded 'branch_b' into 'branch_a'" in result.output
+
+
+def test_fold_cli_no_verify_short(repo_with_stack: Repo, tmp_path: Path) -> None:
+    """CLI: sc fold -n works."""
+    switch_branch(repo_with_stack, "branch_b")
+    os.chdir(tmp_path)
+
+    # Create a failing pre-commit hook
+    hooks_dir = Path(repo_with_stack.controldir()) / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_path = hooks_dir / "pre-commit"
+    hook_path.write_text("#!/bin/sh\nexit 1\n")
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
+
+    result = runner.invoke(app, ["fold", "-n"])
+
+    assert result.exit_code == 0
+    assert "Folded 'branch_b' into 'branch_a'" in result.output
