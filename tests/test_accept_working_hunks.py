@@ -371,6 +371,53 @@ def test_error_empty_hunks_list(temp_repo: Repo) -> None:
         )
 
 
+def test_accept_restacks_downstream_branches(temp_repo: Repo, tmp_path: Path) -> None:
+    """When accepting hunks, downstream branches are restacked successfully."""
+    repo = temp_repo
+    repo_path = Path(repo.path)
+
+    # Build: main → parent_branch → child_branch
+    main_sha = repo.refs[b"refs/heads/main"]
+    repo.refs[b"refs/heads/parent_branch"] = main_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/parent_branch")
+
+    app_py = tmp_path / "app.py"
+    app_py.write_text("def hello():\n    return 'hello'\n")
+    porcelain.add(repo, paths=[str(app_py)])
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: add app")
+    porcelain.commit(repo, message=message.encode())
+    parent_sha = repo.refs[b"refs/heads/parent_branch"]
+
+    # child_branch adds a separate file (non-conflicting)
+    repo.refs[b"refs/heads/child_branch"] = parent_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/child_branch")
+
+    child_py = tmp_path / "child.py"
+    child_py.write_text("def child():\n    return 'child'\n")
+    porcelain.add(repo, paths=[str(child_py)])
+    trailers_c = Trailers(parent_branch="parent_branch")
+    message_c = trailers_c.apply_to("feat: add child")
+    porcelain.commit(repo, message=message_c.encode())
+
+    # Switch to parent_branch and add working changes
+    switch_branch(repo, "parent_branch")
+    app_py.write_text("def hello():\n    return 'hello modified'\n")
+
+    full_patch = _git_diff_working(repo_path)
+    file_patch = _get_file_patch(full_patch, "app.py")
+
+    result = _accept_working_hunks(
+        repo,
+        target_branch="parent_branch",
+        hunks=[HunkSelection(file_path="app.py", file_patch=file_patch, hunk_index=0)],
+    )
+
+    assert result.target_branch == "parent_branch"
+    # child_branch should have been restacked
+    assert "child_branch" in result.restacked_branches
+
+
 def test_rollback_on_restack_failure(temp_repo: Repo, tmp_path: Path) -> None:
     """If restacking fails after target modification, all refs are rolled back."""
     repo = temp_repo

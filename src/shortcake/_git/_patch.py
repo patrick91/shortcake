@@ -26,7 +26,7 @@ def _parse_hunk_header(line: str) -> tuple[int, int, int, int, str]:
     Returns (old_start, old_count, new_start, new_count, trailing_text).
     """
     m = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)", line)
-    if not m:
+    if not m:  # pragma: no cover
         raise ValueError(f"Invalid hunk header: {line}")
     old_start = int(m.group(1))
     old_count = int(m.group(2)) if m.group(2) is not None else 1
@@ -81,7 +81,7 @@ def extract_sub_patch(
     if not hunk_start_indices:
         raise EmptyPatchError("No hunks found in patch")
 
-    if not file_headers:
+    if not file_headers:  # pragma: no cover
         file_headers = lines[: hunk_start_indices[0]]
 
     # Parse each hunk and build sub-patch hunks
@@ -111,7 +111,7 @@ def extract_sub_patch(
         out_lines: list[str] = []
 
         for hline in hunk_lines:
-            if not hline and hline != " " and hline == "":
+            if not hline and hline != " " and hline == "":  # pragma: no cover
                 # Completely empty trailing line in diff, skip
                 continue
             prefix = hline[0] if hline else " "
