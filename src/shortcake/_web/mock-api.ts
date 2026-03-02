@@ -451,6 +451,55 @@ export function mockApi(): Plugin {
           return json(res, 200, { branch, parent: mock.parent, patch: mock.patch });
         }
 
+        if (req.method === 'POST' && url.pathname === '/api/move-lines') {
+          let body = '';
+          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+          req.on('end', () => {
+            try {
+              const data = JSON.parse(body);
+              return json(res, 200, {
+                sourceBranch: data.sourceBranch,
+                targetBranch: data.targetBranch,
+                filePath: data.filePath,
+                restackedBranches: [],
+              });
+            } catch {
+              return json(res, 400, { error: 'Invalid JSON body' });
+            }
+          });
+          return;
+        }
+
+        if (req.method === 'POST' && url.pathname === '/api/accept-working-hunks') {
+          let body = '';
+          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+          req.on('end', () => {
+            try {
+              const data = JSON.parse(body);
+              const filePaths = [...new Set((data.hunks ?? []).map((h: { filePath: string }) => h.filePath))];
+              return json(res, 200, {
+                targetBranch: data.targetBranch,
+                filePaths,
+                restackedBranches: [],
+              });
+            } catch {
+              return json(res, 400, { error: 'Invalid JSON body' });
+            }
+          });
+          return;
+        }
+
+        if (req.method === 'OPTIONS') {
+          res.writeHead(200, {
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+            'Access-Control-Allow-Headers': 'Content-Type',
+            'Content-Length': '0',
+          });
+          res.end();
+          return;
+        }
+
         next();
       });
     },
