@@ -328,18 +328,11 @@ def test_rollback_on_restack_failure(repo_for_move: Repo, tmp_path: Path) -> Non
 # --- Helper function unit tests ---
 
 
-def test_git_apply_invalid_patch(tmp_path: Path) -> None:
+def test_git_apply_invalid_patch(temp_repo: Repo) -> None:
     """_git_apply raises MoveError on invalid patch."""
-    # Initialize a minimal git repo
-    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
-    subprocess.run(
-        ["git", "commit", "--allow-empty", "-m", "init"],
-        cwd=tmp_path,
-        capture_output=True,
-        check=True,
-    )
+    repo_path = Path(temp_repo.path)
     with pytest.raises(MoveError, match="Failed to"):
-        _git_apply(tmp_path, "this is not a valid patch", reverse=False)
+        _git_apply(repo_path, "this is not a valid patch", reverse=False)
 
 
 def test_remove_lines_file_not_found(tmp_path: Path) -> None:
