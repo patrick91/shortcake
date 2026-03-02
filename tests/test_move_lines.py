@@ -20,10 +20,18 @@ def switch_branch(repo: Repo, branch: str) -> None:
 def _git_diff_patch(repo_path: Path, parent: str, branch: str) -> str:
     """Get the diff patch between parent and branch."""
     result = subprocess.run(
-        ["git", "diff", "--no-color", "--find-renames", "--full-index",
-         f"{parent}...{branch}"],
+        [
+            "git",
+            "diff",
+            "--no-color",
+            "--find-renames",
+            "--full-index",
+            f"{parent}...{branch}",
+        ],
         cwd=repo_path,
-        capture_output=True, text=True, check=True,
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return result.stdout
 
@@ -52,8 +60,7 @@ def repo_for_move(temp_repo: Repo, tmp_path: Path) -> Repo:
     # Write app.py with multiple functions
     app_py = tmp_path / "app.py"
     app_py.write_text(
-        "def hello():\n    return 'hello'\n\n"
-        "def goodbye():\n    return 'goodbye'\n"
+        "def hello():\n    return 'hello'\n\ndef goodbye():\n    return 'goodbye'\n"
     )
     porcelain.add(temp_repo, paths=[str(app_py)])
     trailers_a = Trailers(parent_branch="main")
@@ -270,9 +277,7 @@ def test_error_branch_not_exist(temp_repo: Repo) -> None:
         )
 
 
-def test_rollback_on_restack_failure(
-    repo_for_move: Repo, tmp_path: Path
-) -> None:
+def test_rollback_on_restack_failure(repo_for_move: Repo, tmp_path: Path) -> None:
     """If restacking fails after source modification, all refs are rolled back."""
     repo = repo_for_move
     repo_path = Path(repo.path)

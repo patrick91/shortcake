@@ -25,9 +25,7 @@ def _parse_hunk_header(line: str) -> tuple[int, int, int, int, str]:
 
     Returns (old_start, old_count, new_start, new_count, trailing_text).
     """
-    m = re.match(
-        r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)", line
-    )
+    m = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)", line)
     if not m:
         raise ValueError(f"Invalid hunk header: {line}")
     old_start = int(m.group(1))
@@ -148,22 +146,16 @@ def extract_sub_patch(
                 out_lines.append(hline)
 
         # Count actual changes in output
-        has_changes = any(
-            ln.startswith("+") or ln.startswith("-") for ln in out_lines
-        )
+        has_changes = any(ln.startswith("+") or ln.startswith("-") for ln in out_lines)
         if not has_changes:
             continue
 
         # Recompute hunk header counts
         sub_old_count = sum(
-            1
-            for ln in out_lines
-            if ln.startswith(" ") or ln.startswith("-")
+            1 for ln in out_lines if ln.startswith(" ") or ln.startswith("-")
         )
         sub_new_count = sum(
-            1
-            for ln in out_lines
-            if ln.startswith(" ") or ln.startswith("+")
+            1 for ln in out_lines if ln.startswith(" ") or ln.startswith("+")
         )
 
         # Compute correct start lines for the sub-hunk

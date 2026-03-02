@@ -22,6 +22,7 @@ def switch_branch(repo: Repo, branch: str) -> None:
     repo.refs.set_symbolic_ref(b"HEAD", ref)
     porcelain.reset(repo, "hard")
 
+
 # strip_trailers tests
 
 

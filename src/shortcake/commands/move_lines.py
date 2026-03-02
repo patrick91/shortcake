@@ -50,9 +50,7 @@ class AcceptResult:
 
 def _git_apply(repo_path: Path, patch_content: str, reverse: bool = False) -> None:
     """Apply a patch using git apply."""
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".patch", delete=False
-    ) as tmp:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".patch", delete=False) as tmp:
         tmp.write(patch_content)
         tmp_path = tmp.name
 
@@ -298,9 +296,7 @@ def _move_lines(
             restacked_phase2.append(step.branch)
 
         # --- Cleanup ---
-        all_restacked = list(
-            dict.fromkeys(restacked_phase1 + restacked_phase2)
-        )
+        all_restacked = list(dict.fromkeys(restacked_phase1 + restacked_phase2))
         git.switch_branch(repo, original_branch or source_branch, force=True)
 
         return MoveResult(
@@ -317,9 +313,7 @@ def _move_lines(
             _rollback()
         else:
             with contextlib.suppress(Exception):
-                git.switch_branch(
-                    repo, original_branch or source_branch, force=True
-                )
+                git.switch_branch(repo, original_branch or source_branch, force=True)
         raise MoveError(f"Unexpected error: {e}") from e
 
 
