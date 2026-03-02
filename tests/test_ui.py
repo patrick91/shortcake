@@ -448,16 +448,12 @@ def test_post_move_lines_invalid_json(temp_repo: Repo) -> None:
 
 def test_post_move_lines_missing_fields(temp_repo: Repo) -> None:
     """POST /api/move-lines with missing fields returns 400."""
-    fake = _make_post_handler(
-        temp_repo, "/api/move-lines", {"sourceBranch": "a"}
-    )
+    fake = _make_post_handler(temp_repo, "/api/move-lines", {"sourceBranch": "a"})
     assert fake._status == 400
     assert "Missing required fields" in fake.response_json()["error"]
 
 
-def test_post_move_lines_success(
-    repo_with_stack: Repo, tmp_path: Path
-) -> None:
+def test_post_move_lines_success(repo_with_stack: Repo, tmp_path: Path) -> None:
     """POST /api/move-lines success returns 200 with result."""
     mock_result = MagicMock()
     mock_result.source_branch = "branch_a"
@@ -474,9 +470,7 @@ def test_post_move_lines_success(
         "endLine": 2,
         "side": "additions",
     }
-    with patch(
-        "shortcake.commands.ui._move_lines", return_value=mock_result
-    ):
+    with patch("shortcake.commands.ui._move_lines", return_value=mock_result):
         fake = _make_post_handler(repo_with_stack, "/api/move-lines", body)
     assert fake._status == 200
     data = fake.response_json()
@@ -501,9 +495,7 @@ def test_post_move_lines_move_error(repo_with_stack: Repo) -> None:
         "shortcake.commands.ui._move_lines",
         side_effect=MoveError("move failed"),
     ):
-        fake = _make_post_handler(
-            repo_with_stack, "/api/move-lines", body
-        )
+        fake = _make_post_handler(repo_with_stack, "/api/move-lines", body)
     assert fake._status == 400
     assert "move failed" in fake.response_json()["error"]
 
@@ -523,9 +515,7 @@ def test_post_move_lines_unexpected_error(repo_with_stack: Repo) -> None:
         "shortcake.commands.ui._move_lines",
         side_effect=RuntimeError("boom"),
     ):
-        fake = _make_post_handler(
-            repo_with_stack, "/api/move-lines", body
-        )
+        fake = _make_post_handler(repo_with_stack, "/api/move-lines", body)
     assert fake._status == 500
     assert "boom" in fake.response_json()["error"]
 
@@ -604,9 +594,7 @@ def test_post_accept_hunks_success(repo_with_stack: Repo) -> None:
         "shortcake.commands.ui._accept_working_hunks",
         return_value=mock_result,
     ):
-        fake = _make_post_handler(
-            repo_with_stack, "/api/accept-working-hunks", body
-        )
+        fake = _make_post_handler(repo_with_stack, "/api/accept-working-hunks", body)
     assert fake._status == 200
     data = fake.response_json()
     assert data["targetBranch"] == "branch_a"
@@ -631,9 +619,7 @@ def test_post_accept_hunks_move_error(repo_with_stack: Repo) -> None:
         "shortcake.commands.ui._accept_working_hunks",
         side_effect=MoveError("accept failed"),
     ):
-        fake = _make_post_handler(
-            repo_with_stack, "/api/accept-working-hunks", body
-        )
+        fake = _make_post_handler(repo_with_stack, "/api/accept-working-hunks", body)
     assert fake._status == 400
     assert "accept failed" in fake.response_json()["error"]
 
@@ -656,18 +642,14 @@ def test_post_accept_hunks_unexpected_error(
         "shortcake.commands.ui._accept_working_hunks",
         side_effect=RuntimeError("boom"),
     ):
-        fake = _make_post_handler(
-            repo_with_stack, "/api/accept-working-hunks", body
-        )
+        fake = _make_post_handler(repo_with_stack, "/api/accept-working-hunks", body)
     assert fake._status == 500
     assert "boom" in fake.response_json()["error"]
 
 
 def test_post_404(temp_repo: Repo) -> None:
     """POST to unknown endpoint returns 404."""
-    fake = _make_post_handler(
-        temp_repo, "/api/unknown", {"foo": "bar"}
-    )
+    fake = _make_post_handler(temp_repo, "/api/unknown", {"foo": "bar"})
     assert fake._status == 404
     assert "Not found" in fake.response_json()["error"]
 

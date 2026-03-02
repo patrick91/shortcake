@@ -155,9 +155,7 @@ def _fold(repo: Repo, into: str | None = None) -> FoldResult:
     for b in all_tracked:
         original_refs[b] = git.get_branch_head(repo, b).decode()
     # Save source ref too (may not be in tracked order)
-    original_refs[source_branch] = (
-        git.get_branch_head(repo, source_branch).decode()
-    )
+    original_refs[source_branch] = git.get_branch_head(repo, source_branch).decode()
 
     def _rollback() -> None:  # pragma: no cover
         """Restore all modified branch refs, recreate source if deleted."""
@@ -230,9 +228,7 @@ def _fold(repo: Repo, into: str | None = None) -> FoldResult:
 def fold(
     into: Annotated[
         str | None,
-        typer.Option(
-            "--into", "-i", help="Target branch to fold into"
-        ),
+        typer.Option("--into", "-i", help="Target branch to fold into"),
     ] = None,
 ) -> None:
     """Fold current branch into another branch (default: parent)."""
