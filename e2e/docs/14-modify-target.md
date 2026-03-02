@@ -85,7 +85,7 @@ Stage a change to a file that only exists on branch c, then try to fold into bra
 ```console
 $ echo "updated c" > feature_c.py && git add feature_c.py
 $ sc modify -t add-base-app
-Error: Unexpected error: Failed to apply patch: error: feature_c.py: No such file or directory
+Error: Unexpected error: Failed to apply patch: error: feature_c.py: does not exist in index
 ```
 
 Verify rollback restored the original state — still on branch c with staged changes preserved and the stash intact:
@@ -111,7 +111,7 @@ $ echo "unstaged work" >> app.py
 $ echo "wip on c" >> feature_c.py
 $ echo "modify b" >> feature_b.py && git add feature_b.py
 $ sc modify -t add-base-app
-Error: Unexpected error: Failed to apply patch: error: feature_b.py: No such file or directory
+Error: Unexpected error: Failed to apply patch: error: feature_b.py: does not exist in index
 ```
 
 Verify staged changes are restored, unstaged changes are preserved, and the stash from the previous test is intact:

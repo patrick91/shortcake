@@ -49,7 +49,11 @@ class AcceptResult:
 
 
 def _git_apply(
-    repo_path: Path, patch_content: str, reverse: bool = False, index: bool = False
+    repo_path: Path,
+    patch_content: str,
+    reverse: bool = False,
+    index: bool = False,
+    three_way: bool = False,
 ) -> None:
     """Apply a patch using git apply."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".patch", delete=False) as tmp:
@@ -60,7 +64,9 @@ def _git_apply(
         cmd = ["git", "apply"]
         if reverse:
             cmd.append("--reverse")
-        if index:
+        if three_way:
+            cmd.append("--3way")
+        elif index:
             cmd.append("--index")
         cmd.append(tmp_path)
         result = subprocess.run(
