@@ -94,7 +94,7 @@ def _reparent_branch(repo: Repo, branch: str, new_parent: str) -> None:
     git.update_branch(repo, branch, new_head.decode())
 
 
-def _fold(repo: Repo, into: str | None = None) -> FoldResult:
+def _fold(repo: Repo, into: str | None = None, no_verify: bool = False) -> FoldResult:
     """Fold the current branch into a target branch.
 
     Takes the current branch's full diff, applies it to the target, amends
@@ -104,6 +104,7 @@ def _fold(repo: Repo, into: str | None = None) -> FoldResult:
     Args:
         repo: The git repository.
         into: Target branch to fold into (default: parent of current branch).
+        no_verify: Skip pre-commit hooks.
 
     Raises FoldError on failure (with rollback), returns FoldResult on success.
     """
@@ -186,7 +187,7 @@ def _fold(repo: Repo, into: str | None = None) -> FoldResult:
             _stage_patch_files(repo_path, branch_diff)
             target_head = git.get_branch_head(repo, target_branch)
             target_message = git.get_commit_message(repo, target_head)
-            git.amend_commit(repo, target_message)
+            git.amend_commit(repo, target_message, no_verify=no_verify)
 
         # --- Step 2: Re-parent children ---
         reparented: list[str] = []
@@ -236,12 +237,16 @@ def fold(
         str | None,
         typer.Option("--into", "-i", help="Target branch to fold into"),
     ] = None,
+    no_verify: Annotated[
+        bool,
+        typer.Option("--no-verify", "-n", help="Skip pre-commit hooks"),
+    ] = False,
 ) -> None:
     """Fold current branch into another branch (default: parent)."""
     repo = git.open_repo()
 
     try:
-        result = _fold(repo, into=into)
+        result = _fold(repo, into=into, no_verify=no_verify)
     except FoldError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from None
