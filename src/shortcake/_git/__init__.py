@@ -71,12 +71,11 @@ from shortcake._git._stack import (
 )
 
 __all__ = [
-    "EmptyPatchError",
-    "extract_sub_patch",
     "DULWICH_ERRORS",
     "DULWICH_HOOK_ERRORS",
     "DULWICH_IO_ERRORS",
     "DULWICH_REBASE_ERRORS",
+    "EmptyPatchError",
     "RebaseFailure",
     "RebaseResult",
     "amend_commit",
@@ -86,6 +85,7 @@ __all__ = [
     "create_branch",
     "create_commit",
     "delete_branch",
+    "extract_sub_patch",
     "fetch_and_fast_forward_trunk",
     "get_all_local_branches",
     "get_branch_children",

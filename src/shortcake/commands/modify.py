@@ -1,3 +1,4 @@
+import contextlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated
@@ -137,19 +138,13 @@ def _modify_target(
     def _rollback() -> None:
         """Restore all modified branch refs, abort rebase, switch back, pop stash."""
         if git.is_rebase_in_progress(repo):
-            try:
+            with contextlib.suppress(Exception):
                 git.rebase_abort(repo)
-            except Exception:
-                pass
         for b, sha in original_refs.items():
-            try:
+            with contextlib.suppress(Exception):
                 git.update_branch(repo, b, sha)
-            except Exception:
-                pass
-        try:
+        with contextlib.suppress(Exception):
             git.switch_branch(repo, current, force=True)
-        except Exception:
-            pass
         if stashed:
             _stash_pop(repo_path)
 
