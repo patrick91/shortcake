@@ -256,6 +256,29 @@ def has_uncommitted_changes(repo: Repo) -> bool:
     )
 
 
+def get_staged_diff(repo: Repo) -> str:
+    """Get the diff of staged changes as a patch string."""
+    result = subprocess.run(
+        ["git", "diff", "--cached", "--no-color", "--full-index"],
+        cwd=repo.path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return result.stdout
+
+
+def unstage_all(repo: Repo) -> None:
+    """Unstage all staged changes (move back to working tree)."""
+    subprocess.run(
+        ["git", "reset", "HEAD"],
+        cwd=repo.path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
 def get_conflict_files(repo: Repo) -> list[str]:
     """Get list of files with conflicts from the index.
 

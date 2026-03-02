@@ -9,6 +9,10 @@ This module is split into submodules for organization:
 All symbols are re-exported here for backward compatibility.
 """
 
+from shortcake._git._patch import (
+    EmptyPatchError,
+    extract_sub_patch,
+)
 from shortcake._git._core import (
     DULWICH_ERRORS,
     DULWICH_HOOK_ERRORS,
@@ -26,6 +30,7 @@ from shortcake._git._core import (
     get_conflict_files,
     get_current_branch,
     get_default_branch,
+    get_staged_diff,
     get_staged_files,
     has_precommit_hook,
     has_staged_changes,
@@ -34,6 +39,7 @@ from shortcake._git._core import (
     run_precommit_hook,
     set_head_to_branch,
     switch_branch,
+    unstage_all,
     update_branch,
 )
 from shortcake._git._rebase import (
@@ -65,6 +71,8 @@ from shortcake._git._stack import (
 )
 
 __all__ = [
+    "EmptyPatchError",
+    "extract_sub_patch",
     "DULWICH_ERRORS",
     "DULWICH_HOOK_ERRORS",
     "DULWICH_IO_ERRORS",
@@ -94,6 +102,7 @@ __all__ = [
     "get_merged_branches",
     "get_rebase_commits",
     "get_remote_ref",
+    "get_staged_diff",
     "get_staged_files",
     "get_tracked_branches",
     "has_precommit_hook",
@@ -110,5 +119,6 @@ __all__ = [
     "run_precommit_hook",
     "set_head_to_branch",
     "switch_branch",
+    "unstage_all",
     "update_branch",
 ]
