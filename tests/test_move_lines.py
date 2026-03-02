@@ -51,7 +51,10 @@ def repo_for_move(temp_repo: Repo, tmp_path: Path) -> Repo:
 
     # Write app.py with multiple functions
     app_py = tmp_path / "app.py"
-    app_py.write_text("def hello():\n    return 'hello'\n\ndef goodbye():\n    return 'goodbye'\n")
+    app_py.write_text(
+        "def hello():\n    return 'hello'\n\n"
+        "def goodbye():\n    return 'goodbye'\n"
+    )
     porcelain.add(temp_repo, paths=[str(app_py)])
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: add app functions")

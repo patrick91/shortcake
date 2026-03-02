@@ -2,7 +2,6 @@ import pytest
 
 from shortcake._git._patch import EmptyPatchError, extract_sub_patch
 
-
 # --- Fixtures: sample patches ---
 
 SINGLE_HUNK_ADD = """\
@@ -115,7 +114,7 @@ def test_partial_hunk_additions() -> None:
 
 
 def test_modify_patch_select_some_additions() -> None:
-    """In a modify patch, selecting some additions drops others, keeps deletions as context."""
+    """Select some additions, drop others, keep deletions as context."""
     # New-file line numbers:
     #   1 = "context before"
     #   2 = "new line 1"

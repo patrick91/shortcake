@@ -113,12 +113,9 @@ def extract_sub_patch(
         out_lines: list[str] = []
 
         for hline in hunk_lines:
-            if not hline and hline != " ":
-                # Completely empty line in diff could be empty context line
-                # Treat as context
-                if hline == "":
-                    # Could be trailing empty, skip
-                    continue
+            if not hline and hline != " " and hline == "":
+                # Completely empty trailing line in diff, skip
+                continue
             prefix = hline[0] if hline else " "
             if prefix == " ":
                 # Context line — always keep

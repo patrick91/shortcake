@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import tempfile
 import threading
@@ -223,19 +224,13 @@ def _move_lines(
     def _rollback() -> None:
         """Restore all modified branch refs and abort any in-progress rebase."""
         if git.is_rebase_in_progress(repo):
-            try:
+            with contextlib.suppress(Exception):
                 git.rebase_abort(repo)
-            except Exception:
-                pass
         for b, sha in original_refs.items():
-            try:
+            with contextlib.suppress(Exception):
                 git.update_branch(repo, b, sha)
-            except Exception:
-                pass
-        try:
+        with contextlib.suppress(Exception):
             git.switch_branch(repo, original_branch or source_branch, force=True)
-        except Exception:
-            pass
 
     try:
         # --- Phase 1: Remove from source and amend ---
@@ -321,12 +316,10 @@ def _move_lines(
         if source_modified:
             _rollback()
         else:
-            try:
+            with contextlib.suppress(Exception):
                 git.switch_branch(
                     repo, original_branch or source_branch, force=True
                 )
-            except Exception:
-                pass
         raise MoveError(f"Unexpected error: {e}") from e
 
 
@@ -405,7 +398,8 @@ def _extract_hunk_patch(file_patch: str, hunk_index: int) -> str:
 
     if hunk_index < 0 or hunk_index >= len(hunk_start_indices):
         raise MoveError(
-            f"Invalid hunk index {hunk_index}: patch has {len(hunk_start_indices)} hunk(s)"
+            f"Invalid hunk index {hunk_index}: "
+            f"patch has {len(hunk_start_indices)} hunk(s)"
         )
 
     # Extract the selected hunk
@@ -523,19 +517,13 @@ def _accept_working_hunks(
     def _rollback() -> None:
         """Restore all modified branch refs, abort rebase, switch back, pop stash."""
         if git.is_rebase_in_progress(repo):
-            try:
+            with contextlib.suppress(Exception):
                 git.rebase_abort(repo)
-            except Exception:
-                pass
         for b, sha in original_refs.items():
-            try:
+            with contextlib.suppress(Exception):
                 git.update_branch(repo, b, sha)
-            except Exception:
-                pass
-        try:
+        with contextlib.suppress(Exception):
             git.switch_branch(repo, original_branch or target_branch, force=True)
-        except Exception:
-            pass
         if stashed:
             _stash_pop(repo_path)
 
