@@ -7,6 +7,7 @@ from shortcake.commands.checkout import checkout, co
 from shortcake.commands.continue_ import continue_cmd
 from shortcake.commands.create import create
 from shortcake.commands.down import down
+from shortcake.commands.fold import fold
 from shortcake.commands.log import log
 from shortcake.commands.ls import ls
 from shortcake.commands.modify import modify
@@ -35,6 +36,7 @@ app.command(name="co")(co)
 app.command(name="continue")(continue_cmd)
 app.command()(create)
 app.command()(down)
+app.command()(fold)
 app.command()(log)
 app.command()(ls)
 app.command()(modify)
