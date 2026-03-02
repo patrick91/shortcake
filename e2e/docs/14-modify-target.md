@@ -68,6 +68,37 @@ index 0000000..08cec9b
 +feature b updated
 ```
 
+## Failure Recovery: Patch Incompatible with Target
+
+When a patch can't be applied to the target branch, the operation rolls back cleanly.
+
+First, create a stash to verify it's preserved after the failed rollback:
+
+```console
+$ echo "stashed work" >> app.py
+$ git stash push -m "important work"
+Saved working directory and index state On add-feature-c: important work
+```
+
+Stage a change to a file that only exists on branch c, then try to fold into branch a where it doesn't exist:
+
+```console
+$ echo "updated c" > feature_c.py && git add feature_c.py
+$ sc modify -t add-base-app
+Error: Unexpected error: Failed to apply patch: error: feature_c.py: No such file or directory
+```
+
+Verify rollback restored the original state — still on branch c with a clean working tree and the stash intact:
+
+```console
+$ git branch --show-current
+add-feature-c
+$ git status --porcelain
+
+$ git stash list
+stash@{0}: On add-feature-c: important work
+```
+
 ## Incompatible Options
 
 The `--target` flag cannot be combined with `-m` or `-e`:
