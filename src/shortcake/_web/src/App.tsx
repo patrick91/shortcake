@@ -5,7 +5,8 @@ import {
   type AnnotationSide,
   type SelectedLineRange,
 } from '@pierre/diffs/react';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
 
 type DiffStyle = 'unified' | 'split';
 
@@ -69,6 +70,19 @@ type ActiveInput = {
   endLine: number;
   side: AnnotationSide;
 } | null;
+
+function useMediaQuery(query: string): boolean {
+  const subscribe = useCallback(
+    (cb: () => void) => {
+      const mql = window.matchMedia(query);
+      mql.addEventListener('change', cb);
+      return () => mql.removeEventListener('change', cb);
+    },
+    [query],
+  );
+  const getSnapshot = useCallback(() => window.matchMedia(query).matches, [query]);
+  return useSyncExternalStore(subscribe, getSnapshot, () => true);
+}
 
 function formatLineRef(file: string, startLine: number, endLine: number): string {
   return startLine === endLine ? `${file}:${startLine}` : `${file}:${startLine}-${endLine}`;
@@ -955,6 +969,12 @@ function DiffFileSection({
 }
 
 export default function App() {
+  const isWideScreen = useMediaQuery('(min-width: 961px)');
+  const savedLayout = useDefaultLayout({
+    id: 'stack-explorer-layout',
+    storage: localStorage,
+    panelIds: ['sidebar', 'content'],
+  });
   const [stack, setStack] = useState<StackResponse | null>(null);
   const [selection, setSelection] = useState<DiffSelection | null>(null);
   const [diff, setDiff] = useState<DiffResponse | null>(null);
@@ -1329,8 +1349,11 @@ export default function App() {
   }, [branches, parentIndexMap]);
 
   return (
-    <main className="relative h-screen grid grid-cols-[280px_1fr] animate-fade-in max-[960px]:grid-cols-1 max-[960px]:grid-rows-[auto_1fr] overflow-hidden">
-      <section className="border-r border-border bg-surface overflow-hidden flex flex-col">
+    <main className={`relative h-screen animate-fade-in overflow-hidden ${isWideScreen ? '' : 'flex flex-col'}`}>
+      {isWideScreen ? (
+      <Group orientation="horizontal" {...savedLayout}>
+      <Panel id="sidebar" defaultSize="20%" minSize="15%" maxSize="40%">
+      <section className="border-r border-border bg-surface overflow-hidden flex flex-col h-full">
         <div className="px-[1.15rem] h-[60px] shrink-0 flex flex-col justify-center border-b border-border">
           <p className="font-mono text-[0.68rem] font-medium uppercase tracking-[0.13em] text-accent m-0 mb-[0.3rem]">
             Shortcake
@@ -1349,7 +1372,7 @@ export default function App() {
         ) : null}
 
         <div
-          className="relative flex flex-col gap-0 p-1.5 overflow-y-auto overflow-x-clip flex-1 max-[960px]:max-h-[200px]"
+          className="relative flex flex-col gap-0 p-1.5 overflow-y-auto overflow-x-clip flex-1"
           role="list"
           aria-label="Tracked stack branches"
         >
@@ -1429,8 +1452,10 @@ export default function App() {
           })}
         </div>
       </section>
-
-      <section className="bg-surface overflow-hidden flex flex-col min-w-0">
+      </Panel>
+      <Separator className="resize-handle" />
+      <Panel id="content" minSize="40%">
+      <section className="bg-surface overflow-hidden flex flex-col min-w-0 h-full">
         <header className="px-[1.15rem] h-[60px] shrink-0 border-b border-border flex justify-between items-center gap-4">
           <div>
             <p className="font-mono text-[0.68rem] font-medium uppercase tracking-[0.13em] text-accent m-0 mb-[0.3rem]">
@@ -1589,6 +1614,216 @@ export default function App() {
           </div>
         )}
       </section>
+      </Panel>
+      </Group>
+      ) : (
+      <>
+      <section className="border-b border-border bg-surface overflow-hidden flex flex-col max-h-[280px]">
+        <div className="px-[1.15rem] h-[60px] shrink-0 flex flex-col justify-center border-b border-border">
+          <p className="font-mono text-[0.68rem] font-medium uppercase tracking-[0.13em] text-accent m-0 mb-[0.3rem]">
+            Shortcake
+          </p>
+          <h1>Stack Diff Explorer</h1>
+        </div>
+
+        {isStackLoading ? (
+          <p className="m-[1.15rem] text-text-muted text-[0.88rem]">Loading stack…</p>
+        ) : null}
+
+        {!isStackLoading && branches.length === 0 ? (
+          <p className="m-[1.15rem] text-text-muted text-[0.88rem]">
+            No tracked branches found in this repository.
+          </p>
+        ) : null}
+
+        <div
+          className="relative flex flex-col gap-0 p-1.5 overflow-y-auto overflow-x-clip flex-1"
+          role="list"
+          aria-label="Tracked stack branches"
+        >
+          <button
+            className={`relative appearance-none rounded-md py-[5px] px-[7px] mx-[8px] mb-1 text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${selection?.type === 'working' ? 'bg-accent-bg' : 'bg-transparent hover:bg-surface-hover'}`}
+            onClick={() => setSelection({ type: 'working' })}
+            type="button"
+          >
+            <span className="relative z-[2] flex items-center gap-[7px]">
+              <span className="text-[0.82rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
+                Working Changes
+              </span>
+              <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-text-muted bg-surface-hover border border-border px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
+                git diff
+              </span>
+            </span>
+          </button>
+
+          {branches.length > 0 && (
+            <div className="border-t border-border mx-2 my-1" />
+          )}
+
+          {branches.map((branch) => {
+            const active = selection?.type === 'branch' && branch.name === selection.name;
+            const branchPadding =
+              STACK_CARD_INDENT_BASE + branch.depth * STACK_CARD_INDENT_STEP;
+
+            return (
+              <button
+                key={branch.name}
+                className={`relative appearance-none rounded-md py-[5px] px-[7px] text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${active ? 'bg-accent-bg' : 'bg-transparent hover:bg-surface-hover'}`}
+                style={{
+                  marginInlineStart: `${branchPadding}px`,
+                  marginInlineEnd: '8px',
+                } as React.CSSProperties}
+                onClick={() => setSelection({ type: 'branch', name: branch.name })}
+                type="button"
+              >
+                <span className="relative z-[2] flex items-center gap-[7px]">
+                  <span className="text-[0.88rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
+                    {branch.name}
+                  </span>
+                  {branch.isCurrent && (
+                    <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-[rgba(52,211,153,0.1)] border border-[rgba(52,211,153,0.18)] ml-1.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
+                      current
+                    </span>
+                  )}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="bg-surface overflow-hidden flex flex-col min-w-0 flex-1">
+        <header className="px-[1.15rem] h-[60px] shrink-0 border-b border-border flex justify-between items-center gap-4">
+          <div>
+            <p className="font-mono text-[0.68rem] font-medium uppercase tracking-[0.13em] text-accent m-0 mb-[0.3rem]">
+              Diff
+            </p>
+            <h2>
+              {selection?.type === 'working' ? (
+                'Uncommitted changes'
+              ) : diff ? (
+                <>
+                  {diff.branch}{' '}
+                  <span className="text-text-muted font-normal">&rarr;</span>{' '}
+                  {diff.parent}
+                </>
+              ) : (
+                'Select a branch'
+              )}
+            </h2>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {moveSuccess && (
+              <span className="font-mono text-[0.7rem] text-accent whitespace-nowrap">
+                {moveSuccess}
+              </span>
+            )}
+            {comments.length > 0 && (
+              <button
+                type="button"
+                className="appearance-none border border-accent bg-accent/10 text-accent text-[0.7rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-accent/20 transition-colors duration-100 whitespace-nowrap"
+                onClick={handleCopyComments}
+              >
+                {copyFeedback ? 'Copied!' : `Copy ${comments.length} comment${comments.length === 1 ? '' : 's'}`}
+              </button>
+            )}
+            {!isDiffLoading && diffPatches.length > 0 && (
+              <span className="font-mono text-[0.68rem] text-text-secondary bg-surface-hover border border-border px-2 py-[3px] rounded-full whitespace-nowrap">
+                {diffPatches.length} file{diffPatches.length === 1 ? '' : 's'}
+              </span>
+            )}
+            <div
+              className="flex bg-white/4 border border-border rounded-md p-0.5"
+              role="group"
+              aria-label="Diff layout"
+            >
+              <button
+                className={`appearance-none border-none rounded-[6px] font-mono text-[0.7rem] tracking-[0.02em] px-2.5 py-1 cursor-pointer transition-[color,background] duration-[120ms] ease-in-out ${diffStyle === 'unified' ? 'text-text-primary bg-surface-active' : 'bg-transparent text-text-muted hover:text-text-secondary'}`}
+                onClick={() => setDiffStyle('unified')}
+                type="button"
+              >
+                Unified
+              </button>
+              <button
+                className={`appearance-none border-none rounded-[6px] font-mono text-[0.7rem] tracking-[0.02em] px-2.5 py-1 cursor-pointer transition-[color,background] duration-[120ms] ease-in-out ${diffStyle === 'split' ? 'text-text-primary bg-surface-active' : 'bg-transparent text-text-muted hover:text-text-secondary'}`}
+                onClick={() => setDiffStyle('split')}
+                type="button"
+              >
+                Split
+              </button>
+            </div>
+          </div>
+        </header>
+
+        {error ? (
+          <p className="m-[1.15rem] text-danger text-[0.88rem]">{error}</p>
+        ) : null}
+
+        {isDiffLoading ? (
+          <p className="m-[1.15rem] text-text-muted text-[0.88rem]">Loading diff…</p>
+        ) : null}
+
+        {!isDiffLoading && activePatch !== undefined && activePatch !== null && activePatch.trim() === '' ? (
+          <p className="m-[1.15rem] text-text-muted text-[0.88rem]">
+            {selection?.type === 'working'
+              ? 'No uncommitted changes.'
+              : 'No file differences between this branch and its parent.'}
+          </p>
+        ) : null}
+
+        {!isDiffLoading && activePatch && activePatch.trim() !== '' && diffPatches.length === 0 ? (
+          <p className="m-[1.15rem] text-danger text-[0.88rem]">
+            Could not render this diff patch.
+          </p>
+        ) : null}
+
+        {!isDiffLoading && activePatch && diffPatches.length > 0 && (
+          <div className="diff-content flex-1 min-w-0 min-h-0 overflow-auto">
+            {diffPatches.map((patch, index) => {
+              const info = fileInfos[index];
+              if (!info) return null;
+              return (
+                <div
+                  className={index > 0 ? 'border-t border-border' : undefined}
+                  key={`mobile-${selection?.type === 'working' ? 'working' : diff?.branch}-${index}`}
+                >
+                  <DiffFileSection
+                    patch={patch}
+                    fileInfo={info}
+                    comments={comments}
+                    activeInput={activeInput}
+                    editingComment={editingComment}
+                    toolbarState={toolbarState}
+                    moveState={moveState}
+                    branches={branches}
+                    sourceBranch={selection?.type === 'branch' ? selection.name : ''}
+                    isMoving={isMoving}
+                    moveError={moveError}
+                    onRangeSelected={handleRangeSelected}
+                    onStartEdit={handleStartEdit}
+                    onAddComment={handleAddComment}
+                    onUpdateComment={handleUpdateComment}
+                    onDeleteComment={handleDeleteComment}
+                    onCancelInput={handleCancelInput}
+                    onToolbarComment={handleToolbarComment}
+                    onToolbarMove={handleToolbarMove}
+                    onBranchSelect={handleBranchSelect}
+                    onMoveCancelPicker={handleMoveCancelPicker}
+                    isWorkingChanges={selection?.type === 'working'}
+                    selectedHunks={selectedHunks}
+                    onHunkToggle={handleHunkToggle}
+                    parsedHunks={parsedHunks}
+                    diffStyle={diffStyle}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+      </>
+      )}
 
       {selection?.type === 'working' && selectedHunks.size > 0 && !showAcceptPicker && (
         <AcceptBanner
