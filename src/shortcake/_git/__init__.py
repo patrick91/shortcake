@@ -26,6 +26,7 @@ from shortcake._git._core import (
     get_conflict_files,
     get_current_branch,
     get_default_branch,
+    get_staged_diff,
     get_staged_files,
     has_precommit_hook,
     has_staged_changes,
@@ -34,7 +35,12 @@ from shortcake._git._core import (
     run_precommit_hook,
     set_head_to_branch,
     switch_branch,
+    unstage_all,
     update_branch,
+)
+from shortcake._git._patch import (
+    EmptyPatchError,
+    extract_sub_patch,
 )
 from shortcake._git._rebase import (
     DULWICH_REBASE_ERRORS,
@@ -69,6 +75,7 @@ __all__ = [
     "DULWICH_HOOK_ERRORS",
     "DULWICH_IO_ERRORS",
     "DULWICH_REBASE_ERRORS",
+    "EmptyPatchError",
     "RebaseFailure",
     "RebaseResult",
     "amend_commit",
@@ -78,6 +85,7 @@ __all__ = [
     "create_branch",
     "create_commit",
     "delete_branch",
+    "extract_sub_patch",
     "fetch_and_fast_forward_trunk",
     "get_all_local_branches",
     "get_branch_children",
@@ -94,6 +102,7 @@ __all__ = [
     "get_merged_branches",
     "get_rebase_commits",
     "get_remote_ref",
+    "get_staged_diff",
     "get_staged_files",
     "get_tracked_branches",
     "has_precommit_hook",
@@ -110,5 +119,6 @@ __all__ = [
     "run_precommit_hook",
     "set_head_to_branch",
     "switch_branch",
+    "unstage_all",
     "update_branch",
 ]
