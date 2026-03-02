@@ -164,11 +164,7 @@ def _modify_target(
         git.switch_branch(repo, target_branch)
 
         # --- Step 5: Forward-apply the patch on target ---
-        try:
-            _git_apply(repo_path, staged_diff, reverse=False)
-        except Exception:  # pragma: no cover
-            _rollback()
-            raise
+        _git_apply(repo_path, staged_diff, reverse=False)
 
         # --- Step 6: Stage and amend target commit ---
         _stage_all(repo_path)
