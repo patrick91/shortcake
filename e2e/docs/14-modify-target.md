@@ -99,6 +99,32 @@ $ git stash list
 stash@{0}: On add-feature-c: important work
 ```
 
+## Failure Recovery: Unstaged Changes Preserved
+
+When the fold fails and the user has unstaged working tree changes, those changes must survive the rollback.
+
+Make unstaged edits, then stage a modification to feature_b.py (which doesn't exist on add-base-app) and try to fold:
+
+```console
+$ echo "unstaged work" >> app.py
+$ echo "wip on c" >> feature_c.py
+$ echo "modify b" >> feature_b.py && git add feature_b.py
+$ sc modify -t add-base-app
+Error: Unexpected error: Failed to apply patch: error: feature_b.py: No such file or directory
+```
+
+Verify unstaged changes are preserved and the stash from the previous test is intact:
+
+```console
+$ git branch --show-current
+add-feature-c
+$ git diff --name-only
+app.py
+feature_c.py
+$ git stash list
+stash@{0}: On add-feature-c: important work
+```
+
 ## Incompatible Options
 
 The `--target` flag cannot be combined with `-m` or `-e`:
