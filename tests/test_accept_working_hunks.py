@@ -166,9 +166,7 @@ def test_accept_multiple_hunks_same_file(
     assert "world modified" in content
 
 
-def test_accept_hunks_across_multiple_files(
-    temp_repo: Repo, tmp_path: Path
-) -> None:
+def test_accept_hunks_across_multiple_files(temp_repo: Repo, tmp_path: Path) -> None:
     """Accept hunks from different files."""
     repo = temp_repo
     repo_path = Path(repo.path)
@@ -200,9 +198,7 @@ def test_accept_hunks_across_multiple_files(
         target_branch="tracked_branch",
         hunks=[
             HunkSelection(file_path="app.py", file_patch=app_patch, hunk_index=0),
-            HunkSelection(
-                file_path="utils.py", file_patch=utils_patch, hunk_index=0
-            ),
+            HunkSelection(file_path="utils.py", file_patch=utils_patch, hunk_index=0),
         ],
     )
 
@@ -215,9 +211,7 @@ def test_accept_hunks_across_multiple_files(
     assert "util modified" in (tmp_path / "utils.py").read_text()
 
 
-def test_remaining_working_changes_preserved(
-    temp_repo: Repo, tmp_path: Path
-) -> None:
+def test_remaining_working_changes_preserved(temp_repo: Repo, tmp_path: Path) -> None:
     """Remaining working changes are preserved via stash/pop after accept."""
     repo = temp_repo
     repo_path = Path(repo.path)
@@ -284,9 +278,7 @@ def test_remaining_working_changes_preserved(
     _accept_working_hunks(
         repo,
         target_branch="tracked_branch",
-        hunks=[
-            HunkSelection(file_path="app.py", file_patch=file_patch, hunk_index=0)
-        ],
+        hunks=[HunkSelection(file_path="app.py", file_patch=file_patch, hunk_index=0)],
     )
 
     # Verify the other file is still present in working tree
@@ -314,9 +306,7 @@ def test_error_rebase_in_progress(
                 repo,
                 target_branch="tracked_branch",
                 hunks=[
-                    HunkSelection(
-                        file_path="app.py", file_patch="fake", hunk_index=0
-                    )
+                    HunkSelection(file_path="app.py", file_patch="fake", hunk_index=0)
                 ],
             )
     finally:
@@ -337,9 +327,7 @@ def test_error_target_branch_not_tracked(temp_repo: Repo, tmp_path: Path) -> Non
         _accept_working_hunks(
             temp_repo,
             target_branch="untracked",
-            hunks=[
-                HunkSelection(file_path="work.py", file_patch="fake", hunk_index=0)
-            ],
+            hunks=[HunkSelection(file_path="work.py", file_patch="fake", hunk_index=0)],
         )
 
 
@@ -349,9 +337,7 @@ def test_error_target_branch_not_exist(temp_repo: Repo) -> None:
         _accept_working_hunks(
             temp_repo,
             target_branch="nonexistent",
-            hunks=[
-                HunkSelection(file_path="f.py", file_patch="fake", hunk_index=0)
-            ],
+            hunks=[HunkSelection(file_path="f.py", file_patch="fake", hunk_index=0)],
         )
 
 
@@ -370,9 +356,7 @@ def test_error_invalid_hunk_index(
             repo,
             target_branch="tracked_branch",
             hunks=[
-                HunkSelection(
-                    file_path="app.py", file_patch=file_patch, hunk_index=99
-                )
+                HunkSelection(file_path="app.py", file_patch=file_patch, hunk_index=99)
             ],
         )
 
@@ -417,9 +401,7 @@ def test_rollback_on_restack_failure(temp_repo: Repo, tmp_path: Path) -> None:
 
     # Switch to parent_branch and add working changes
     switch_branch(repo, "parent_branch")
-    app_py.write_text(
-        "def hello():\n    return 'hello modified'\n"
-    )
+    app_py.write_text("def hello():\n    return 'hello modified'\n")
 
     # Save original SHAs
     parent_sha_before = git.get_branch_head(repo, "parent_branch").decode()
@@ -433,9 +415,7 @@ def test_rollback_on_restack_failure(temp_repo: Repo, tmp_path: Path) -> None:
             repo,
             target_branch="parent_branch",
             hunks=[
-                HunkSelection(
-                    file_path="app.py", file_patch=file_patch, hunk_index=0
-                )
+                HunkSelection(file_path="app.py", file_patch=file_patch, hunk_index=0)
             ],
         )
 

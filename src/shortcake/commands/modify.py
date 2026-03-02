@@ -268,9 +268,7 @@ def modify(
 
         typer.echo(f"Folded staged changes into '{target}'")
         if result.restacked_branches:
-            typer.echo(
-                f"Restacked {len(result.restacked_branches)} branch(es)."
-            )
+            typer.echo(f"Restacked {len(result.restacked_branches)} branch(es).")
         return
 
     # Check for staged changes and run hooks if needed
