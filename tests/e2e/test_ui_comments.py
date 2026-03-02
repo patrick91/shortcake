@@ -12,17 +12,20 @@ LINE_GUTTER_SELECTOR = "[data-column-number]"
 
 
 def _click_diff_line(page: Page):
-    """Click the first visible line-number gutter in the diff to trigger
-    the comment input.
+    """Click the first visible line-number gutter and then the 'Comment'
+    button on the selection toolbar to open the comment input.
 
-    @pierre/diffs renders each line row as ``<div data-line="N">`` with a
-    child ``<div data-column-number>`` containing the line number text.
-    Clicking the gutter fires ``onLineSelectionEnd`` which opens the
-    ``CommentInput`` component.
+    The UI flow is: click gutter → selection toolbar appears → click
+    'Comment' button → ``CommentInput`` textarea appears.
     """
     gutter = page.locator(LINE_GUTTER_SELECTOR).first
     gutter.wait_for(state="visible", timeout=5_000)
     gutter.click()
+
+    # The selection toolbar appears with a "Comment" button
+    comment_btn = page.get_by_role("button", name="Comment")
+    comment_btn.wait_for(state="visible", timeout=5_000)
+    comment_btn.click()
 
 
 def _add_comment(page: Page, text: str = "Test comment"):
