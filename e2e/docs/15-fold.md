@@ -127,6 +127,15 @@ $ cat feature_d.py
 feature d
 ```
 
+```console
+$ sc ls
+◯ add-feature-c
+│
+◉ add-base-app (current)
+│
+◯ main
+```
+
 ## Error Cases
 
 Cannot fold an untracked branch:
