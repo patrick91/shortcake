@@ -539,9 +539,13 @@ def normalize_output(output: str) -> str:
         # [branch abc1234] message
         # abc1234 message (git log --oneline)
         # ● abc1234 message (sc log output)
+        # to abc1234 (sc pull fast-forward)
+        # (abc1234) (sc pull reset/rebase)
         line = re.sub(r"\[(\S+)\s+[a-f0-9]{7,}\]", r"[\1 <HASH>]", line)
         line = re.sub(r"^[a-f0-9]{7,}\s+", "<HASH> ", line)
         line = re.sub(r"^(● )[a-f0-9]{7,}\s+", r"\1<HASH> ", line)
+        line = re.sub(r"\bto ([a-f0-9]{7,})\b", r"to <HASH>", line)
+        line = re.sub(r"\(([a-f0-9]{7,})\)", r"(<HASH>)", line)
         # Replace PR URLs (https://github.com/owner/repo/pull/123)
         line = re.sub(
             r"https://github\.com/[^/]+/[^/]+/pull/(\d+)",
