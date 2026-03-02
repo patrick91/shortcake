@@ -94,6 +94,17 @@ $ sc create -m "Add feature D"
 Created branch 'add-feature-d' from 'add-feature-c'
 ```
 
+```console
+$ sc ls
+◉ add-feature-d (current)
+│
+◯ add-feature-c
+│
+◯ add-base-app
+│
+◯ main
+```
+
 ## Fold with --into
 
 Fold feature D into add-base-app (non-adjacent):
