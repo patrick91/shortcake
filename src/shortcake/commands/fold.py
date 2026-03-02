@@ -13,7 +13,11 @@ from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
 from shortcake._trailers import Trailers
 from shortcake.commands.adopt import _replay_commits
-from shortcake.commands.move_lines import _git_apply, _stage_all, _get_tracked_branches_in_order
+from shortcake.commands.move_lines import (
+    _get_tracked_branches_in_order,
+    _git_apply,
+    _stage_all,
+)
 from shortcake.commands.restack import _plan_restack, _rebase_branch
 
 
@@ -122,10 +126,7 @@ def _fold(repo: Repo, into: str | None = None) -> FoldResult:
         raise FoldError(f"Branch '{source_branch}' is not tracked by Shortcake")
 
     # Resolve target
-    if into is None:
-        target_branch = source_parent
-    else:
-        target_branch = into
+    target_branch = source_parent if into is None else into
 
     if target_branch == source_branch:
         raise FoldError("Cannot fold a branch into itself")
@@ -153,9 +154,10 @@ def _fold(repo: Repo, into: str | None = None) -> FoldResult:
     original_refs: dict[str, str] = {}
     for b in all_tracked:
         original_refs[b] = git.get_branch_head(repo, b).decode()
-    # Also save the source branch ref (it may not be in tracked order if it gets deleted)
-    original_refs[source_branch] = git.get_branch_head(repo, source_branch).decode()
-    source_deleted = False
+    # Save source ref too (may not be in tracked order)
+    original_refs[source_branch] = (
+        git.get_branch_head(repo, source_branch).decode()
+    )
 
     def _rollback() -> None:  # pragma: no cover
         """Restore all modified branch refs, recreate source if deleted."""
@@ -190,7 +192,6 @@ def _fold(repo: Repo, into: str | None = None) -> FoldResult:
 
         # --- Step 3: Delete source branch ---
         git.delete_branch(repo, source_branch)
-        source_deleted = True
 
         # --- Step 4: Restack ---
         # Re-fetch tracked branches after deletion
@@ -229,7 +230,9 @@ def _fold(repo: Repo, into: str | None = None) -> FoldResult:
 def fold(
     into: Annotated[
         str | None,
-        typer.Option("--into", "-i", help="Target branch to fold into (default: parent)"),
+        typer.Option(
+            "--into", "-i", help="Target branch to fold into"
+        ),
     ] = None,
 ) -> None:
     """Fold current branch into another branch (default: parent)."""

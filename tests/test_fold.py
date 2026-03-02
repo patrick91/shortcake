@@ -281,7 +281,8 @@ def test_fold_reparents_child_with_multiple_commits(
     (tmp_path / "c1.txt").write_text("c1 content")
     porcelain.add(temp_repo, paths=[str(tmp_path / "c1.txt")])
     trailers_c = Trailers(parent_branch="branch_b")
-    porcelain.commit(temp_repo, message=trailers_c.apply_to("feat: branch c first").encode())
+    msg_c = trailers_c.apply_to("feat: branch c first")
+    porcelain.commit(temp_repo, message=msg_c.encode())
 
     (tmp_path / "c2.txt").write_text("c2 content")
     porcelain.add(temp_repo, paths=[str(tmp_path / "c2.txt")])
@@ -305,7 +306,7 @@ def test_fold_reparents_child_with_multiple_commits(
 
 
 def test_fold_empty_diff(temp_repo: Repo, tmp_path: Path) -> None:
-    """Fold a branch with no unique diff (same tree as parent): just delete + reparent."""
+    """Fold a branch with no unique diff: just delete + reparent."""
     main_sha = temp_repo.refs[b"refs/heads/main"]
 
     # branch_a: tracked but same tree as main (empty diff)
