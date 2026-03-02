@@ -22,7 +22,46 @@ type CommentMeta = {
   commentId: string;
   text: string;
   isInput: boolean;
+  isToolbar?: boolean;
+  isBranchPicker?: boolean;
+  isHunkToggle?: boolean;
+  hunkKey?: HunkKey;
+  isSelected?: boolean;
+  hunkContext?: string | null;
 };
+
+type MoveState = {
+  file: string;
+  patchIndex: number;
+  startLine: number;
+  endLine: number;
+  side: AnnotationSide;
+} | null;
+
+type MoveResponse = {
+  sourceBranch: string;
+  targetBranch: string;
+  filePath: string;
+  restackedBranches: string[];
+};
+
+type AcceptHunksResponse = {
+  targetBranch: string;
+  filePaths: string[];
+  restackedBranches: string[];
+};
+
+type ParsedHunk = {
+  file: string;
+  patchIndex: number;
+  hunkIndex: number;
+  firstChangedLine: number;
+  hunkStartLine: number;
+  hunkContext: string | null;
+  side: AnnotationSide;
+};
+
+type HunkKey = `${string}:${number}`;
 
 type ActiveInput = {
   file: string;
@@ -131,6 +170,28 @@ async function fetchJSON<T>(path: string): Promise<T> {
   return payload as T;
 }
 
+async function postJSON<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const payload: unknown = await response.json();
+
+  if (!response.ok) {
+    const message =
+      typeof payload === 'object' &&
+      payload !== null &&
+      'error' in payload &&
+      typeof payload.error === 'string'
+        ? payload.error
+        : `Request failed (${response.status})`;
+    throw new Error(message);
+  }
+
+  return payload as T;
+}
+
 function parseFileInfo(patch: string, index: number): FileInfo {
   const headerMatch = patch.match(/^diff --git a\/.+ b\/(.+)$/m);
   const path = headerMatch?.[1] ?? `file-${index}`;
@@ -151,6 +212,59 @@ function parseFileInfo(patch: string, index: number): FileInfo {
   }
 
   return { path, name, additions, deletions, patchIndex: index };
+}
+
+function parseHunksFromPatch(patch: string, fileInfo: FileInfo, patchIndex: number): ParsedHunk[] {
+  const hunks: ParsedHunk[] = [];
+  const lines = patch.split('\n');
+  let hunkIndex = 0;
+
+  for (const line of lines) {
+    const match = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)/);
+    if (!match) continue;
+
+    const newStart = parseInt(match[2]!, 10);
+    const contextStr = match[3]?.trim() || null;
+
+    // Find the first changed line in this hunk
+    let currentLine = newStart;
+    let firstChangedLine = newStart;
+    let foundChange = false;
+    const hunkLineStart = lines.indexOf(line) + 1;
+
+    for (let i = hunkLineStart; i < lines.length; i++) {
+      const hunkLine = lines[i]!;
+      if (hunkLine.startsWith('@@')) break; // next hunk
+      if (hunkLine.startsWith('+') && !hunkLine.startsWith('+++')) {
+        if (!foundChange) {
+          firstChangedLine = currentLine;
+          foundChange = true;
+        }
+        currentLine++;
+      } else if (hunkLine.startsWith('-') && !hunkLine.startsWith('---')) {
+        if (!foundChange) {
+          firstChangedLine = currentLine;
+          foundChange = true;
+        }
+        // deletions don't advance new line counter
+      } else {
+        currentLine++;
+      }
+    }
+
+    hunks.push({
+      file: fileInfo.path,
+      patchIndex,
+      hunkIndex,
+      firstChangedLine: foundChange ? firstChangedLine : newStart,
+      hunkStartLine: newStart,
+      hunkContext: contextStr,
+      side: 'additions',
+    });
+    hunkIndex++;
+  }
+
+  return hunks;
 }
 
 function buildFileTree(files: FileInfo[]): TreeEntry[] {
@@ -404,18 +518,217 @@ function SavedComment({
   );
 }
 
+function SelectionToolbar({
+  lineLabel,
+  onComment,
+  onMove,
+  showMove,
+}: {
+  lineLabel: string;
+  onComment: () => void;
+  onMove: () => void;
+  showMove: boolean;
+}) {
+  return (
+    <div
+      className="flex items-center gap-2 p-2 my-1 bg-surface-hover border border-border rounded-md"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <span className="font-mono text-[0.65rem] text-text-muted mr-auto">{lineLabel}</span>
+      <button
+        type="button"
+        className="appearance-none border border-border bg-transparent text-text-secondary text-[0.72rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-surface-hover hover:text-text-primary transition-colors duration-100 flex items-center gap-1"
+        onClick={onComment}
+      >
+        Comment
+      </button>
+      {showMove && (
+        <button
+          type="button"
+          className="appearance-none border border-accent bg-accent/10 text-accent text-[0.72rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-accent/20 transition-colors duration-100 flex items-center gap-1"
+          onClick={onMove}
+        >
+          Move to...
+        </button>
+      )}
+    </div>
+  );
+}
+
+function HunkToggle({
+  hunkKey,
+  isSelected,
+  onToggle,
+  hunkContext,
+}: {
+  hunkKey: HunkKey;
+  isSelected: boolean;
+  onToggle: (key: HunkKey) => void;
+  hunkContext: string | null;
+}) {
+  return (
+    <div
+      className={`w-full flex items-center gap-2 py-1.5 px-3 cursor-pointer select-none transition-colors duration-100 border-b ${
+        isSelected
+          ? 'bg-accent/10 border-b-accent/30'
+          : 'bg-surface-hover/50 border-b-border hover:bg-surface-hover'
+      }`}
+      onClick={(e) => { e.stopPropagation(); onToggle(hunkKey); }}
+    >
+      <input
+        type="checkbox"
+        checked={isSelected}
+        onChange={() => onToggle(hunkKey)}
+        className="accent-accent cursor-pointer w-3.5 h-3.5 flex-shrink-0"
+        onClick={(e) => e.stopPropagation()}
+      />
+      <span className={`font-mono text-[0.75rem] cursor-pointer ${
+        isSelected ? 'text-accent font-medium' : 'text-text-secondary'
+      }`}>
+        {isSelected ? 'selected' : 'select hunk'}
+      </span>
+      {hunkContext && (
+        <span className="font-mono text-[0.7rem] text-text-muted ml-auto truncate max-w-[60%]" title={hunkContext}>
+          {hunkContext}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function AcceptBanner({
+  count,
+  onAcceptInto,
+  onClear,
+}: {
+  count: number;
+  onAcceptInto: () => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 bg-surface border border-accent/30 rounded-lg shadow-lg">
+      <span className="font-mono text-[0.75rem] text-text-primary">
+        {count} hunk{count === 1 ? '' : 's'} selected
+      </span>
+      <button
+        type="button"
+        className="appearance-none border border-accent bg-accent/10 text-accent text-[0.72rem] font-mono px-3 py-1 rounded-md cursor-pointer hover:bg-accent/20 transition-colors duration-100"
+        onClick={onAcceptInto}
+      >
+        Accept into...
+      </button>
+      <button
+        type="button"
+        className="appearance-none border border-border bg-transparent text-text-secondary text-[0.72rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-surface-hover hover:text-text-primary transition-colors duration-100"
+        onClick={onClear}
+      >
+        Clear
+      </button>
+    </div>
+  );
+}
+
+function BranchPicker({
+  branches,
+  currentBranch,
+  sourceBranch,
+  onSelect,
+  onCancel,
+  isMoving,
+  moveError,
+  mode = 'move',
+}: {
+  branches: StackBranch[];
+  currentBranch: string;
+  sourceBranch: string;
+  onSelect: (branch: string) => void;
+  onCancel: () => void;
+  isMoving: boolean;
+  moveError: string | null;
+  mode?: 'move' | 'accept';
+}) {
+  const parentBranch = branches.find((b) => b.name === sourceBranch)?.parent;
+  const headerText = mode === 'accept' ? 'Accept into branch' : 'Move to branch';
+  const loadingText = mode === 'accept' ? 'Accepting lines...' : 'Moving lines...';
+
+  return (
+    <div
+      className="flex flex-col gap-1 p-2.5 my-1 bg-surface-hover border border-border rounded-md"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex items-center justify-between mb-1">
+        <span className="font-mono text-[0.72rem] font-semibold text-text-primary">
+          {headerText}
+        </span>
+        <button
+          type="button"
+          className="appearance-none border-none bg-transparent text-text-muted text-[0.65rem] cursor-pointer hover:text-text-primary p-0.5"
+          onClick={onCancel}
+          disabled={isMoving}
+        >
+          Cancel
+        </button>
+      </div>
+      {isMoving && (
+        <p className="text-[0.72rem] text-text-muted font-mono m-0">{loadingText}</p>
+      )}
+      {moveError && (
+        <p className="text-[0.72rem] text-danger font-mono m-0">{moveError}</p>
+      )}
+      {!isMoving && (
+        <div className="flex flex-col gap-0.5 max-h-[200px] overflow-y-auto">
+          {branches
+            .filter((b) => b.name !== sourceBranch)
+            .map((branch) => (
+              <button
+                key={branch.name}
+                type="button"
+                className={`appearance-none border-none rounded-md py-1.5 px-2 text-left text-[0.75rem] font-mono cursor-pointer transition-colors duration-100 ${
+                  branch.name === parentBranch
+                    ? 'bg-accent/10 text-accent hover:bg-accent/20'
+                    : 'bg-transparent text-text-secondary hover:bg-surface-active hover:text-text-primary'
+                }`}
+                style={{ paddingInlineStart: `${8 + branch.depth * 10}px` }}
+                onClick={() => onSelect(branch.name)}
+              >
+                {branch.name}
+                {branch.name === parentBranch && (
+                  <span className="ml-1.5 text-[0.6rem] text-text-muted">(parent)</span>
+                )}
+              </button>
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DiffFileSection({
   patch,
   fileInfo,
   comments,
   activeInput,
   editingComment,
+  toolbarState,
+  moveState,
+  branches,
+  sourceBranch,
+  isMoving,
+  moveError,
   onRangeSelected,
   onStartEdit,
   onAddComment,
   onUpdateComment,
   onDeleteComment,
   onCancelInput,
+  onToolbarComment,
+  onToolbarMove,
+  onBranchSelect,
+  onMoveCancelPicker,
+  isWorkingChanges,
+  selectedHunks,
+  onHunkToggle,
+  parsedHunks,
   diffStyle,
 }: {
   patch: string;
@@ -423,12 +736,26 @@ function DiffFileSection({
   comments: DiffComment[];
   activeInput: ActiveInput;
   editingComment: DiffComment | null;
+  toolbarState: ActiveInput;
+  moveState: MoveState;
+  branches: StackBranch[];
+  sourceBranch: string;
+  isMoving: boolean;
+  moveError: string | null;
   onRangeSelected: (file: string, startLine: number, endLine: number, side: AnnotationSide) => void;
   onStartEdit: (comment: DiffComment) => void;
   onAddComment: (file: string, startLine: number, endLine: number, side: AnnotationSide, text: string) => void;
   onUpdateComment: (id: string, text: string) => void;
   onDeleteComment: (id: string) => void;
   onCancelInput: () => void;
+  onToolbarComment: () => void;
+  onToolbarMove: () => void;
+  onBranchSelect: (branch: string) => void;
+  onMoveCancelPicker: () => void;
+  isWorkingChanges: boolean;
+  selectedHunks: Set<HunkKey>;
+  onHunkToggle: (key: HunkKey) => void;
+  parsedHunks: ParsedHunk[];
   diffStyle: DiffStyle;
 }) {
   const fileComments = comments.filter((c) => c.file === fileInfo.path);
@@ -464,6 +791,12 @@ function DiffFileSection({
   );
 
   const selectedLines = useMemo<SelectedLineRange | null>(() => {
+    if (toolbarState && toolbarState.file === fileInfo.path) {
+      return { start: toolbarState.startLine, end: toolbarState.endLine, side: toolbarState.side };
+    }
+    if (moveState && moveState.file === fileInfo.path) {
+      return { start: moveState.startLine, end: moveState.endLine, side: moveState.side };
+    }
     if (activeInput && activeInput.file === fileInfo.path) {
       return { start: activeInput.startLine, end: activeInput.endLine, side: activeInput.side };
     }
@@ -471,7 +804,7 @@ function DiffFileSection({
       return { start: editingComment.startLine, end: editingComment.endLine, side: editingComment.side };
     }
     return null;
-  }, [activeInput, editingComment, fileInfo.path]);
+  }, [toolbarState, moveState, activeInput, editingComment, fileInfo.path]);
 
   const lineAnnotations = useMemo<DiffLineAnnotation<CommentMeta>[]>(() => {
     const annotations: DiffLineAnnotation<CommentMeta>[] = [];
@@ -492,12 +825,86 @@ function DiffFileSection({
       });
     }
 
+    if (toolbarState && toolbarState.file === fileInfo.path) {
+      annotations.push({
+        lineNumber: toolbarState.endLine,
+        side: toolbarState.side,
+        metadata: { commentId: '__toolbar__', text: '', isInput: false, isToolbar: true },
+      });
+    }
+
+    if (moveState && moveState.file === fileInfo.path) {
+      annotations.push({
+        lineNumber: moveState.endLine,
+        side: moveState.side,
+        metadata: { commentId: '__branchpicker__', text: '', isInput: false, isBranchPicker: true },
+      });
+    }
+
+    // Add hunk toggle annotations for working changes
+    if (isWorkingChanges) {
+      for (const hunk of parsedHunks) {
+        if (hunk.file !== fileInfo.path) continue;
+        const key: HunkKey = `${hunk.file}:${hunk.hunkIndex}`;
+        annotations.push({
+          lineNumber: hunk.hunkStartLine,
+          side: hunk.side,
+          metadata: {
+            commentId: `__hunktoggle__${key}`,
+            text: '',
+            isInput: false,
+            isHunkToggle: true,
+            hunkKey: key,
+            isSelected: selectedHunks.has(key),
+            hunkContext: hunk.hunkContext,
+          },
+        });
+      }
+    }
+
     return annotations;
-  }, [fileComments, activeInput, editingComment, fileInfo.path]);
+  }, [fileComments, activeInput, editingComment, toolbarState, moveState, isWorkingChanges, parsedHunks, selectedHunks, fileInfo.path]);
 
   const renderAnnotation = useCallback(
     (annotation: DiffLineAnnotation<CommentMeta>) => {
       const { metadata } = annotation;
+
+      if (metadata.isHunkToggle && metadata.hunkKey) {
+        return (
+          <HunkToggle
+            hunkKey={metadata.hunkKey}
+            isSelected={metadata.isSelected ?? false}
+            onToggle={onHunkToggle}
+            hunkContext={metadata.hunkContext ?? null}
+          />
+        );
+      }
+
+      if (metadata.isToolbar && toolbarState) {
+        return (
+          <SelectionToolbar
+            lineLabel={formatLineLabel(toolbarState.startLine, toolbarState.endLine)}
+            onComment={onToolbarComment}
+            onMove={onToolbarMove}
+            showMove={!!sourceBranch}
+          />
+        );
+      }
+
+      if (metadata.isBranchPicker && moveState) {
+        return (
+          <BranchPicker
+            branches={branches}
+            currentBranch={sourceBranch}
+            sourceBranch={sourceBranch}
+            onSelect={onBranchSelect}
+            onCancel={onMoveCancelPicker}
+            isMoving={isMoving}
+            moveError={moveError}
+            mode="move"
+          />
+        );
+      }
 
       if (metadata.isInput && activeInput) {
         return (
@@ -533,7 +940,7 @@ function DiffFileSection({
         />
       );
     },
-    [fileComments, editingComment, activeInput, fileInfo.path, onAddComment, onUpdateComment, onDeleteComment, onCancelInput, onStartEdit],
+    [fileComments, editingComment, activeInput, toolbarState, moveState, branches, sourceBranch, isMoving, moveError, fileInfo.path, onAddComment, onUpdateComment, onDeleteComment, onCancelInput, onStartEdit, onToolbarComment, onToolbarMove, onBranchSelect, onMoveCancelPicker, onHunkToggle],
   );
 
   return (
@@ -564,6 +971,15 @@ export default function App() {
   const [activeInput, setActiveInput] = useState<ActiveInput>(null);
   const [editingComment, setEditingComment] = useState<DiffComment | null>(null);
   const [copyFeedback, setCopyFeedback] = useState(false);
+  const [toolbarState, setToolbarState] = useState<ActiveInput>(null);
+  const [moveState, setMoveState] = useState<MoveState>(null);
+  const [isMoving, setIsMoving] = useState(false);
+  const [moveError, setMoveError] = useState<string | null>(null);
+  const [moveSuccess, setMoveSuccess] = useState<string | null>(null);
+  const [selectedHunks, setSelectedHunks] = useState<Set<HunkKey>>(new Set());
+  const [showAcceptPicker, setShowAcceptPicker] = useState(false);
+  const [isAccepting, setIsAccepting] = useState(false);
+  const [acceptError, setAcceptError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -649,6 +1065,13 @@ export default function App() {
     setComments([]);
     setActiveInput(null);
     setEditingComment(null);
+    setToolbarState(null);
+    setMoveState(null);
+    setMoveError(null);
+    setMoveSuccess(null);
+    setSelectedHunks(new Set());
+    setShowAcceptPicker(false);
+    setAcceptError(null);
   }, [selection]);
 
   const activePatch = selection?.type === 'working' ? workingPatch : diff?.patch;
@@ -668,6 +1091,15 @@ export default function App() {
     [fileInfos],
   );
 
+  const parsedHunks = useMemo(() => {
+    if (selection?.type !== 'working') return [];
+    return diffPatches.flatMap((patch, i) => {
+      const info = fileInfos[i];
+      if (!info) return [];
+      return parseHunksFromPatch(patch, info, i);
+    });
+  }, [diffPatches, fileInfos, selection]);
+
   const toggleDir = useCallback((path: string) => {
     setCollapsedDirs((prev) => {
       const next = new Set(prev);
@@ -685,7 +1117,11 @@ export default function App() {
   const handleRangeSelected = useCallback(
     (file: string, startLine: number, endLine: number, side: AnnotationSide) => {
       setEditingComment(null);
-      setActiveInput({ file, startLine, endLine, side });
+      setActiveInput(null);
+      setMoveState(null);
+      setMoveError(null);
+      // Always show toolbar (for both branch diffs and working changes)
+      setToolbarState({ file, startLine, endLine, side });
     },
     [],
   );
@@ -720,6 +1156,146 @@ export default function App() {
   const handleCancelInput = useCallback(() => {
     setActiveInput(null);
     setEditingComment(null);
+    setToolbarState(null);
+    setMoveState(null);
+    setMoveError(null);
+  }, []);
+
+  const handleToolbarComment = useCallback(() => {
+    if (!toolbarState) return;
+    setActiveInput(toolbarState);
+    setToolbarState(null);
+  }, [toolbarState]);
+
+  const handleToolbarMove = useCallback(() => {
+    if (!toolbarState) return;
+    const patchIndex = diffPatches.findIndex((_, i) => {
+      const info = fileInfos[i];
+      return info?.path === toolbarState.file;
+    });
+    setMoveState({
+      file: toolbarState.file,
+      patchIndex: patchIndex >= 0 ? patchIndex : 0,
+      startLine: toolbarState.startLine,
+      endLine: toolbarState.endLine,
+      side: toolbarState.side,
+    });
+    setToolbarState(null);
+    setMoveError(null);
+  }, [toolbarState, diffPatches, fileInfos]);
+
+  const handleHunkToggle = useCallback((key: HunkKey) => {
+    setSelectedHunks((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }, []);
+
+  const refreshData = useCallback(async () => {
+    try {
+      const stackData = await fetchJSON<StackResponse>('/api/stack');
+      setStack(stackData);
+      if (selection?.type === 'branch') {
+        const diffData = await fetchJSON<DiffResponse>(
+          `/api/diff?branch=${encodeURIComponent(selection.name)}`,
+        );
+        setDiff(diffData);
+      } else if (selection?.type === 'working') {
+        const data = await fetchJSON<WorkingDiffResponse>('/api/diff/working');
+        setWorkingPatch(data.patch);
+      }
+    } catch {
+      // Silently fail refresh — data may be stale but still usable
+    }
+  }, [selection]);
+
+  const handleBranchSelect = useCallback(
+    async (targetBranch: string) => {
+      if (!moveState || !diff || selection?.type !== 'branch') return;
+
+      setIsMoving(true);
+      setMoveError(null);
+
+      try {
+        await postJSON<MoveResponse>('/api/move-lines', {
+          sourceBranch: selection.name,
+          targetBranch,
+          filePatch: diffPatches[moveState.patchIndex] ?? '',
+          filePath: moveState.file,
+          startLine: moveState.startLine,
+          endLine: moveState.endLine,
+          side: moveState.side,
+        });
+
+        setMoveState(null);
+        setMoveSuccess(`Moved to ${targetBranch}`);
+        setTimeout(() => setMoveSuccess(null), 3000);
+
+        // Refresh data to show updated diffs
+        await refreshData();
+      } catch (err) {
+        setMoveError(err instanceof Error ? err.message : 'Move failed');
+      } finally {
+        setIsMoving(false);
+      }
+    },
+    [moveState, diff, selection, diffPatches, refreshData],
+  );
+
+  const handleMoveCancelPicker = useCallback(() => {
+    setMoveState(null);
+    setMoveError(null);
+  }, []);
+
+  const handleAcceptBranchSelect = useCallback(
+    async (targetBranch: string) => {
+      if (selectedHunks.size === 0 || selection?.type !== 'working') return;
+
+      setIsAccepting(true);
+      setAcceptError(null);
+
+      // Build hunk selections from selectedHunks set
+      const hunkPayload = [...selectedHunks].map((key) => {
+        const [filePath, hunkIndexStr] = key.split(':') as [string, string];
+        const hunkIndex = parseInt(hunkIndexStr, 10);
+        // Find the matching parsed hunk to get the patchIndex
+        const parsed = parsedHunks.find(
+          (h) => h.file === filePath && h.hunkIndex === hunkIndex,
+        );
+        const patchIdx = parsed?.patchIndex ?? 0;
+        return {
+          filePath,
+          filePatch: diffPatches[patchIdx] ?? '',
+          hunkIndex,
+        };
+      });
+
+      try {
+        await postJSON<AcceptHunksResponse>('/api/accept-working-hunks', {
+          targetBranch,
+          hunks: hunkPayload,
+        });
+
+        setSelectedHunks(new Set());
+        setShowAcceptPicker(false);
+        setMoveSuccess(`Accepted into ${targetBranch}`);
+        setTimeout(() => setMoveSuccess(null), 3000);
+
+        await refreshData();
+      } catch (err) {
+        setAcceptError(err instanceof Error ? err.message : 'Accept failed');
+      } finally {
+        setIsAccepting(false);
+      }
+    },
+    [selectedHunks, selection, diffPatches, parsedHunks, refreshData],
+  );
+
+  const handleAcceptCancelPicker = useCallback(() => {
+    setShowAcceptPicker(false);
+    setAcceptError(null);
   }, []);
 
   const handleCopyComments = useCallback(() => {
@@ -876,6 +1452,11 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
+            {moveSuccess && (
+              <span className="font-mono text-[0.7rem] text-accent whitespace-nowrap">
+                {moveSuccess}
+              </span>
+            )}
             {comments.length > 0 && (
               <button
                 type="button"
@@ -979,12 +1560,26 @@ export default function App() {
                       comments={comments}
                       activeInput={activeInput}
                       editingComment={editingComment}
+                      toolbarState={toolbarState}
+                      moveState={moveState}
+                      branches={branches}
+                      sourceBranch={selection?.type === 'branch' ? selection.name : ''}
+                      isMoving={isMoving}
+                      moveError={moveError}
                       onRangeSelected={handleRangeSelected}
                       onStartEdit={handleStartEdit}
                       onAddComment={handleAddComment}
                       onUpdateComment={handleUpdateComment}
                       onDeleteComment={handleDeleteComment}
                       onCancelInput={handleCancelInput}
+                      onToolbarComment={handleToolbarComment}
+                      onToolbarMove={handleToolbarMove}
+                      onBranchSelect={handleBranchSelect}
+                      onMoveCancelPicker={handleMoveCancelPicker}
+                      isWorkingChanges={selection?.type === 'working'}
+                      selectedHunks={selectedHunks}
+                      onHunkToggle={handleHunkToggle}
+                      parsedHunks={parsedHunks}
                       diffStyle={diffStyle}
                     />
                   </div>
@@ -994,6 +1589,29 @@ export default function App() {
           </div>
         )}
       </section>
+
+      {selection?.type === 'working' && selectedHunks.size > 0 && !showAcceptPicker && (
+        <AcceptBanner
+          count={selectedHunks.size}
+          onAcceptInto={() => { setShowAcceptPicker(true); setAcceptError(null); }}
+          onClear={() => setSelectedHunks(new Set())}
+        />
+      )}
+
+      {showAcceptPicker && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[320px]">
+          <BranchPicker
+            branches={branches}
+            currentBranch=""
+            sourceBranch=""
+            onSelect={handleAcceptBranchSelect}
+            onCancel={handleAcceptCancelPicker}
+            isMoving={isAccepting}
+            moveError={acceptError}
+            mode="accept"
+          />
+        </div>
+      )}
     </main>
   );
 }

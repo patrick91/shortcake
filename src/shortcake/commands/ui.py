@@ -18,6 +18,13 @@ from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._tree import BranchNode, StackTree
+from shortcake.commands.move_lines import (
+    HunkSelection,
+    MoveError,
+    _accept_working_hunks,
+    _move_lines,
+    _move_lock,
+)
 
 
 @dataclass(frozen=True)
@@ -229,6 +236,148 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
                 return
 
             _write_json(self, 404, {"error": "Not found"})
+
+        def do_POST(self) -> None:
+            parsed = urlparse(self.path)
+
+            if parsed.path == "/api/move-lines":
+                content_length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(content_length)
+                try:
+                    body = json.loads(raw)
+                except (json.JSONDecodeError, ValueError):
+                    _write_json(self, 400, {"error": "Invalid JSON body"})
+                    return
+
+                required = [
+                    "sourceBranch",
+                    "targetBranch",
+                    "filePatch",
+                    "filePath",
+                    "startLine",
+                    "endLine",
+                    "side",
+                ]
+                missing = [f for f in required if f not in body]
+                if missing:
+                    _write_json(
+                        self,
+                        400,
+                        {"error": f"Missing required fields: {', '.join(missing)}"},
+                    )
+                    return
+
+                with _move_lock:
+                    try:
+                        result = _move_lines(
+                            repo,
+                            source_branch=body["sourceBranch"],
+                            target_branch=body["targetBranch"],
+                            file_patch=body["filePatch"],
+                            file_path=body["filePath"],
+                            start_line=body["startLine"],
+                            end_line=body["endLine"],
+                            side=body["side"],
+                        )
+                        _write_json(
+                            self,
+                            200,
+                            {
+                                "sourceBranch": result.source_branch,
+                                "targetBranch": result.target_branch,
+                                "filePath": result.file_path,
+                                "restackedBranches": result.restacked_branches,
+                            },
+                        )
+                    except MoveError as exc:
+                        _write_json(self, 400, {"error": str(exc)})
+                    except Exception as exc:
+                        _write_json(self, 500, {"error": str(exc)})
+                return
+
+            if parsed.path == "/api/accept-working-hunks":
+                content_length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(content_length)
+                try:
+                    body = json.loads(raw)
+                except (json.JSONDecodeError, ValueError):
+                    _write_json(self, 400, {"error": "Invalid JSON body"})
+                    return
+
+                required = ["targetBranch", "hunks"]
+                missing = [f for f in required if f not in body]
+                if missing:
+                    _write_json(
+                        self,
+                        400,
+                        {"error": f"Missing required fields: {', '.join(missing)}"},
+                    )
+                    return
+
+                raw_hunks = body["hunks"]
+                if not isinstance(raw_hunks, list) or len(raw_hunks) == 0:
+                    _write_json(
+                        self, 400, {"error": "hunks must be a non-empty array"}
+                    )
+                    return
+
+                hunk_selections: list[HunkSelection] = []
+                for h in raw_hunks:
+                    if not isinstance(h, dict):
+                        _write_json(
+                            self, 400, {"error": "Each hunk must be an object"}
+                        )
+                        return
+                    hunk_required = ["filePath", "filePatch", "hunkIndex"]
+                    hunk_missing = [f for f in hunk_required if f not in h]
+                    if hunk_missing:
+                        _write_json(
+                            self,
+                            400,
+                            {
+                                "error": f"Hunk missing fields: {', '.join(hunk_missing)}"
+                            },
+                        )
+                        return
+                    hunk_selections.append(
+                        HunkSelection(
+                            file_path=h["filePath"],
+                            file_patch=h["filePatch"],
+                            hunk_index=h["hunkIndex"],
+                        )
+                    )
+
+                with _move_lock:
+                    try:
+                        result = _accept_working_hunks(
+                            repo,
+                            target_branch=body["targetBranch"],
+                            hunks=hunk_selections,
+                        )
+                        _write_json(
+                            self,
+                            200,
+                            {
+                                "targetBranch": result.target_branch,
+                                "filePaths": result.file_paths,
+                                "restackedBranches": result.restacked_branches,
+                            },
+                        )
+                    except MoveError as exc:
+                        _write_json(self, 400, {"error": str(exc)})
+                    except Exception as exc:
+                        _write_json(self, 500, {"error": str(exc)})
+                return
+
+            _write_json(self, 404, {"error": "Not found"})
+
+        def do_OPTIONS(self) -> None:
+            self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def log_message(self, format: str, *args: object) -> None:
             return
