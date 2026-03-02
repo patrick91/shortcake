@@ -137,6 +137,32 @@ def _stage_all(repo_path: Path) -> None:
     )
 
 
+def _get_patch_files(patch_content: str) -> list[str]:
+    """Extract file paths affected by a patch."""
+    files: list[str] = []
+    for line in patch_content.splitlines():
+        if line.startswith("diff --git a/"):
+            # Format: diff --git a/path b/path
+            parts = line.split(" b/", 1)
+            if len(parts) == 2:
+                files.append(parts[1])
+    return files
+
+
+def _stage_patch_files(repo_path: Path, patch_content: str) -> None:
+    """Stage only the files affected by a patch (avoids staging untracked files)."""
+    files = _get_patch_files(patch_content)
+    if not files:
+        return
+    subprocess.run(
+        ["git", "add", "--"] + files,
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+
 def _get_tracked_branches_in_order(repo: Repo) -> list[str]:
     """Get all tracked branches in topological order."""
     all_branches = set(git.get_all_local_branches(repo))
@@ -253,7 +279,7 @@ def _move_lines(
             _git_apply(repo_path, sub_patch, reverse=True)
             removed_lines = []
 
-        _stage_all(repo_path)
+        _stage_patch_files(repo_path, file_patch)
         source_head = git.get_branch_head(repo, source_branch)
         source_message = git.get_commit_message(repo, source_head)
         git.amend_commit(repo, source_message)
@@ -288,7 +314,7 @@ def _move_lines(
                 _rollback()
                 raise
 
-        _stage_all(repo_path)
+        _stage_patch_files(repo_path, file_patch)
         target_head = git.get_branch_head(repo, target_branch)
         target_message = git.get_commit_message(repo, target_head)
         git.amend_commit(repo, target_message)
@@ -551,7 +577,7 @@ def _accept_working_hunks(
             raise
 
         # --- Step 5: Stage and amend ---
-        _stage_all(repo_path)
+        _stage_patch_files(repo_path, combined_patch)
         target_head = git.get_branch_head(repo, target_branch)
         target_message = git.get_commit_message(repo, target_head)
         git.amend_commit(repo, target_message)
