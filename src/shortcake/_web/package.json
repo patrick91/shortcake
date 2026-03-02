@@ -11,7 +11,8 @@
   "dependencies": {
     "@pierre/diffs": "^1.0.11",
     "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react-dom": "^19.2.0",
+    "react-resizable-panels": "^4.7.0"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.7",
