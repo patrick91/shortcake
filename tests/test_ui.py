@@ -415,6 +415,260 @@ def test_handler_log_message_suppressed(temp_repo: Repo) -> None:
     handler_cls.log_message(fake, "test %s", "arg")  # type: ignore[arg-type]
 
 
+# --- do_POST handler tests ---
+
+
+def _make_post_handler(
+    repo: Repo, path: str, body: dict | str | None = None
+) -> FakeHandler:
+    """Create a handler class and invoke do_POST with given path+body."""
+    handler_cls = _build_request_handler(repo)
+    fake = FakeHandler(path)
+    if body is not None:
+        raw = json.dumps(body) if isinstance(body, dict) else body
+        fake.rfile = io.BytesIO(raw.encode())
+        fake.headers = {"Content-Length": str(len(raw.encode()))}
+    else:
+        fake.rfile = io.BytesIO(b"")
+        fake.headers = {"Content-Length": "0"}
+    handler_cls.do_POST(fake)  # type: ignore[arg-type]
+    return fake
+
+
+def test_post_move_lines_invalid_json(temp_repo: Repo) -> None:
+    """POST /api/move-lines with invalid JSON returns 400."""
+    handler_cls = _build_request_handler(temp_repo)
+    fake = FakeHandler("/api/move-lines")
+    fake.rfile = io.BytesIO(b"not json")
+    fake.headers = {"Content-Length": "8"}
+    handler_cls.do_POST(fake)  # type: ignore[arg-type]
+    assert fake._status == 400
+    assert "Invalid JSON" in fake.response_json()["error"]
+
+
+def test_post_move_lines_missing_fields(temp_repo: Repo) -> None:
+    """POST /api/move-lines with missing fields returns 400."""
+    fake = _make_post_handler(temp_repo, "/api/move-lines", {"sourceBranch": "a"})
+    assert fake._status == 400
+    assert "Missing required fields" in fake.response_json()["error"]
+
+
+def test_post_move_lines_success(repo_with_stack: Repo, tmp_path: Path) -> None:
+    """POST /api/move-lines success returns 200 with result."""
+    mock_result = MagicMock()
+    mock_result.source_branch = "branch_a"
+    mock_result.target_branch = "branch_b"
+    mock_result.file_path = "test.txt"
+    mock_result.restacked_branches = []
+
+    body = {
+        "sourceBranch": "branch_a",
+        "targetBranch": "branch_b",
+        "filePatch": "patch",
+        "filePath": "test.txt",
+        "startLine": 1,
+        "endLine": 2,
+        "side": "additions",
+    }
+    with patch("shortcake.commands.ui._move_lines", return_value=mock_result):
+        fake = _make_post_handler(repo_with_stack, "/api/move-lines", body)
+    assert fake._status == 200
+    data = fake.response_json()
+    assert data["sourceBranch"] == "branch_a"
+    assert data["targetBranch"] == "branch_b"
+
+
+def test_post_move_lines_move_error(repo_with_stack: Repo) -> None:
+    """POST /api/move-lines MoveError returns 400."""
+    from shortcake.commands.move_lines import MoveError
+
+    body = {
+        "sourceBranch": "branch_a",
+        "targetBranch": "branch_b",
+        "filePatch": "patch",
+        "filePath": "test.txt",
+        "startLine": 1,
+        "endLine": 2,
+        "side": "additions",
+    }
+    with patch(
+        "shortcake.commands.ui._move_lines",
+        side_effect=MoveError("move failed"),
+    ):
+        fake = _make_post_handler(repo_with_stack, "/api/move-lines", body)
+    assert fake._status == 400
+    assert "move failed" in fake.response_json()["error"]
+
+
+def test_post_move_lines_unexpected_error(repo_with_stack: Repo) -> None:
+    """POST /api/move-lines unexpected error returns 500."""
+    body = {
+        "sourceBranch": "branch_a",
+        "targetBranch": "branch_b",
+        "filePatch": "patch",
+        "filePath": "test.txt",
+        "startLine": 1,
+        "endLine": 2,
+        "side": "additions",
+    }
+    with patch(
+        "shortcake.commands.ui._move_lines",
+        side_effect=RuntimeError("boom"),
+    ):
+        fake = _make_post_handler(repo_with_stack, "/api/move-lines", body)
+    assert fake._status == 500
+    assert "boom" in fake.response_json()["error"]
+
+
+def test_post_accept_hunks_invalid_json(temp_repo: Repo) -> None:
+    """POST /api/accept-working-hunks with invalid JSON returns 400."""
+    handler_cls = _build_request_handler(temp_repo)
+    fake = FakeHandler("/api/accept-working-hunks")
+    fake.rfile = io.BytesIO(b"bad json")
+    fake.headers = {"Content-Length": "8"}
+    handler_cls.do_POST(fake)  # type: ignore[arg-type]
+    assert fake._status == 400
+    assert "Invalid JSON" in fake.response_json()["error"]
+
+
+def test_post_accept_hunks_missing_fields(temp_repo: Repo) -> None:
+    """POST /api/accept-working-hunks missing fields returns 400."""
+    fake = _make_post_handler(
+        temp_repo, "/api/accept-working-hunks", {"targetBranch": "a"}
+    )
+    assert fake._status == 400
+    assert "Missing required fields" in fake.response_json()["error"]
+
+
+def test_post_accept_hunks_empty_hunks(temp_repo: Repo) -> None:
+    """POST /api/accept-working-hunks with empty hunks returns 400."""
+    fake = _make_post_handler(
+        temp_repo,
+        "/api/accept-working-hunks",
+        {"targetBranch": "a", "hunks": []},
+    )
+    assert fake._status == 400
+    assert "non-empty" in fake.response_json()["error"]
+
+
+def test_post_accept_hunks_invalid_hunk_type(temp_repo: Repo) -> None:
+    """POST /api/accept-working-hunks with non-object hunk returns 400."""
+    fake = _make_post_handler(
+        temp_repo,
+        "/api/accept-working-hunks",
+        {"targetBranch": "a", "hunks": ["not an object"]},
+    )
+    assert fake._status == 400
+    assert "must be an object" in fake.response_json()["error"]
+
+
+def test_post_accept_hunks_missing_hunk_fields(temp_repo: Repo) -> None:
+    """POST /api/accept-working-hunks hunk missing fields returns 400."""
+    fake = _make_post_handler(
+        temp_repo,
+        "/api/accept-working-hunks",
+        {"targetBranch": "a", "hunks": [{"filePath": "x"}]},
+    )
+    assert fake._status == 400
+    assert "Hunk missing fields" in fake.response_json()["error"]
+
+
+def test_post_accept_hunks_success(repo_with_stack: Repo) -> None:
+    """POST /api/accept-working-hunks success returns 200."""
+    mock_result = MagicMock()
+    mock_result.target_branch = "branch_a"
+    mock_result.file_paths = ["test.txt"]
+    mock_result.restacked_branches = []
+
+    body = {
+        "targetBranch": "branch_a",
+        "hunks": [
+            {
+                "filePath": "test.txt",
+                "filePatch": "patch",
+                "hunkIndex": 0,
+            }
+        ],
+    }
+    with patch(
+        "shortcake.commands.ui._accept_working_hunks",
+        return_value=mock_result,
+    ):
+        fake = _make_post_handler(repo_with_stack, "/api/accept-working-hunks", body)
+    assert fake._status == 200
+    data = fake.response_json()
+    assert data["targetBranch"] == "branch_a"
+    assert data["filePaths"] == ["test.txt"]
+
+
+def test_post_accept_hunks_move_error(repo_with_stack: Repo) -> None:
+    """POST /api/accept-working-hunks MoveError returns 400."""
+    from shortcake.commands.move_lines import MoveError
+
+    body = {
+        "targetBranch": "branch_a",
+        "hunks": [
+            {
+                "filePath": "test.txt",
+                "filePatch": "patch",
+                "hunkIndex": 0,
+            }
+        ],
+    }
+    with patch(
+        "shortcake.commands.ui._accept_working_hunks",
+        side_effect=MoveError("accept failed"),
+    ):
+        fake = _make_post_handler(repo_with_stack, "/api/accept-working-hunks", body)
+    assert fake._status == 400
+    assert "accept failed" in fake.response_json()["error"]
+
+
+def test_post_accept_hunks_unexpected_error(
+    repo_with_stack: Repo,
+) -> None:
+    """POST /api/accept-working-hunks unexpected error returns 500."""
+    body = {
+        "targetBranch": "branch_a",
+        "hunks": [
+            {
+                "filePath": "test.txt",
+                "filePatch": "patch",
+                "hunkIndex": 0,
+            }
+        ],
+    }
+    with patch(
+        "shortcake.commands.ui._accept_working_hunks",
+        side_effect=RuntimeError("boom"),
+    ):
+        fake = _make_post_handler(repo_with_stack, "/api/accept-working-hunks", body)
+    assert fake._status == 500
+    assert "boom" in fake.response_json()["error"]
+
+
+def test_post_404(temp_repo: Repo) -> None:
+    """POST to unknown endpoint returns 404."""
+    fake = _make_post_handler(temp_repo, "/api/unknown", {"foo": "bar"})
+    assert fake._status == 404
+    assert "Not found" in fake.response_json()["error"]
+
+
+# --- do_OPTIONS handler tests ---
+
+
+def test_options_handler(temp_repo: Repo) -> None:
+    """OPTIONS returns 200 with CORS headers."""
+    handler_cls = _build_request_handler(temp_repo)
+    fake = FakeHandler("/api/move-lines")
+    handler_cls.do_OPTIONS(fake)  # type: ignore[arg-type]
+    assert fake._status == 200
+    header_dict = dict(fake._headers)
+    assert header_dict["Access-Control-Allow-Origin"] == "*"
+    assert "POST" in header_dict["Access-Control-Allow-Methods"]
+    assert header_dict["Content-Length"] == "0"
+
+
 # --- _start_api_server ---
 
 

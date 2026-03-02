@@ -316,28 +316,19 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
 
                 raw_hunks = body["hunks"]
                 if not isinstance(raw_hunks, list) or len(raw_hunks) == 0:
-                    _write_json(
-                        self, 400, {"error": "hunks must be a non-empty array"}
-                    )
+                    _write_json(self, 400, {"error": "hunks must be a non-empty array"})
                     return
 
                 hunk_selections: list[HunkSelection] = []
                 for h in raw_hunks:
                     if not isinstance(h, dict):
-                        _write_json(
-                            self, 400, {"error": "Each hunk must be an object"}
-                        )
+                        _write_json(self, 400, {"error": "Each hunk must be an object"})
                         return
                     hunk_required = ["filePath", "filePatch", "hunkIndex"]
                     hunk_missing = [f for f in hunk_required if f not in h]
                     if hunk_missing:
-                        _write_json(
-                            self,
-                            400,
-                            {
-                                "error": f"Hunk missing fields: {', '.join(hunk_missing)}"
-                            },
-                        )
+                        msg = f"Hunk missing fields: {', '.join(hunk_missing)}"
+                        _write_json(self, 400, {"error": msg})
                         return
                     hunk_selections.append(
                         HunkSelection(
