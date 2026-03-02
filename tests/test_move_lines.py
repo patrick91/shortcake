@@ -10,9 +10,11 @@ from shortcake._trailers import Trailers
 from shortcake.commands.move_lines import (
     MoveError,
     _add_lines_to_file,
+    _get_patch_files,
     _git_apply,
     _move_lines,
     _remove_lines_from_file,
+    _stage_patch_files,
 )
 
 
@@ -326,6 +328,36 @@ def test_rollback_on_restack_failure(repo_for_move: Repo, tmp_path: Path) -> Non
 
 
 # --- Helper function unit tests ---
+
+
+def test_get_patch_files_extracts_paths() -> None:
+    """_get_patch_files extracts file paths from a diff."""
+    patch = (
+        "diff --git a/foo.py b/foo.py\n"
+        "--- a/foo.py\n"
+        "+++ b/foo.py\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+        "diff --git a/bar/baz.py b/bar/baz.py\n"
+        "--- a/bar/baz.py\n"
+        "+++ b/bar/baz.py\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    assert _get_patch_files(patch) == ["foo.py", "bar/baz.py"]
+
+
+def test_get_patch_files_empty_patch() -> None:
+    """_get_patch_files returns empty list for empty patch."""
+    assert _get_patch_files("") == []
+
+
+def test_stage_patch_files_empty_patch(temp_repo: Repo) -> None:
+    """_stage_patch_files is a no-op for empty patch."""
+    repo_path = Path(temp_repo.path)
+    _stage_patch_files(repo_path, "")
 
 
 def test_git_apply_invalid_patch(temp_repo: Repo) -> None:

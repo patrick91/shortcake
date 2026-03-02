@@ -126,17 +126,6 @@ def _add_lines_to_file(
         full_path.write_text("".join(lines_to_add))
 
 
-def _stage_all(repo_path: Path) -> None:
-    """Stage all changes (git add -A to catch deletions and new files)."""
-    subprocess.run(
-        ["git", "add", "-A"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-
-
 def _get_patch_files(patch_content: str) -> list[str]:
     """Extract file paths affected by a patch."""
     files: list[str] = []
@@ -155,7 +144,7 @@ def _stage_patch_files(repo_path: Path, patch_content: str) -> None:
     if not files:
         return
     subprocess.run(
-        ["git", "add", "--"] + files,
+        ["git", "add", "--", *files],
         cwd=repo_path,
         capture_output=True,
         text=True,

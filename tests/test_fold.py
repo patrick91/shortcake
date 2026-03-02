@@ -405,7 +405,8 @@ def test_fold_after_parent_rebased(temp_repo: Repo, tmp_path: Path) -> None:
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a content amended")
     porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a amended").encode())
+    msg = trailers_a.apply_to("feat: branch a amended")
+    porcelain.commit(temp_repo, message=msg.encode())
 
     # branch_b still points to old branch_a commit — merge base is stale
     switch_branch(temp_repo, "branch_b")
