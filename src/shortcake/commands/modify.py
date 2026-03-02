@@ -200,9 +200,13 @@ def _modify_target(
         )
 
     except ModifyError:
+        with contextlib.suppress(Exception):
+            _git_apply(repo_path, staged_diff, index=True)
         raise
     except Exception as e:  # pragma: no cover
         _rollback()
+        with contextlib.suppress(Exception):
+            _git_apply(repo_path, staged_diff, index=True)
         raise ModifyError(f"Unexpected error: {e}") from e
 
 

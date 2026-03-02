@@ -628,7 +628,7 @@ def test_modify_target_same_branch(temp_repo: Repo, tmp_path: Path) -> None:
 def test_modify_target_rollback_on_restack_failure(
     temp_repo: Repo, tmp_path: Path
 ) -> None:
-    """Refs are restored on restack failure."""
+    """Refs are restored and staged changes re-applied on restack failure."""
     repo = temp_repo
 
     # Build: main → branch_a → branch_b (sibling of branch_c)
@@ -687,6 +687,17 @@ def test_modify_target_rollback_on_restack_failure(
     b_sha_after = git.get_branch_head(repo, "branch_b").decode()
     assert a_sha_after == a_sha_before
     assert b_sha_after == b_sha_before
+
+    # Verify staged changes were restored
+    import subprocess
+
+    result = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+    )
+    assert "shared.txt" in result.stdout
 
 
 def test_modify_cli_target_incompatible_with_message(
