@@ -94,9 +94,7 @@ def _reparent_branch(repo: Repo, branch: str, new_parent: str) -> None:
     git.update_branch(repo, branch, new_head.decode())
 
 
-def _fold(
-    repo: Repo, into: str | None = None, no_verify: bool = False
-) -> FoldResult:
+def _fold(repo: Repo, into: str | None = None, no_verify: bool = False) -> FoldResult:
     """Fold the current branch into a target branch.
 
     Takes the current branch's full diff, applies it to the target, amends
