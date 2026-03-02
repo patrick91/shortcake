@@ -48,7 +48,9 @@ class AcceptResult:
     restacked_branches: list[str] = field(default_factory=list)
 
 
-def _git_apply(repo_path: Path, patch_content: str, reverse: bool = False) -> None:
+def _git_apply(
+    repo_path: Path, patch_content: str, reverse: bool = False, index: bool = False
+) -> None:
     """Apply a patch using git apply."""
     with tempfile.NamedTemporaryFile(mode="w", suffix=".patch", delete=False) as tmp:
         tmp.write(patch_content)
@@ -58,6 +60,8 @@ def _git_apply(repo_path: Path, patch_content: str, reverse: bool = False) -> No
         cmd = ["git", "apply"]
         if reverse:
             cmd.append("--reverse")
+        if index:
+            cmd.append("--index")
         cmd.append(tmp_path)
         result = subprocess.run(
             cmd, cwd=repo_path, capture_output=True, text=True, check=False
