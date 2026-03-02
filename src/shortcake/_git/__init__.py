@@ -9,10 +9,6 @@ This module is split into submodules for organization:
 All symbols are re-exported here for backward compatibility.
 """
 
-from shortcake._git._patch import (
-    EmptyPatchError,
-    extract_sub_patch,
-)
 from shortcake._git._core import (
     DULWICH_ERRORS,
     DULWICH_HOOK_ERRORS,
@@ -41,6 +37,10 @@ from shortcake._git._core import (
     switch_branch,
     unstage_all,
     update_branch,
+)
+from shortcake._git._patch import (
+    EmptyPatchError,
+    extract_sub_patch,
 )
 from shortcake._git._rebase import (
     DULWICH_REBASE_ERRORS,
