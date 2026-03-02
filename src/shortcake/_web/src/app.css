@@ -112,6 +112,17 @@ body::before {
   z-index: 1;
 }
 
+.resize-handle {
+  width: 1px;
+  background: var(--color-border);
+  transition: background 150ms;
+}
+
+.resize-handle:hover,
+.resize-handle[data-separator][data-active] {
+  background: var(--color-accent);
+}
+
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
