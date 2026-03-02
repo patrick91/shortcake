@@ -378,6 +378,85 @@ def test_fold_rollback_on_patch_failure(temp_repo: Repo, tmp_path: Path) -> None
     assert git.get_current_branch(temp_repo) == "branch_b"
 
 
+def test_fold_after_parent_rebased(temp_repo: Repo, tmp_path: Path) -> None:
+    """Fold works when parent branch was rebased (stale merge base)."""
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+
+    # branch_a: create a file
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    switch_branch(temp_repo, "branch_a")
+    (tmp_path / "a.txt").write_text("a content")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
+    trailers_a = Trailers(parent_branch="main")
+    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a").encode())
+    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # branch_b: child of branch_a, adds its own file
+    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    switch_branch(temp_repo, "branch_b")
+    (tmp_path / "b.txt").write_text("b content")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "b.txt")])
+    trailers_b = Trailers(parent_branch="branch_a")
+    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: branch b").encode())
+
+    # Now simulate parent (branch_a) being rebased: amend its commit so HEAD changes.
+    # This makes git merge-base(branch_b, branch_a) point to 'main' instead of
+    # the old branch_a commit, causing the diff to include branch_a's changes.
+    switch_branch(temp_repo, "branch_a")
+    (tmp_path / "a.txt").write_text("a content amended")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
+    msg = trailers_a.apply_to("feat: branch a amended")
+    porcelain.commit(temp_repo, message=msg.encode())
+
+    # branch_b still points to old branch_a commit — merge base is stale
+    switch_branch(temp_repo, "branch_b")
+    result = _fold(temp_repo)
+
+    assert result.source_branch == "branch_b"
+    assert result.target_branch == "branch_a"
+    # branch_a should have b.txt folded in
+    switch_branch(temp_repo, "branch_a")
+    assert (tmp_path / "b.txt").read_text() == "b content"
+
+
+def test_fold_ignores_untracked_files(temp_repo: Repo, tmp_path: Path) -> None:
+    """Fold should not stage or commit untracked files."""
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+
+    # branch_a: create a.txt
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    switch_branch(temp_repo, "branch_a")
+    (tmp_path / "a.txt").write_text("a content")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
+    trailers_a = Trailers(parent_branch="main")
+    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a").encode())
+    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # branch_b: create b.txt
+    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    switch_branch(temp_repo, "branch_b")
+    (tmp_path / "b.txt").write_text("b content")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "b.txt")])
+    trailers_b = Trailers(parent_branch="branch_a")
+    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: branch b").encode())
+
+    # Create an untracked file (should not be touched by fold)
+    (tmp_path / "untracked.txt").write_text("should not be committed")
+
+    switch_branch(temp_repo, "branch_b")
+    _fold(temp_repo)
+
+    # The untracked file should still exist and not be committed
+    assert (tmp_path / "untracked.txt").exists()
+    assert (tmp_path / "untracked.txt").read_text() == "should not be committed"
+
+    # Verify it's still untracked (not in the commit tree)
+    branch_a_head = git.get_branch_head(temp_repo, "branch_a")
+    tree = temp_repo[temp_repo[branch_a_head].tree]
+    tree_files = [entry.path.decode() for entry in tree.items()]
+    assert "untracked.txt" not in tree_files
+
+
 # --- CLI tests ---
 
 

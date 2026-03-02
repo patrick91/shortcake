@@ -13,7 +13,7 @@ from shortcake._trailers import Trailers, strip_trailers
 from shortcake.commands.move_lines import (
     _get_tracked_branches_in_order,
     _git_apply,
-    _stage_all,
+    _stage_patch_files,
     _stash_pop,
     _stash_push,
 )
@@ -169,7 +169,7 @@ def _modify_target(
         _git_apply(repo_path, staged_diff, three_way=True)
 
         # --- Step 6: Stage and amend target commit ---
-        _stage_all(repo_path)
+        _stage_patch_files(repo_path, staged_diff)
         old_sha = git.get_branch_head(repo, target_branch)
         target_message = git.get_commit_message(repo, old_sha)
         new_sha = git.amend_commit(repo, target_message, no_verify=no_verify)

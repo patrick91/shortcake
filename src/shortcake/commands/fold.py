@@ -16,7 +16,7 @@ from shortcake.commands.adopt import _replay_commits
 from shortcake.commands.move_lines import (
     _get_tracked_branches_in_order,
     _git_apply,
-    _stage_all,
+    _stage_patch_files,
 )
 from shortcake.commands.restack import _plan_restack, _rebase_branch
 
@@ -136,15 +136,21 @@ def _fold(repo: Repo, into: str | None = None) -> FoldResult:
 
     # --- Get source branch diff ---
     source_head = git.get_branch_head(repo, source_branch)
-    merge_base = git.get_merge_base(
-        repo, source_head, git.get_branch_head(repo, source_parent)
-    )
-    if merge_base is None:  # pragma: no cover
+
+    # Use get_branch_parent_info to find the correct diff base: the git parent
+    # of the source branch's first commit (the one with the trailer). This is
+    # stable even when the parent branch was rebased/restacked, unlike
+    # git merge-base which can return an ancestor that's too old.
+    parent_info = git.get_branch_parent_info(repo, source_branch, all_branches)
+    if parent_info is None:  # pragma: no cover
         raise FoldError(
             f"No common history between '{source_branch}' and '{source_parent}'"
         )
+    diff_base = parent_info[1]
+    if diff_base is None:  # pragma: no cover
+        raise FoldError(f"Branch '{source_branch}' has no parent commit (orphan)")
 
-    branch_diff = _get_branch_diff(repo_path, merge_base.decode(), source_head.decode())
+    branch_diff = _get_branch_diff(repo_path, diff_base.decode(), source_head.decode())
 
     # --- Get children before we modify anything ---
     children = git.get_branch_children(repo, source_branch)
@@ -176,8 +182,8 @@ def _fold(repo: Repo, into: str | None = None) -> FoldResult:
         git.switch_branch(repo, target_branch)
 
         if branch_diff.strip():
-            _git_apply(repo_path, branch_diff, reverse=False)
-            _stage_all(repo_path)
+            _git_apply(repo_path, branch_diff, reverse=False, three_way=True)
+            _stage_patch_files(repo_path, branch_diff)
             target_head = git.get_branch_head(repo, target_branch)
             target_message = git.get_commit_message(repo, target_head)
             git.amend_commit(repo, target_message)
