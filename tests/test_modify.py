@@ -723,3 +723,279 @@ def test_modify_cli_target_incompatible_with_edit(
 
     assert result.exit_code == 1
     assert "Cannot use both -t and -e" in result.output
+
+
+def test_modify_cli_message_and_edit_incompatible(
+    repo_with_feature: Repo, tmp_path: Path
+) -> None:
+    """CLI exits with code 1 when -m and -e are both provided."""
+    import os
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    runner = CliRunner()
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["modify", "-m", "msg", "-e"])
+
+    assert result.exit_code == 1
+    assert "Cannot use both -m and -e" in result.output
+
+
+def test_modify_cli_target_success(temp_repo: Repo, tmp_path: Path) -> None:
+    """CLI --target succeeds and outputs confirmation message."""
+    import os
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    repo = temp_repo
+
+    # Create tracked branch_a
+    main_sha = repo.refs[b"refs/heads/main"]
+    repo.refs[b"refs/heads/branch_a"] = main_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("branch a content")
+    porcelain.add(repo, paths=[str(file_a)])
+    trailers_a = Trailers(parent_branch="main")
+    message_a = trailers_a.apply_to("feat: branch a")
+    porcelain.commit(repo, message=message_a.encode())
+    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+
+    # Create tracked branch_b
+    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("branch b content")
+    porcelain.add(repo, paths=[str(file_b)])
+    trailers_b = Trailers(parent_branch="branch_a")
+    message_b = trailers_b.apply_to("feat: branch b")
+    porcelain.commit(repo, message=message_b.encode())
+
+    # Stage a new file to fold into branch_a
+    new_file = tmp_path / "folded.txt"
+    new_file.write_text("folded content")
+    porcelain.add(repo, paths=[str(new_file)])
+
+    runner = CliRunner()
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["modify", "-t", "branch_a"])
+
+    assert result.exit_code == 0
+    assert "Folded staged changes into 'branch_a'" in result.output
+
+
+def test_modify_cli_target_error(temp_repo: Repo, tmp_path: Path) -> None:
+    """CLI --target prints error and exits 1 on ModifyError."""
+    import os
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    runner = CliRunner()
+    os.chdir(tmp_path)
+    # No staged changes → should error
+    result = runner.invoke(app, ["modify", "-t", "nonexistent"])
+
+    assert result.exit_code == 1
+    assert "Error:" in result.output
+
+
+def test_modify_cli_detached_head(temp_repo: Repo, tmp_path: Path) -> None:
+    """CLI exits with code 1 when in detached HEAD state."""
+    import os
+    from unittest.mock import patch
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    runner = CliRunner()
+    os.chdir(tmp_path)
+
+    # Mock get_current_branch to return None (detached HEAD)
+    with patch(
+        "shortcake.commands.modify.git.get_current_branch",
+        return_value=None,
+    ):
+        result = runner.invoke(app, ["modify"])
+
+    assert result.exit_code == 1
+    assert "detached HEAD" in result.output
+
+
+def test_modify_cli_message_no_staged(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """CLI -m exits with code 1 when no staged changes."""
+    import os
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    _adopt(repo_with_feature)
+
+    runner = CliRunner()
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["modify", "-m", "new commit"])
+
+    assert result.exit_code == 1
+    assert "No staged changes" in result.output
+
+
+def test_modify_cli_amend_no_staged(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """CLI default amend exits with code 1 when no staged changes."""
+    import os
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    _adopt(repo_with_feature)
+
+    runner = CliRunner()
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["modify"])
+
+    assert result.exit_code == 1
+    assert "No staged changes" in result.output
+
+
+def test_modify_cli_amend_success(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """CLI default amend succeeds with staged changes."""
+    import os
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    _adopt(repo_with_feature)
+
+    # Stage a new file
+    new_file = tmp_path / "staged.txt"
+    new_file.write_text("content")
+    porcelain.add(repo_with_feature, paths=[str(new_file)])
+
+    runner = CliRunner()
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["modify"])
+
+    assert result.exit_code == 0
+    assert "Amended commit on" in result.output
+
+
+def test_modify_cli_message_success(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """CLI -m creates new commit with staged changes."""
+    import os
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    _adopt(repo_with_feature)
+
+    # Stage a new file
+    new_file = tmp_path / "staged.txt"
+    new_file.write_text("content")
+    porcelain.add(repo_with_feature, paths=[str(new_file)])
+
+    runner = CliRunner()
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["modify", "-m", "feat: new commit"])
+
+    assert result.exit_code == 0
+    assert "Created commit on" in result.output
+
+
+def test_modify_cli_edit_success(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """CLI -e amends with edited message."""
+    import os
+    from unittest.mock import patch
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    _adopt(repo_with_feature)
+
+    # Stage a new file
+    new_file = tmp_path / "staged.txt"
+    new_file.write_text("content")
+    porcelain.add(repo_with_feature, paths=[str(new_file)])
+
+    runner = CliRunner()
+    os.chdir(tmp_path)
+    with patch(
+        "shortcake.commands.modify.open_editor",
+        return_value="feat: edited message",
+    ):
+        result = runner.invoke(app, ["modify", "-e"])
+
+    assert result.exit_code == 0
+    assert "Amended commit on" in result.output
+
+
+def test_modify_cli_edit_empty_message(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """CLI -e aborts when editor returns empty message."""
+    import os
+    from unittest.mock import patch
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    _adopt(repo_with_feature)
+
+    # Stage a new file
+    new_file = tmp_path / "staged.txt"
+    new_file.write_text("content")
+    porcelain.add(repo_with_feature, paths=[str(new_file)])
+
+    runner = CliRunner()
+    os.chdir(tmp_path)
+    with patch(
+        "shortcake.commands.modify.open_editor",
+        return_value="",
+    ):
+        result = runner.invoke(app, ["modify", "-e"])
+
+    assert result.exit_code == 1
+    assert "Aborted" in result.output
+
+
+def test_modify_cli_precommit_hook_failure(
+    repo_with_feature: Repo, tmp_path: Path
+) -> None:
+    """CLI prints error when pre-commit hook fails."""
+    import os
+    import stat as stat_mod
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    _adopt(repo_with_feature)
+
+    # Create a failing pre-commit hook
+    hooks_dir = Path(repo_with_feature.controldir()) / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_path = hooks_dir / "pre-commit"
+    hook_path.write_text("#!/bin/sh\necho 'hook failed' >&2\nexit 1\n")
+    hook_path.chmod(hook_path.stat().st_mode | stat_mod.S_IXUSR)
+
+    # Stage a file to trigger hook
+    new_file = tmp_path / "test.txt"
+    new_file.write_text("content")
+    porcelain.add(repo_with_feature, paths=[str(new_file)])
+
+    runner = CliRunner()
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["modify"])
+
+    assert result.exit_code == 1
+    assert "Pre-commit hook failed" in result.output

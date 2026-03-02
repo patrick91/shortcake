@@ -218,3 +218,41 @@ def test_no_hunks_raises() -> None:
     headeronly = "diff --git a/f b/f\nindex 000..111\n--- a/f\n+++ b/f\n"
     with pytest.raises(EmptyPatchError):
         extract_sub_patch(headeronly, 1, 5, "additions")
+
+
+def test_deletion_side_drops_additions() -> None:
+    """When side='deletions', '+' lines (additions) are dropped."""
+    # MODIFY_PATCH has both additions and deletions
+    # Using side='deletions' should drop all '+' lines
+    # old-file lines: 1=context before, 2=old line 1, 3=old line 2,
+    #                 4=context middle, 5=old line 3, 6=context after
+    # Select all old-file lines to keep all deletions
+    result = extract_sub_patch(MODIFY_PATCH, 1, 10, "deletions")
+    # All deletions should be kept
+    assert "-old line 1" in result
+    assert "-old line 2" in result
+    assert "-old line 3" in result
+    # All additions should be dropped (side='deletions')
+    assert "+new line 1" not in result
+    assert "+new line 2" not in result
+    assert "+new line 3" not in result
+    assert "+new line 4" not in result
+
+
+NO_NEWLINE_PATCH = """\
+diff --git a/src/example.py b/src/example.py
+index a1b2c3d..d4e5f6a 100644
+--- a/src/example.py
++++ b/src/example.py
+@@ -1,3 +1,3 @@
+ context
+-old line
++new line
+\\ No newline at end of file"""
+
+
+def test_no_newline_at_end_of_file() -> None:
+    """Patches with '\\ No newline at end of file' markers are handled."""
+    result = extract_sub_patch(NO_NEWLINE_PATCH, 1, 10, "additions")
+    assert "+new line" in result
+    assert "\\ No newline at end of file" in result

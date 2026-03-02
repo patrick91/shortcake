@@ -7,7 +7,13 @@ from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._trailers import Trailers
-from shortcake.commands.move_lines import MoveError, _move_lines
+from shortcake.commands.move_lines import (
+    MoveError,
+    _add_lines_to_file,
+    _git_apply,
+    _move_lines,
+    _remove_lines_from_file,
+)
 
 
 def switch_branch(repo: Repo, branch: str) -> None:
@@ -317,3 +323,257 @@ def test_rollback_on_restack_failure(repo_for_move: Repo, tmp_path: Path) -> Non
     target_sha_after = git.get_branch_head(repo, "child_b").decode()
     assert source_sha_after == source_sha_before
     assert target_sha_after == target_sha_before
+
+
+# --- Helper function unit tests ---
+
+
+def test_git_apply_invalid_patch(tmp_path: Path) -> None:
+    """_git_apply raises MoveError on invalid patch."""
+    # Initialize a minimal git repo
+    subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True, check=True)
+    subprocess.run(
+        ["git", "commit", "--allow-empty", "-m", "init"],
+        cwd=tmp_path,
+        capture_output=True,
+        check=True,
+    )
+    with pytest.raises(MoveError, match="Failed to"):
+        _git_apply(tmp_path, "this is not a valid patch", reverse=False)
+
+
+def test_remove_lines_file_not_found(tmp_path: Path) -> None:
+    """_remove_lines_from_file raises MoveError if file doesn't exist."""
+    with pytest.raises(MoveError, match="not found"):
+        _remove_lines_from_file(tmp_path, "nonexistent.py", 1, 5)
+
+
+def test_remove_lines_all_lines_deletes_file(tmp_path: Path) -> None:
+    """_remove_lines_from_file deletes file when all lines are removed."""
+    f = tmp_path / "to_delete.py"
+    f.write_text("line 1\nline 2\n")
+    removed = _remove_lines_from_file(tmp_path, "to_delete.py", 1, 2)
+    assert len(removed) == 2
+    assert not f.exists()
+
+
+def test_add_lines_to_new_file(tmp_path: Path) -> None:
+    """_add_lines_to_file creates new file when it doesn't exist."""
+    _add_lines_to_file(tmp_path, "new_file.py", ["line 1\n", "line 2\n"])
+    assert (tmp_path / "new_file.py").read_text() == "line 1\nline 2\n"
+
+
+def test_add_lines_to_existing_without_trailing_newline(tmp_path: Path) -> None:
+    """_add_lines_to_file adds newline before appending."""
+    f = tmp_path / "existing.py"
+    f.write_text("existing content")  # no trailing newline
+    _add_lines_to_file(tmp_path, "existing.py", ["new line\n"])
+    assert f.read_text() == "existing content\nnew line\n"
+
+
+def test_error_target_branch_not_exist(repo_for_move: Repo) -> None:
+    """Error when target branch doesn't exist."""
+    with pytest.raises(MoveError, match="does not exist"):
+        _move_lines(
+            repo_for_move,
+            source_branch="child_a",
+            target_branch="nonexistent",
+            file_patch="fake",
+            file_path="app.py",
+            start_line=1,
+            end_line=5,
+            side="additions",
+        )
+
+
+def test_error_target_branch_not_tracked(repo_for_move: Repo, tmp_path: Path) -> None:
+    """Error when target branch is not tracked by Shortcake."""
+    repo = repo_for_move
+    # main is untracked (no Shortcake-Parent trailer)
+    # child_a is tracked, so source check passes
+    with pytest.raises(MoveError, match="not tracked"):
+        _move_lines(
+            repo,
+            source_branch="child_a",
+            target_branch="main",
+            file_patch="fake",
+            file_path="app.py",
+            start_line=1,
+            end_line=5,
+            side="additions",
+        )
+
+
+def test_error_empty_patch(repo_for_move: Repo) -> None:
+    """Error when extracted sub-patch has no changes."""
+    # Use a valid patch format but select lines that don't exist
+    patch = (
+        "diff --git a/app.py b/app.py\n"
+        "index 000..111 100644\n"
+        "--- a/app.py\n"
+        "+++ b/app.py\n"
+        "@@ -1,3 +1,3 @@\n"
+        " context\n"
+        "-old\n"
+        "+new\n"
+    )
+    with pytest.raises(MoveError):
+        _move_lines(
+            repo_for_move,
+            source_branch="child_a",
+            target_branch="child_b",
+            file_patch=patch,
+            file_path="app.py",
+            start_line=100,
+            end_line=200,
+            side="additions",
+        )
+
+
+def test_error_rebase_in_progress(repo_for_move: Repo) -> None:
+    """Error when rebase is in progress."""
+    repo = repo_for_move
+    rebase_dir = Path(repo.controldir()) / "rebase-merge"
+    rebase_dir.mkdir(exist_ok=True)
+
+    try:
+        with pytest.raises(MoveError, match="rebase in progress"):
+            _move_lines(
+                repo,
+                source_branch="child_a",
+                target_branch="child_b",
+                file_patch="fake",
+                file_path="app.py",
+                start_line=1,
+                end_line=5,
+                side="additions",
+            )
+    finally:
+        rebase_dir.rmdir()
+
+
+def test_move_restacks_target_descendants(temp_repo: Repo, tmp_path: Path) -> None:
+    """Phase 4 restacks target's descendants after target is amended."""
+    repo = temp_repo
+    repo_path = Path(repo.path)
+
+    # Build: main → branch_a → branch_b → branch_c
+    main_sha = repo.refs[b"refs/heads/main"]
+    repo.refs[b"refs/heads/branch_a"] = main_sha
+    switch_branch(repo, "branch_a")
+
+    a_py = tmp_path / "a.py"
+    a_py.write_text("def a():\n    return 'a1'\n\ndef a2():\n    return 'a2'\n")
+    porcelain.add(repo, paths=[str(a_py)])
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: branch a")
+    porcelain.commit(repo, message=msg_a.encode())
+    a_sha = repo.refs[b"refs/heads/branch_a"]
+
+    repo.refs[b"refs/heads/branch_b"] = a_sha
+    switch_branch(repo, "branch_b")
+
+    b_py = tmp_path / "b.py"
+    b_py.write_text("def b():\n    return 'b'\n")
+    porcelain.add(repo, paths=[str(b_py)])
+    trailers_b = Trailers(parent_branch="branch_a")
+    msg_b = trailers_b.apply_to("feat: branch b")
+    porcelain.commit(repo, message=msg_b.encode())
+    b_sha = repo.refs[b"refs/heads/branch_b"]
+
+    repo.refs[b"refs/heads/branch_c"] = b_sha
+    switch_branch(repo, "branch_c")
+
+    c_py = tmp_path / "c.py"
+    c_py.write_text("def c():\n    return 'c'\n")
+    porcelain.add(repo, paths=[str(c_py)])
+    trailers_c = Trailers(parent_branch="branch_b")
+    msg_c = trailers_c.apply_to("feat: branch c")
+    porcelain.commit(repo, message=msg_c.encode())
+
+    switch_branch(repo, "branch_a")
+
+    # Get patch for branch_a vs main
+    full_patch = _git_diff_patch(repo_path, "main", "branch_a")
+    file_patch = _get_file_patch(full_patch, "a.py")
+
+    # Move a2 function (lines 4-5) from branch_a to branch_b
+    # This triggers Phase 4: after branch_b is amended, branch_c is restacked
+    result = _move_lines(
+        repo,
+        source_branch="branch_a",
+        target_branch="branch_b",
+        file_patch=file_patch,
+        file_path="a.py",
+        start_line=4,
+        end_line=5,
+        side="additions",
+    )
+
+    assert result.source_branch == "branch_a"
+    assert result.target_branch == "branch_b"
+    # branch_c should appear in restacked branches (Phase 4)
+    assert "branch_c" in result.restacked_branches
+
+
+def test_move_deletions(temp_repo: Repo, tmp_path: Path) -> None:
+    """Move deletions from parent → child using side='deletions'."""
+    repo = temp_repo
+    repo_path = Path(repo.path)
+
+    # Create a file on main that we'll delete lines from
+    shared_py = tmp_path / "shared.py"
+    shared_py.write_text(
+        "def func_a():\n    return 'a'\n\ndef func_b():\n    return 'b'\n"
+        "\ndef func_c():\n    return 'c'\n"
+    )
+    porcelain.add(repo, paths=[str(shared_py)])
+    git.amend_commit(repo, "init with shared.py")
+
+    # Create parent_branch from main, delete func_c
+    main_sha = repo.refs[b"refs/heads/main"]
+    repo.refs[b"refs/heads/parent_branch"] = main_sha
+    switch_branch(repo, "parent_branch")
+
+    shared_py.write_text(
+        "def func_a():\n    return 'a'\n\ndef func_b():\n    return 'b'\n"
+    )
+    porcelain.add(repo, paths=[str(shared_py)])
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: remove func_c")
+    porcelain.commit(repo, message=message.encode())
+    parent_sha = repo.refs[b"refs/heads/parent_branch"]
+
+    # Create child_branch from parent_branch
+    repo.refs[b"refs/heads/child_branch"] = parent_sha
+    switch_branch(repo, "child_branch")
+
+    child_py = tmp_path / "child.py"
+    child_py.write_text("def child_func():\n    return 'child'\n")
+    porcelain.add(repo, paths=[str(child_py)])
+    trailers_c = Trailers(parent_branch="parent_branch")
+    message_c = trailers_c.apply_to("feat: add child function")
+    porcelain.commit(repo, message=message_c.encode())
+
+    switch_branch(repo, "parent_branch")
+
+    # Get the diff with deletions
+    full_patch = _git_diff_patch(repo_path, "main", "parent_branch")
+    file_patch = _get_file_patch(full_patch, "shared.py")
+
+    # Verify patch has deletions
+    assert "-def func_c():" in file_patch
+
+    result = _move_lines(
+        repo,
+        source_branch="parent_branch",
+        target_branch="child_branch",
+        file_patch=file_patch,
+        file_path="shared.py",
+        start_line=5,  # old-file line where deletions start
+        end_line=8,
+        side="deletions",
+    )
+
+    assert result.source_branch == "parent_branch"
+    assert result.target_branch == "child_branch"
