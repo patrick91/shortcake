@@ -83,9 +83,7 @@ def test_reorder_detached_head(temp_repo: Repo) -> None:
         _reorder(temp_repo, new_order=["a", "b"])
 
 
-def test_reorder_uncommitted_changes(
-    repo_with_stack: Repo, tmp_path: Path
-) -> None:
+def test_reorder_uncommitted_changes(repo_with_stack: Repo, tmp_path: Path) -> None:
     """ReorderError when there are uncommitted changes."""
     switch_branch(repo_with_stack, "branch_b")
     (tmp_path / "dirty.txt").write_text("dirty")
@@ -94,9 +92,7 @@ def test_reorder_uncommitted_changes(
         _reorder(repo_with_stack, new_order=["branch_b", "branch_a"])
 
 
-def test_reorder_rebase_in_progress(
-    repo_with_stack: Repo, tmp_path: Path
-) -> None:
+def test_reorder_rebase_in_progress(repo_with_stack: Repo, tmp_path: Path) -> None:
     """ReorderError when rebase is in progress."""
     switch_branch(repo_with_stack, "branch_b")
     rebase_dir = tmp_path / ".git" / "rebase-merge"
@@ -106,9 +102,7 @@ def test_reorder_rebase_in_progress(
         _reorder(repo_with_stack, new_order=["branch_b", "branch_a"])
 
 
-def test_reorder_restack_in_progress(
-    repo_with_stack: Repo, tmp_path: Path
-) -> None:
+def test_reorder_restack_in_progress(repo_with_stack: Repo, tmp_path: Path) -> None:
     """ReorderError when restack state exists."""
     switch_branch(repo_with_stack, "branch_b")
     state_path = tmp_path / ".git" / "shortcake-restack.json"
@@ -139,9 +133,7 @@ def test_reorder_fork_in_stack(repo_with_fork: Repo) -> None:
         _reorder(repo_with_fork, new_order=["branch_b", "branch_c"])
 
 
-def test_reorder_fork_below_current(
-    temp_repo: Repo, tmp_path: Path
-) -> None:
+def test_reorder_fork_below_current(temp_repo: Repo, tmp_path: Path) -> None:
     """ReorderError when fork is below current branch (downward walk)."""
     main_sha = temp_repo.refs[b"refs/heads/main"]
 
@@ -207,9 +199,7 @@ def test_get_linear_stack_basic(
     assert branches == ["branch_a", "branch_b"]
 
 
-def test_get_linear_stack_3_branches(
-    temp_repo: Repo, tmp_path: Path
-) -> None:
+def test_get_linear_stack_3_branches(temp_repo: Repo, tmp_path: Path) -> None:
     """Get linear stack of 3 branches."""
     _create_stack_3(temp_repo, tmp_path)
     trunk, branches = _get_linear_stack(temp_repo, "branch_b")
@@ -217,9 +207,7 @@ def test_get_linear_stack_3_branches(
     assert branches == ["branch_a", "branch_b", "branch_c"]
 
 
-def test_get_linear_stack_from_bottom(
-    temp_repo: Repo, tmp_path: Path
-) -> None:
+def test_get_linear_stack_from_bottom(temp_repo: Repo, tmp_path: Path) -> None:
     """Get linear stack when on the bottom branch."""
     _create_stack_3(temp_repo, tmp_path)
     switch_branch(temp_repo, "branch_a")
@@ -228,9 +216,7 @@ def test_get_linear_stack_from_bottom(
     assert branches == ["branch_a", "branch_b", "branch_c"]
 
 
-def test_get_linear_stack_from_top(
-    temp_repo: Repo, tmp_path: Path
-) -> None:
+def test_get_linear_stack_from_top(temp_repo: Repo, tmp_path: Path) -> None:
     """Get linear stack when on the top branch."""
     _create_stack_3(temp_repo, tmp_path)
     trunk, branches = _get_linear_stack(temp_repo, "branch_c")
@@ -276,9 +262,7 @@ def test_parse_editor_result_unknown_branch() -> None:
 def test_parse_editor_result_duplicate() -> None:
     """Error on duplicate branch."""
     with pytest.raises(ReorderError, match="Duplicate branch"):
-        _parse_editor_result(
-            "branch_a\nbranch_a", ["branch_a", "branch_b"]
-        )
+        _parse_editor_result("branch_a\nbranch_a", ["branch_a", "branch_b"])
 
 
 def test_parse_editor_result_missing() -> None:
@@ -366,9 +350,7 @@ def test_reorder_swap_two_branches(repo_with_stack: Repo, tmp_path: Path) -> Non
     assert not (tmp_path / "a.txt").exists()
 
 
-def test_reorder_move_top_to_bottom(
-    temp_repo: Repo, tmp_path: Path
-) -> None:
+def test_reorder_move_top_to_bottom(temp_repo: Repo, tmp_path: Path) -> None:
     """Move top branch to bottom: A -> B -> C becomes C -> A -> B."""
     _create_stack_3(temp_repo, tmp_path)
     switch_branch(temp_repo, "branch_b")
@@ -391,9 +373,7 @@ def test_reorder_move_top_to_bottom(
     assert (tmp_path / "c.txt").read_text() == "branch c content"
 
 
-def test_reorder_move_bottom_to_top(
-    temp_repo: Repo, tmp_path: Path
-) -> None:
+def test_reorder_move_bottom_to_top(temp_repo: Repo, tmp_path: Path) -> None:
     """Move bottom branch to top: A -> B -> C becomes B -> C -> A."""
     _create_stack_3(temp_repo, tmp_path)
     switch_branch(temp_repo, "branch_a")
@@ -416,9 +396,7 @@ def test_reorder_move_bottom_to_top(
     assert (tmp_path / "c.txt").read_text() == "branch c content"
 
 
-def test_reorder_reverse_full_stack(
-    temp_repo: Repo, tmp_path: Path
-) -> None:
+def test_reorder_reverse_full_stack(temp_repo: Repo, tmp_path: Path) -> None:
     """Reverse full stack: A -> B -> C becomes C -> B -> A."""
     _create_stack_3(temp_repo, tmp_path)
     switch_branch(temp_repo, "branch_a")
@@ -435,9 +413,7 @@ def test_reorder_reverse_full_stack(
     assert git.get_branch_parent(temp_repo, "branch_a", all_branches) == "branch_b"
 
 
-def test_reorder_returns_to_original_branch(
-    temp_repo: Repo, tmp_path: Path
-) -> None:
+def test_reorder_returns_to_original_branch(temp_repo: Repo, tmp_path: Path) -> None:
     """After reorder, we're back on the original branch."""
     _create_stack_3(temp_repo, tmp_path)
     switch_branch(temp_repo, "branch_b")
@@ -447,9 +423,7 @@ def test_reorder_returns_to_original_branch(
     assert git.get_current_branch(temp_repo) == "branch_b"
 
 
-def test_reorder_cleans_up_state(
-    temp_repo: Repo, tmp_path: Path
-) -> None:
+def test_reorder_cleans_up_state(temp_repo: Repo, tmp_path: Path) -> None:
     """State file is cleaned up after successful reorder."""
     _create_stack_3(temp_repo, tmp_path)
     switch_branch(temp_repo, "branch_b")
@@ -702,9 +676,7 @@ def test_reorder_conflict_continue(temp_repo: Repo, tmp_path: Path) -> None:
     assert result.conflict_branch == "branch_b"
 
     # Resolve first conflict (branch_b onto main) and continue rebase
-    _resolve_conflict_and_continue_rebase(
-        tmp_path, "shared.txt", "resolved B"
-    )
+    _resolve_conflict_and_continue_rebase(tmp_path, "shared.txt", "resolved B")
 
     # sc continue: finishes branch_b (trailer update, line 83),
     # then starts branch_a which also conflicts
@@ -713,14 +685,10 @@ def test_reorder_conflict_continue(temp_repo: Repo, tmp_path: Path) -> None:
 
     # Verify branch_b trailer was already updated
     all_branches = set(git.get_all_local_branches(temp_repo))
-    assert (
-        git.get_branch_parent(temp_repo, "branch_b", all_branches) == "main"
-    )
+    assert git.get_branch_parent(temp_repo, "branch_b", all_branches) == "main"
 
     # Resolve second conflict (branch_a onto branch_b)
-    _resolve_conflict_and_continue_rebase(
-        tmp_path, "shared.txt", "resolved A"
-    )
+    _resolve_conflict_and_continue_rebase(tmp_path, "shared.txt", "resolved A")
 
     # sc continue again: finishes branch_a (trailer update, line 141)
     continue_result2 = _continue(temp_repo)
@@ -728,13 +696,8 @@ def test_reorder_conflict_continue(temp_repo: Repo, tmp_path: Path) -> None:
 
     # Verify both trailers updated
     all_branches = set(git.get_all_local_branches(temp_repo))
-    assert (
-        git.get_branch_parent(temp_repo, "branch_b", all_branches) == "main"
-    )
-    assert (
-        git.get_branch_parent(temp_repo, "branch_a", all_branches)
-        == "branch_b"
-    )
+    assert git.get_branch_parent(temp_repo, "branch_b", all_branches) == "main"
+    assert git.get_branch_parent(temp_repo, "branch_a", all_branches) == "branch_b"
     assert not RestackState.exists(temp_repo)
 
 
@@ -793,15 +756,11 @@ def test_reorder_conflict_continue_remaining_steps(
     switch_branch(temp_repo, "branch_c")
 
     # Reorder to [C, A, B]: C onto main conflicts (shared.txt)
-    result = _reorder(
-        temp_repo, new_order=["branch_c", "branch_a", "branch_b"]
-    )
+    result = _reorder(temp_repo, new_order=["branch_c", "branch_a", "branch_b"])
     assert result.conflict_branch == "branch_c"
 
     # Resolve conflict and continue rebase
-    _resolve_conflict_and_continue_rebase(
-        tmp_path, "shared.txt", "resolved C"
-    )
+    _resolve_conflict_and_continue_rebase(tmp_path, "shared.txt", "resolved C")
 
     # sc continue: finishes C (line 83 - trailer update for current step),
     # then processes A onto C and B onto A as remaining steps
@@ -811,17 +770,9 @@ def test_reorder_conflict_continue_remaining_steps(
 
     # Verify all trailers updated
     all_branches = set(git.get_all_local_branches(temp_repo))
-    assert (
-        git.get_branch_parent(temp_repo, "branch_c", all_branches) == "main"
-    )
-    assert (
-        git.get_branch_parent(temp_repo, "branch_a", all_branches)
-        == "branch_c"
-    )
-    assert (
-        git.get_branch_parent(temp_repo, "branch_b", all_branches)
-        == "branch_a"
-    )
+    assert git.get_branch_parent(temp_repo, "branch_c", all_branches) == "main"
+    assert git.get_branch_parent(temp_repo, "branch_a", all_branches) == "branch_c"
+    assert git.get_branch_parent(temp_repo, "branch_b", all_branches) == "branch_a"
     assert not RestackState.exists(temp_repo)
 
 
@@ -867,9 +818,7 @@ def test_reorder_cli_3_branches(
     monkeypatch.chdir(tmp_path)
     _create_stack_3(temp_repo, tmp_path)
     switch_branch(temp_repo, "branch_b")
-    result = runner.invoke(
-        app, ["reorder", "branch_c", "branch_a", "branch_b"]
-    )
+    result = runner.invoke(app, ["reorder", "branch_c", "branch_a", "branch_b"])
     assert result.exit_code == 0
     assert "Reordered" in result.output
 
