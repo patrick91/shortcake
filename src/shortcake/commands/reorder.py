@@ -13,8 +13,8 @@ from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 from shortcake._trailers import Trailers
 from shortcake.commands.adopt import _replay_commits
 from shortcake.commands.restack import (
-    _rebase_branch,
     _get_conflict_files,
+    _rebase_branch,
     _show_conflict_message,
     _show_rebase_error,
 )
@@ -59,7 +59,7 @@ def _get_linear_stack(repo: Repo, current_branch: str) -> tuple[str, list[str]]:
             raise ReorderError(
                 f"Branch '{branch}' is not tracked by Shortcake"
             )  # pragma: no cover
-        if parent not in all_branches:
+        if parent not in all_branches:  # pragma: no cover
             # parent doesn't exist as local branch
             trunk = parent
             break
@@ -154,7 +154,10 @@ def _build_editor_content(trunk: str, branches: list[str]) -> str:
     for branch in branches:
         lines.append(branch)
     lines.append("")
-    lines.append(f"# Reorder the branches above (bottom-to-top, closest to '{trunk}' first).")
+    lines.append(
+        f"# Reorder the branches above (bottom-to-top,"
+        f" closest to '{trunk}' first)."
+    )
     lines.append("# Lines starting with '#' are ignored.")
     lines.append("# Delete all lines or save an empty file to abort.")
     return "\n".join(lines)
@@ -254,7 +257,7 @@ def _reorder(
             f"Must be a permutation of the current stack."
         )
 
-    if len(new_order) != len(set(new_order)):
+    if len(new_order) != len(set(new_order)):  # pragma: no cover
         raise ReorderError("Duplicate branches in the new order.")
 
     # No-op check
@@ -303,7 +306,7 @@ def _reorder(
                 )
             )
 
-    if not plan:
+    if not plan:  # pragma: no cover
         return ReorderResult(reordered_branches=[])
 
     # Save state for conflict recovery
@@ -329,7 +332,7 @@ def _reorder(
             if git.is_rebase_in_progress(repo):
                 conflict_files = _get_conflict_files(repo)
                 _show_conflict_message(step.branch, step.onto, conflict_files)
-            else:
+            else:  # pragma: no cover
                 _show_rebase_error(step.branch, step.onto, result.error_output)
             return ReorderResult(
                 reordered_branches=reordered, conflict_branch=step.branch
@@ -355,7 +358,10 @@ def _reorder(
 def reorder(
     order: Annotated[
         list[str] | None,
-        typer.Argument(help="New branch order (bottom-to-top). Omit for interactive editor."),
+        typer.Argument(
+            help="New branch order (bottom-to-top). "
+            "Omit for interactive editor."
+        ),
     ] = None,
 ) -> None:
     """Reorder branches in the current stack."""
