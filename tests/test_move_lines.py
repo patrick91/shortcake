@@ -8,10 +8,12 @@ from dulwich.repo import Repo
 from shortcake import _git as git
 from shortcake._trailers import Trailers
 from shortcake.commands.move_lines import (
+    HunkSelection,
     MoveError,
     _add_lines_to_file,
     _get_patch_files,
     _git_apply,
+    _move_hunks,
     _move_lines,
     _remove_lines_from_file,
     _stage_patch_files,
@@ -602,3 +604,188 @@ def test_move_deletions(temp_repo: Repo, tmp_path: Path) -> None:
 
     assert result.source_branch == "parent_branch"
     assert result.target_branch == "child_branch"
+
+
+# --- _move_hunks tests ---
+
+
+def test_move_hunks_basic(repo_for_move: Repo, tmp_path: Path) -> None:
+    """Move a hunk from child_a to child_b using _move_hunks."""
+    repo = repo_for_move
+    repo_path = Path(repo.path)
+
+    # Get the diff for child_a (child_a vs main)
+    full_patch = _git_diff_patch(repo_path, "main", "child_a")
+    file_patch = _get_file_patch(full_patch, "app.py")
+
+    git.switch_branch(repo, "child_a")
+
+    hunks = [
+        HunkSelection(
+            file_path="app.py",
+            file_patch=file_patch,
+            hunk_index=0,  # The only hunk (entire file is new)
+        )
+    ]
+
+    result = _move_hunks(repo, "child_a", "child_b", hunks)
+
+    assert result.source_branch == "child_a"
+    assert result.target_branch == "child_b"
+    assert "app.py" in result.file_paths
+
+    # Verify source (child_a) no longer has app.py content
+    git.switch_branch(repo, "child_a")
+    app_path = tmp_path / "app.py"
+    # The file should either be deleted or have no content from the hunk
+    if app_path.exists():
+        content = app_path.read_text()
+        assert "def hello()" not in content
+        assert "def goodbye()" not in content
+
+    # Verify target (child_b) has the content
+    git.switch_branch(repo, "child_b")
+    app_content_b = (tmp_path / "app.py").read_text()
+    assert "def hello()" in app_content_b
+    assert "def goodbye()" in app_content_b
+
+
+def test_move_hunks_error_no_hunks(repo_for_move: Repo) -> None:
+    """Error when no hunks are provided."""
+    with pytest.raises(MoveError, match="No hunks selected"):
+        _move_hunks(repo_for_move, "child_a", "child_b", [])
+
+
+def test_move_hunks_error_same_branch(repo_for_move: Repo) -> None:
+    """Error when source and target are the same."""
+    hunks = [HunkSelection(file_path="f.py", file_patch="fake", hunk_index=0)]
+    with pytest.raises(MoveError, match="must be different"):
+        _move_hunks(repo_for_move, "child_a", "child_a", hunks)
+
+
+def test_move_hunks_error_dirty_tree(repo_for_move: Repo, tmp_path: Path) -> None:
+    """Error when working tree has uncommitted changes."""
+    dirty = tmp_path / "dirty.txt"
+    dirty.write_text("dirty")
+    porcelain.add(repo_for_move, paths=[str(dirty)])
+
+    hunks = [HunkSelection(file_path="f.py", file_patch="fake", hunk_index=0)]
+    with pytest.raises(MoveError, match="uncommitted changes"):
+        _move_hunks(repo_for_move, "child_a", "child_b", hunks)
+
+
+def test_move_hunks_error_branch_not_exist(repo_for_move: Repo) -> None:
+    """Error when branch doesn't exist."""
+    hunks = [HunkSelection(file_path="f.py", file_patch="fake", hunk_index=0)]
+    with pytest.raises(MoveError, match="does not exist"):
+        _move_hunks(repo_for_move, "nonexistent", "child_b", hunks)
+
+
+def test_move_hunks_error_branch_not_tracked(repo_for_move: Repo) -> None:
+    """Error when branch is not tracked by Shortcake."""
+    hunks = [HunkSelection(file_path="f.py", file_patch="fake", hunk_index=0)]
+    with pytest.raises(MoveError, match="not tracked"):
+        _move_hunks(repo_for_move, "child_a", "main", hunks)
+
+
+def test_move_hunks_error_rebase_in_progress(repo_for_move: Repo) -> None:
+    """Error when rebase is in progress."""
+    repo = repo_for_move
+    rebase_dir = Path(repo.controldir()) / "rebase-merge"
+    rebase_dir.mkdir(exist_ok=True)
+
+    try:
+        hunks = [HunkSelection(file_path="f.py", file_patch="fake", hunk_index=0)]
+        with pytest.raises(MoveError, match="rebase in progress"):
+            _move_hunks(repo, "child_a", "child_b", hunks)
+    finally:
+        rebase_dir.rmdir()
+
+
+def test_move_hunks_rollback_on_restack_failure(
+    repo_for_move: Repo, tmp_path: Path
+) -> None:
+    """If restacking fails after source modification, all refs are rolled back."""
+    repo = repo_for_move
+    repo_path = Path(repo.path)
+
+    full_patch = _git_diff_patch(repo_path, "main", "child_a")
+    file_patch = _get_file_patch(full_patch, "app.py")
+
+    # Tamper with child_b so the restack will conflict
+    git.switch_branch(repo, "child_b")
+    app_py = tmp_path / "app.py"
+    app_py.write_text("CONFLICT CONTENT\nTHIS WILL PREVENT REBASE\n")
+    porcelain.add(repo, paths=[str(app_py)])
+    head = git.get_branch_head(repo, "child_b")
+    msg = git.get_commit_message(repo, head)
+    git.amend_commit(repo, msg)
+    git.switch_branch(repo, "child_a")
+
+    source_sha_before = git.get_branch_head(repo, "child_a").decode()
+    target_sha_before = git.get_branch_head(repo, "child_b").decode()
+
+    hunks = [
+        HunkSelection(
+            file_path="app.py",
+            file_patch=file_patch,
+            hunk_index=0,
+        )
+    ]
+
+    with pytest.raises(MoveError, match="Restack failed"):
+        _move_hunks(repo, "child_a", "child_b", hunks)
+
+    # Verify all refs were rolled back
+    source_sha_after = git.get_branch_head(repo, "child_a").decode()
+    target_sha_after = git.get_branch_head(repo, "child_b").decode()
+    assert source_sha_after == source_sha_before
+    assert target_sha_after == target_sha_before
+
+
+def test_move_hunks_restacks_target_children(
+    repo_for_move: Repo, tmp_path: Path
+) -> None:
+    """Moving hunks to a branch restacks that branch's children (Phase 4)."""
+    repo = repo_for_move
+    repo_path = Path(repo.path)
+
+    # Extend stack: main → child_a → child_b → child_c
+    child_b_sha = repo.refs[b"refs/heads/child_b"]
+    repo.refs[b"refs/heads/child_c"] = child_b_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/child_c")
+
+    extra = tmp_path / "extra.py"
+    extra.write_text("def extra():\n    return 'extra'\n")
+    porcelain.add(repo, paths=[str(extra)])
+    trailers = Trailers(parent_branch="child_b")
+    message = trailers.apply_to("feat: add extra")
+    porcelain.commit(repo, message=message.encode())
+
+    git.switch_branch(repo, "child_a")
+
+    # Move hunks from child_a to child_b; child_b has child_c, so Phase 4 restacks
+    full_patch = _git_diff_patch(repo_path, "main", "child_a")
+    file_patch = _get_file_patch(full_patch, "app.py")
+
+    hunks = [HunkSelection(file_path="app.py", file_patch=file_patch, hunk_index=0)]
+    result = _move_hunks(repo, "child_a", "child_b", hunks)
+
+    assert result.source_branch == "child_a"
+    assert result.target_branch == "child_b"
+    # child_c should have been restacked in Phase 4
+    assert "child_c" in result.restacked_branches
+
+
+def test_move_hunks_target_not_exist(repo_for_move: Repo) -> None:
+    """Error when target branch doesn't exist."""
+    hunks = [HunkSelection(file_path="f.py", file_patch="fake", hunk_index=0)]
+    with pytest.raises(MoveError, match="does not exist"):
+        _move_hunks(repo_for_move, "child_a", "nonexistent", hunks)
+
+
+def test_move_hunks_source_not_tracked(repo_for_move: Repo) -> None:
+    """Error when source branch is not tracked."""
+    hunks = [HunkSelection(file_path="f.py", file_patch="fake", hunk_index=0)]
+    with pytest.raises(MoveError, match="not tracked"):
+        _move_hunks(repo_for_move, "main", "child_a", hunks)

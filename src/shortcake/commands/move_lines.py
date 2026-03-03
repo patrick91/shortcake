@@ -42,6 +42,14 @@ class HunkSelection:
 
 
 @dataclass
+class MoveHunksResult:
+    source_branch: str
+    target_branch: str
+    file_paths: list[str] = field(default_factory=list)
+    restacked_branches: list[str] = field(default_factory=list)
+
+
+@dataclass
 class AcceptResult:
     target_branch: str
     file_paths: list[str] = field(default_factory=list)
@@ -602,4 +610,149 @@ def _accept_working_hunks(
         raise
     except Exception as e:  # pragma: no cover
         _rollback()
+        raise MoveError(f"Unexpected error: {e}") from e
+
+
+def _move_hunks(
+    repo: Repo,
+    source_branch: str,
+    target_branch: str,
+    hunks: list[HunkSelection],
+    *,
+    no_verify: bool = False,
+) -> MoveHunksResult:
+    """Move selected hunks from source_branch to target_branch.
+
+    Reverse-applies the combined hunk patch on the source (removes changes),
+    amends the source commit, restacks, then forward-applies on the target,
+    amends the target commit, and restacks again.
+
+    Raises MoveError on any failure (with rollback of modified refs).
+    """
+    repo_path = Path(repo.path)
+
+    # --- Preconditions ---
+    if not hunks:
+        raise MoveError("No hunks selected")
+
+    if source_branch == target_branch:
+        raise MoveError("Source and target branches must be different")
+
+    if git.has_uncommitted_changes(repo):
+        raise MoveError("You have uncommitted changes. Commit or stash them first.")
+
+    if git.is_rebase_in_progress(repo):
+        raise MoveError("Git rebase in progress. Complete or abort it first.")
+
+    if not git.branch_exists(repo, source_branch):
+        raise MoveError(f"Branch '{source_branch}' does not exist")
+
+    if not git.branch_exists(repo, target_branch):
+        raise MoveError(f"Branch '{target_branch}' does not exist")
+
+    all_branches = set(git.get_all_local_branches(repo))
+
+    source_parent = git.get_branch_parent(repo, source_branch, all_branches)
+    if source_parent is None:
+        raise MoveError(f"Branch '{source_branch}' is not tracked by Shortcake")
+
+    target_parent = git.get_branch_parent(repo, target_branch, all_branches)
+    if target_parent is None:
+        raise MoveError(f"Branch '{target_branch}' is not tracked by Shortcake")
+
+    # --- Validate and extract each hunk patch ---
+    individual_patches: list[tuple[str, str]] = []
+    for hunk in hunks:
+        patch = _extract_hunk_patch(hunk.file_patch, hunk.hunk_index)
+        individual_patches.append((hunk.file_path, patch))
+
+    # --- Build combined patch ---
+    combined_patch = _combine_patches(individual_patches)
+
+    # --- Save state for rollback ---
+    original_branch = git.get_current_branch(repo)
+    all_tracked = _get_tracked_branches_in_order(repo)
+    original_refs: dict[str, str] = {}
+    for b in all_tracked:
+        original_refs[b] = git.get_branch_head(repo, b).decode()
+    source_modified = False
+
+    def _rollback() -> None:
+        """Restore all modified branch refs and abort any in-progress rebase."""
+        if git.is_rebase_in_progress(repo):
+            with contextlib.suppress(Exception):
+                git.rebase_abort(repo)
+        for b, sha in original_refs.items():
+            with contextlib.suppress(Exception):
+                git.update_branch(repo, b, sha)
+        with contextlib.suppress(Exception):
+            git.switch_branch(repo, original_branch or source_branch, force=True)
+
+    try:
+        # --- Phase 1: Remove from source branch ---
+        git.switch_branch(repo, source_branch)
+        _git_apply(repo_path, combined_patch, reverse=True)
+        _stage_patch_files(repo_path, combined_patch)
+        source_head = git.get_branch_head(repo, source_branch)
+        source_message = git.get_commit_message(repo, source_head)
+        git.amend_commit(repo, source_message, no_verify=no_verify)
+        source_modified = True
+
+        # --- Phase 2: Restack after source changes ---
+        restacked_phase1: list[str] = []
+        plan = _plan_restack(repo, all_tracked)
+        for step in plan:
+            result = _rebase_branch(repo, step.branch, step.onto, step.merge_base)
+            if not result.success:
+                _rollback()
+                raise MoveError(
+                    f"Restack failed for '{step.branch}': {result.error_output}"
+                )
+            restacked_phase1.append(step.branch)
+
+        # --- Phase 3: Add to target branch ---
+        git.switch_branch(repo, target_branch)
+        try:
+            _git_apply(repo_path, combined_patch, reverse=False)
+        except MoveError:  # pragma: no cover
+            _rollback()
+            raise
+        _stage_patch_files(repo_path, combined_patch)
+        target_head = git.get_branch_head(repo, target_branch)
+        target_message = git.get_commit_message(repo, target_head)
+        git.amend_commit(repo, target_message, no_verify=no_verify)
+
+        # --- Phase 4: Restack after target changes ---
+        restacked_phase2: list[str] = []
+        plan = _plan_restack(repo, all_tracked)
+        for step in plan:
+            result = _rebase_branch(repo, step.branch, step.onto, step.merge_base)
+            if not result.success:  # pragma: no cover
+                _rollback()
+                raise MoveError(
+                    f"Restack failed for '{step.branch}': {result.error_output}"
+                )
+            restacked_phase2.append(step.branch)
+
+        # --- Cleanup ---
+        all_restacked = list(dict.fromkeys(restacked_phase1 + restacked_phase2))
+        git.switch_branch(repo, original_branch or source_branch, force=True)
+
+        file_paths = list(dict.fromkeys(h.file_path for h in hunks))
+
+        return MoveHunksResult(
+            source_branch=source_branch,
+            target_branch=target_branch,
+            file_paths=file_paths,
+            restacked_branches=all_restacked,
+        )
+
+    except MoveError:
+        raise
+    except Exception as e:  # pragma: no cover
+        if source_modified:
+            _rollback()
+        else:
+            with contextlib.suppress(Exception):
+                git.switch_branch(repo, original_branch or source_branch, force=True)
         raise MoveError(f"Unexpected error: {e}") from e

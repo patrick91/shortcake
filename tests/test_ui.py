@@ -435,10 +435,10 @@ def _make_post_handler(
     return fake
 
 
-def test_post_move_lines_invalid_json(temp_repo: Repo) -> None:
-    """POST /api/move-lines with invalid JSON returns 400."""
+def test_post_move_hunks_invalid_json(temp_repo: Repo) -> None:
+    """POST /api/move-hunks with invalid JSON returns 400."""
     handler_cls = _build_request_handler(temp_repo)
-    fake = FakeHandler("/api/move-lines")
+    fake = FakeHandler("/api/move-hunks")
     fake.rfile = io.BytesIO(b"not json")
     fake.headers = {"Content-Length": "8"}
     handler_cls.do_POST(fake)  # type: ignore[arg-type]
@@ -446,76 +446,95 @@ def test_post_move_lines_invalid_json(temp_repo: Repo) -> None:
     assert "Invalid JSON" in fake.response_json()["error"]
 
 
-def test_post_move_lines_missing_fields(temp_repo: Repo) -> None:
-    """POST /api/move-lines with missing fields returns 400."""
-    fake = _make_post_handler(temp_repo, "/api/move-lines", {"sourceBranch": "a"})
+def test_post_move_hunks_missing_fields(temp_repo: Repo) -> None:
+    """POST /api/move-hunks with missing fields returns 400."""
+    fake = _make_post_handler(temp_repo, "/api/move-hunks", {"sourceBranch": "a"})
     assert fake._status == 400
     assert "Missing required fields" in fake.response_json()["error"]
 
 
-def test_post_move_lines_success(repo_with_stack: Repo, tmp_path: Path) -> None:
-    """POST /api/move-lines success returns 200 with result."""
+def test_post_move_hunks_empty_hunks(temp_repo: Repo) -> None:
+    """POST /api/move-hunks with empty hunks array returns 400."""
+    body = {"sourceBranch": "a", "targetBranch": "b", "hunks": []}
+    fake = _make_post_handler(temp_repo, "/api/move-hunks", body)
+    assert fake._status == 400
+    assert "non-empty" in fake.response_json()["error"]
+
+
+def test_post_move_hunks_non_dict_hunk(temp_repo: Repo) -> None:
+    """POST /api/move-hunks with non-dict hunk element returns 400."""
+    body = {"sourceBranch": "a", "targetBranch": "b", "hunks": [42]}
+    fake = _make_post_handler(temp_repo, "/api/move-hunks", body)
+    assert fake._status == 400
+    assert "Each hunk must be an object" in fake.response_json()["error"]
+
+
+def test_post_move_hunks_invalid_hunk(temp_repo: Repo) -> None:
+    """POST /api/move-hunks with invalid hunk object returns 400."""
+    body = {"sourceBranch": "a", "targetBranch": "b", "hunks": [{"filePath": "f.py"}]}
+    fake = _make_post_handler(temp_repo, "/api/move-hunks", body)
+    assert fake._status == 400
+    assert "Hunk missing fields" in fake.response_json()["error"]
+
+
+def test_post_move_hunks_success(repo_with_stack: Repo, tmp_path: Path) -> None:
+    """POST /api/move-hunks success returns 200 with result."""
     mock_result = MagicMock()
     mock_result.source_branch = "branch_a"
     mock_result.target_branch = "branch_b"
-    mock_result.file_path = "test.txt"
+    mock_result.file_paths = ["test.txt"]
     mock_result.restacked_branches = []
 
     body = {
         "sourceBranch": "branch_a",
         "targetBranch": "branch_b",
-        "filePatch": "patch",
-        "filePath": "test.txt",
-        "startLine": 1,
-        "endLine": 2,
-        "side": "additions",
+        "hunks": [
+            {"filePath": "test.txt", "filePatch": "patch", "hunkIndex": 0},
+        ],
     }
-    with patch("shortcake.commands.ui._move_lines", return_value=mock_result):
-        fake = _make_post_handler(repo_with_stack, "/api/move-lines", body)
+    with patch("shortcake.commands.ui._move_hunks", return_value=mock_result):
+        fake = _make_post_handler(repo_with_stack, "/api/move-hunks", body)
     assert fake._status == 200
     data = fake.response_json()
     assert data["sourceBranch"] == "branch_a"
     assert data["targetBranch"] == "branch_b"
+    assert data["filePaths"] == ["test.txt"]
 
 
-def test_post_move_lines_move_error(repo_with_stack: Repo) -> None:
-    """POST /api/move-lines MoveError returns 400."""
+def test_post_move_hunks_move_error(repo_with_stack: Repo) -> None:
+    """POST /api/move-hunks MoveError returns 400."""
     from shortcake.commands.move_lines import MoveError
 
     body = {
         "sourceBranch": "branch_a",
         "targetBranch": "branch_b",
-        "filePatch": "patch",
-        "filePath": "test.txt",
-        "startLine": 1,
-        "endLine": 2,
-        "side": "additions",
+        "hunks": [
+            {"filePath": "test.txt", "filePatch": "patch", "hunkIndex": 0},
+        ],
     }
     with patch(
-        "shortcake.commands.ui._move_lines",
+        "shortcake.commands.ui._move_hunks",
         side_effect=MoveError("move failed"),
     ):
-        fake = _make_post_handler(repo_with_stack, "/api/move-lines", body)
+        fake = _make_post_handler(repo_with_stack, "/api/move-hunks", body)
     assert fake._status == 400
     assert "move failed" in fake.response_json()["error"]
 
 
-def test_post_move_lines_unexpected_error(repo_with_stack: Repo) -> None:
-    """POST /api/move-lines unexpected error returns 500."""
+def test_post_move_hunks_unexpected_error(repo_with_stack: Repo) -> None:
+    """POST /api/move-hunks unexpected error returns 500."""
     body = {
         "sourceBranch": "branch_a",
         "targetBranch": "branch_b",
-        "filePatch": "patch",
-        "filePath": "test.txt",
-        "startLine": 1,
-        "endLine": 2,
-        "side": "additions",
+        "hunks": [
+            {"filePath": "test.txt", "filePatch": "patch", "hunkIndex": 0},
+        ],
     }
     with patch(
-        "shortcake.commands.ui._move_lines",
+        "shortcake.commands.ui._move_hunks",
         side_effect=RuntimeError("boom"),
     ):
-        fake = _make_post_handler(repo_with_stack, "/api/move-lines", body)
+        fake = _make_post_handler(repo_with_stack, "/api/move-hunks", body)
     assert fake._status == 500
     assert "boom" in fake.response_json()["error"]
 
@@ -660,7 +679,7 @@ def test_post_404(temp_repo: Repo) -> None:
 def test_options_handler(temp_repo: Repo) -> None:
     """OPTIONS returns 200 with CORS headers."""
     handler_cls = _build_request_handler(temp_repo)
-    fake = FakeHandler("/api/move-lines")
+    fake = FakeHandler("/api/move-hunks")
     handler_cls.do_OPTIONS(fake)  # type: ignore[arg-type]
     assert fake._status == 200
     header_dict = dict(fake._headers)

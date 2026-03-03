@@ -22,7 +22,7 @@ from shortcake.commands.move_lines import (
     HunkSelection,
     MoveError,
     _accept_working_hunks,
-    _move_lines,
+    _move_hunks,
     _move_lock,
 )
 
@@ -240,7 +240,7 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
 
-            if parsed.path == "/api/move-lines":
+            if parsed.path == "/api/move-hunks":
                 content_length = int(self.headers.get("Content-Length", 0))
                 raw = self.rfile.read(content_length)
                 try:
@@ -249,15 +249,7 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
                     _write_json(self, 400, {"error": "Invalid JSON body"})
                     return
 
-                required = [
-                    "sourceBranch",
-                    "targetBranch",
-                    "filePatch",
-                    "filePath",
-                    "startLine",
-                    "endLine",
-                    "side",
-                ]
+                required = ["sourceBranch", "targetBranch", "hunks"]
                 missing = [f for f in required if f not in body]
                 if missing:
                     _write_json(
@@ -267,17 +259,38 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
                     )
                     return
 
+                raw_hunks = body["hunks"]
+                if not isinstance(raw_hunks, list) or len(raw_hunks) == 0:
+                    _write_json(self, 400, {"error": "hunks must be a non-empty array"})
+                    return
+
+                hunk_selections: list[HunkSelection] = []
+                for h in raw_hunks:
+                    if not isinstance(h, dict):
+                        _write_json(self, 400, {"error": "Each hunk must be an object"})
+                        return
+                    hunk_required = ["filePath", "filePatch", "hunkIndex"]
+                    hunk_missing = [f for f in hunk_required if f not in h]
+                    if hunk_missing:
+                        msg = f"Hunk missing fields: {', '.join(hunk_missing)}"
+                        _write_json(self, 400, {"error": msg})
+                        return
+                    hunk_selections.append(
+                        HunkSelection(
+                            file_path=h["filePath"],
+                            file_patch=h["filePatch"],
+                            hunk_index=h["hunkIndex"],
+                        )
+                    )
+
                 with _move_lock:
                     try:
-                        result = _move_lines(
+                        result = _move_hunks(
                             repo,
                             source_branch=body["sourceBranch"],
                             target_branch=body["targetBranch"],
-                            file_patch=body["filePatch"],
-                            file_path=body["filePath"],
-                            start_line=body["startLine"],
-                            end_line=body["endLine"],
-                            side=body["side"],
+                            hunks=hunk_selections,
+                            no_verify=True,
                         )
                         _write_json(
                             self,
@@ -285,7 +298,7 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
                             {
                                 "sourceBranch": result.source_branch,
                                 "targetBranch": result.target_branch,
-                                "filePath": result.file_path,
+                                "filePaths": result.file_paths,
                                 "restackedBranches": result.restacked_branches,
                             },
                         )
