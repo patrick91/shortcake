@@ -78,6 +78,12 @@ def _continue(repo: Repo) -> ContinueResult:
             )
             any_skipped_empty = True
 
+    # Update trailer if needed (for reorder operations)
+    if current_step.new_parent_trailer is not None:
+        from shortcake.commands.reorder import _update_branch_trailer
+
+        _update_branch_trailer(repo, current_step.branch, current_step.new_parent_trailer)
+
     # Check if parent branch still exists (may have been deleted during resolution)
     if not git.branch_exists(repo, current_step.onto):
         raise ContinueError(
@@ -127,6 +133,12 @@ def _continue(repo: Repo) -> ContinueResult:
         if result.skipped_empty:
             typer.echo(f"  Skipped empty commit (changes already in '{step.onto}')")
             any_skipped_empty = True
+
+        # Update trailer if needed (for reorder operations)
+        if step.new_parent_trailer is not None:
+            from shortcake.commands.reorder import _update_branch_trailer
+
+            _update_branch_trailer(repo, step.branch, step.new_parent_trailer)
 
         restacked.append(step.branch)
 
