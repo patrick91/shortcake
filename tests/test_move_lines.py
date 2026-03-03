@@ -743,6 +743,42 @@ def test_move_hunks_rollback_on_restack_failure(
     assert target_sha_after == target_sha_before
 
 
+def test_move_hunks_restacks_target_children(
+    repo_for_move: Repo, tmp_path: Path
+) -> None:
+    """Moving hunks to a branch restacks that branch's children (Phase 4)."""
+    repo = repo_for_move
+    repo_path = Path(repo.path)
+
+    # Extend stack: main → child_a → child_b → child_c
+    child_b_sha = repo.refs[b"refs/heads/child_b"]
+    repo.refs[b"refs/heads/child_c"] = child_b_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/child_c")
+
+    extra = tmp_path / "extra.py"
+    extra.write_text("def extra():\n    return 'extra'\n")
+    porcelain.add(repo, paths=[str(extra)])
+    trailers = Trailers(parent_branch="child_b")
+    message = trailers.apply_to("feat: add extra")
+    porcelain.commit(repo, message=message.encode())
+
+    git.switch_branch(repo, "child_a")
+
+    # Move hunks from child_a to child_b; child_b has child_c, so Phase 4 restacks
+    full_patch = _git_diff_patch(repo_path, "main", "child_a")
+    file_patch = _get_file_patch(full_patch, "app.py")
+
+    hunks = [
+        HunkSelection(file_path="app.py", file_patch=file_patch, hunk_index=0)
+    ]
+    result = _move_hunks(repo, "child_a", "child_b", hunks)
+
+    assert result.source_branch == "child_a"
+    assert result.target_branch == "child_b"
+    # child_c should have been restacked in Phase 4
+    assert "child_c" in result.restacked_branches
+
+
 def test_move_hunks_target_not_exist(repo_for_move: Repo) -> None:
     """Error when target branch doesn't exist."""
     hunks = [HunkSelection(file_path="f.py", file_patch="fake", hunk_index=0)]

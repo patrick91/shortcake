@@ -290,6 +290,7 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
                             source_branch=body["sourceBranch"],
                             target_branch=body["targetBranch"],
                             hunks=hunk_selections,
+                            no_verify=True,
                         )
                         _write_json(
                             self,

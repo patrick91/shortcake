@@ -811,7 +811,7 @@ function DiffFileSection({
       if (hunk.file !== fileInfo.path) continue;
       const key: HunkKey = `${hunk.file}:${hunk.hunkIndex}`;
       annotations.push({
-        lineNumber: hunk.hunkStartLine,
+        lineNumber: hunk.firstChangedLine - 1,
         side: hunk.side,
         metadata: {
           commentId: `__hunktoggle__${key}`,

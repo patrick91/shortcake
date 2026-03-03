@@ -461,6 +461,14 @@ def test_post_move_hunks_empty_hunks(temp_repo: Repo) -> None:
     assert "non-empty" in fake.response_json()["error"]
 
 
+def test_post_move_hunks_non_dict_hunk(temp_repo: Repo) -> None:
+    """POST /api/move-hunks with non-dict hunk element returns 400."""
+    body = {"sourceBranch": "a", "targetBranch": "b", "hunks": [42]}
+    fake = _make_post_handler(temp_repo, "/api/move-hunks", body)
+    assert fake._status == 400
+    assert "Each hunk must be an object" in fake.response_json()["error"]
+
+
 def test_post_move_hunks_invalid_hunk(temp_repo: Repo) -> None:
     """POST /api/move-hunks with invalid hunk object returns 400."""
     body = {"sourceBranch": "a", "targetBranch": "b", "hunks": [{"filePath": "f.py"}]}
