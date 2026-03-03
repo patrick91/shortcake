@@ -11,11 +11,21 @@ from shortcake.commands.adopt import _adopt
 from shortcake.commands.create import (
     BranchExistsError,
     EmptyBranchNameError,
+    InsertError,
     _create,
+    _create_insert_after,
+    _create_insert_before,
     _slugify,
     _validate_branch_name,
 )
 from shortcake.commands.ls import _ls
+
+
+def switch_branch(repo: Repo, branch: str) -> None:
+    """Properly switch branches with index and working tree reset."""
+    ref = f"refs/heads/{branch}".encode()
+    repo.refs.set_symbolic_ref(b"HEAD", ref)
+    porcelain.reset(repo, "hard")
 
 # Slugify tests
 
@@ -283,3 +293,147 @@ def test_create_shows_in_ls(temp_repo: Repo) -> None:
 
     assert "feat-new-feature" in result
     assert "main" in result
+
+
+# Insert-before tests
+
+
+def test_create_insert_before_basic(repo_with_stack: Repo, tmp_path: Path) -> None:
+    """Test inserting a branch before current branch in the stack.
+
+    Stack: main → branch_a → branch_b
+    On branch_b, insert before → main → branch_a → NEW → branch_b
+    """
+    # Switch to branch_b (it's already on branch_b in the fixture)
+    result = _create_insert_before(repo_with_stack, "fix: inserted", "fix-inserted")
+
+    assert result.branch == "fix-inserted"
+    assert result.parent == "branch_a"
+    assert result.inserted_before == "branch_b"
+    assert result.rebased_branches == ["branch_b"]
+    assert result.conflict_branch is None
+
+    # Verify we're on the new branch
+    assert git.get_current_branch(repo_with_stack) == "fix-inserted"
+
+    # Verify new branch's trailer points to branch_a
+    all_branches = set(git.get_all_local_branches(repo_with_stack))
+    new_parent = git.get_branch_parent(repo_with_stack, "fix-inserted", all_branches)
+    assert new_parent == "branch_a"
+
+    # Verify branch_b's trailer now points to fix-inserted
+    branch_b_parent = git.get_branch_parent(
+        repo_with_stack, "branch_b", all_branches
+    )
+    assert branch_b_parent == "fix-inserted"
+
+
+def test_create_insert_before_bottom(repo_with_stack: Repo, tmp_path: Path) -> None:
+    """Test inserting before the first tracked branch.
+
+    Stack: main → branch_a → branch_b
+    On branch_a, insert before → main → NEW → branch_a → branch_b
+    """
+    switch_branch(repo_with_stack, "branch_a")
+
+    result = _create_insert_before(repo_with_stack, "fix: bottom", "fix-bottom")
+
+    assert result.branch == "fix-bottom"
+    assert result.parent == "main"
+    assert result.inserted_before == "branch_a"
+    assert result.rebased_branches == ["branch_a"]
+
+    # Verify new branch's trailer points to main
+    all_branches = set(git.get_all_local_branches(repo_with_stack))
+    new_parent = git.get_branch_parent(repo_with_stack, "fix-bottom", all_branches)
+    assert new_parent == "main"
+
+    # Verify branch_a's trailer now points to fix-bottom
+    branch_a_parent = git.get_branch_parent(
+        repo_with_stack, "branch_a", all_branches
+    )
+    assert branch_a_parent == "fix-bottom"
+
+
+def test_create_insert_before_untracked_error(temp_repo: Repo) -> None:
+    """Test error when trying to insert before an untracked branch."""
+    # main is not tracked (no Shortcake-Parent trailer)
+    with pytest.raises(InsertError, match="not tracked"):
+        _create_insert_before(temp_repo, "fix: something", "fix-something")
+
+
+# Insert-after tests
+
+
+def test_create_insert_after_basic(repo_with_stack: Repo, tmp_path: Path) -> None:
+    """Test inserting a branch after current branch in the stack.
+
+    Stack: main → branch_a → branch_b
+    On branch_a, insert after → main → branch_a → NEW → branch_b
+    """
+    switch_branch(repo_with_stack, "branch_a")
+
+    result = _create_insert_after(repo_with_stack, "fix: after-a", "fix-after-a")
+
+    assert result.branch == "fix-after-a"
+    assert result.parent == "branch_a"
+    assert result.inserted_after == "branch_a"
+    assert result.rebased_branches == ["branch_b"]
+    assert result.conflict_branch is None
+
+    # Verify we're on the new branch
+    assert git.get_current_branch(repo_with_stack) == "fix-after-a"
+
+    # Verify new branch's trailer points to branch_a
+    all_branches = set(git.get_all_local_branches(repo_with_stack))
+    new_parent = git.get_branch_parent(repo_with_stack, "fix-after-a", all_branches)
+    assert new_parent == "branch_a"
+
+    # Verify branch_b's trailer now points to fix-after-a
+    branch_b_parent = git.get_branch_parent(
+        repo_with_stack, "branch_b", all_branches
+    )
+    assert branch_b_parent == "fix-after-a"
+
+
+def test_create_insert_after_no_children(
+    repo_with_stack: Repo, tmp_path: Path
+) -> None:
+    """Test insert-after with no children is like normal create.
+
+    Stack: main → branch_a → branch_b
+    On branch_b (leaf), insert after → main → branch_a → branch_b → NEW
+    """
+    # branch_b is the leaf, already checked out
+    result = _create_insert_after(repo_with_stack, "fix: leaf", "fix-leaf")
+
+    assert result.branch == "fix-leaf"
+    assert result.parent == "branch_b"
+    assert result.inserted_after == "branch_b"
+    assert result.rebased_branches == []
+    assert result.conflict_branch is None
+
+    # Verify new branch's trailer points to branch_b
+    all_branches = set(git.get_all_local_branches(repo_with_stack))
+    new_parent = git.get_branch_parent(repo_with_stack, "fix-leaf", all_branches)
+    assert new_parent == "branch_b"
+
+
+def test_create_insert_after_multiple_children_error(
+    repo_with_fork: Repo,
+) -> None:
+    """Test error when inserting after a branch with multiple children."""
+    # repo_with_fork: main → branch_a → (branch_b, branch_c)
+    switch_branch(repo_with_fork, "branch_a")
+
+    with pytest.raises(InsertError, match="multiple children"):
+        _create_insert_after(repo_with_fork, "fix: something", "fix-something")
+
+
+def test_create_insert_with_allow_empty(repo_with_stack: Repo) -> None:
+    """Test that insert-before works with empty commits (no staged changes)."""
+    # No staged changes, but _create_insert_before creates an empty commit
+    result = _create_insert_before(repo_with_stack, "fix: empty", "fix-empty")
+
+    assert result.branch == "fix-empty"
+    assert result.inserted_before == "branch_b"
