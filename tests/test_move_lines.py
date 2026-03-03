@@ -768,9 +768,7 @@ def test_move_hunks_restacks_target_children(
     full_patch = _git_diff_patch(repo_path, "main", "child_a")
     file_patch = _get_file_patch(full_patch, "app.py")
 
-    hunks = [
-        HunkSelection(file_path="app.py", file_patch=file_patch, hunk_index=0)
-    ]
+    hunks = [HunkSelection(file_path="app.py", file_patch=file_patch, hunk_index=0)]
     result = _move_hunks(repo, "child_a", "child_b", hunks)
 
     assert result.source_branch == "child_a"
