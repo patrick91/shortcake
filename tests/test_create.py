@@ -27,6 +27,7 @@ def switch_branch(repo: Repo, branch: str) -> None:
     repo.refs.set_symbolic_ref(b"HEAD", ref)
     porcelain.reset(repo, "hard")
 
+
 # Slugify tests
 
 
@@ -322,9 +323,7 @@ def test_create_insert_before_basic(repo_with_stack: Repo, tmp_path: Path) -> No
     assert new_parent == "branch_a"
 
     # Verify branch_b's trailer now points to fix-inserted
-    branch_b_parent = git.get_branch_parent(
-        repo_with_stack, "branch_b", all_branches
-    )
+    branch_b_parent = git.get_branch_parent(repo_with_stack, "branch_b", all_branches)
     assert branch_b_parent == "fix-inserted"
 
 
@@ -349,9 +348,7 @@ def test_create_insert_before_bottom(repo_with_stack: Repo, tmp_path: Path) -> N
     assert new_parent == "main"
 
     # Verify branch_a's trailer now points to fix-bottom
-    branch_a_parent = git.get_branch_parent(
-        repo_with_stack, "branch_a", all_branches
-    )
+    branch_a_parent = git.get_branch_parent(repo_with_stack, "branch_a", all_branches)
     assert branch_a_parent == "fix-bottom"
 
 
@@ -390,15 +387,11 @@ def test_create_insert_after_basic(repo_with_stack: Repo, tmp_path: Path) -> Non
     assert new_parent == "branch_a"
 
     # Verify branch_b's trailer now points to fix-after-a
-    branch_b_parent = git.get_branch_parent(
-        repo_with_stack, "branch_b", all_branches
-    )
+    branch_b_parent = git.get_branch_parent(repo_with_stack, "branch_b", all_branches)
     assert branch_b_parent == "fix-after-a"
 
 
-def test_create_insert_after_no_children(
-    repo_with_stack: Repo, tmp_path: Path
-) -> None:
+def test_create_insert_after_no_children(repo_with_stack: Repo, tmp_path: Path) -> None:
     """Test insert-after with no children is like normal create.
 
     Stack: main → branch_a → branch_b
@@ -437,3 +430,45 @@ def test_create_insert_with_allow_empty(repo_with_stack: Repo) -> None:
 
     assert result.branch == "fix-empty"
     assert result.inserted_before == "branch_b"
+
+
+def test_create_insert_before_conflict(repo_with_stack: Repo, tmp_path: Path) -> None:
+    """Test insert-before returns conflict result when rebase fails."""
+    from unittest.mock import patch
+
+    mock_rebase_result = git.RebaseResult(success=False, conflict=True)
+
+    with (
+        patch(
+            "shortcake.commands.restack._rebase_branch",
+            return_value=mock_rebase_result,
+        ),
+        patch("shortcake._git.is_rebase_in_progress", return_value=True),
+    ):
+        result = _create_insert_before(repo_with_stack, "fix: conflict", "fix-conflict")
+
+    assert result.branch == "fix-conflict"
+    assert result.conflict_branch == "branch_b"
+    assert result.inserted_before == "branch_b"
+
+
+def test_create_insert_after_conflict(repo_with_stack: Repo, tmp_path: Path) -> None:
+    """Test insert-after returns conflict result when rebase fails."""
+    from unittest.mock import patch
+
+    switch_branch(repo_with_stack, "branch_a")
+
+    mock_rebase_result = git.RebaseResult(success=False, conflict=True)
+
+    with (
+        patch(
+            "shortcake.commands.restack._rebase_branch",
+            return_value=mock_rebase_result,
+        ),
+        patch("shortcake._git.is_rebase_in_progress", return_value=True),
+    ):
+        result = _create_insert_after(repo_with_stack, "fix: conflict", "fix-conflict")
+
+    assert result.branch == "fix-conflict"
+    assert result.conflict_branch == "branch_b"
+    assert result.inserted_after == "branch_a"

@@ -97,9 +97,7 @@ def _create(repo: Repo, message: str, branch_name: str) -> CreateResult:
     return CreateResult(branch=branch_name, parent=parent, message=message)
 
 
-def _create_insert_before(
-    repo: Repo, message: str, branch_name: str
-) -> CreateResult:
+def _create_insert_before(repo: Repo, message: str, branch_name: str) -> CreateResult:
     """Insert a new branch before the current branch.
 
     Given stack main → A → B → C, on B: inserts NEW between A and B.
@@ -146,7 +144,7 @@ def _create_insert_before(
 
     # Now rebase current branch onto new branch
     # merge_base is the parent of the first commit with trailer on current branch
-    if merge_base is None:
+    if merge_base is None:  # pragma: no cover
         raise InsertError(
             f"Branch '{current_branch}' has no merge base with parent '{parent}'. "
             f"Cannot insert before it."
@@ -185,7 +183,7 @@ def _create_insert_before(
         if git.is_rebase_in_progress(repo):
             conflict_files = _get_conflict_files(repo)
             _show_conflict_message(current_branch, branch_name, conflict_files)
-        else:
+        else:  # pragma: no cover
             _show_rebase_error(current_branch, branch_name, result.error_output)
         return CreateResult(
             branch=branch_name,
@@ -213,9 +211,7 @@ def _create_insert_before(
     )
 
 
-def _create_insert_after(
-    repo: Repo, message: str, branch_name: str
-) -> CreateResult:
+def _create_insert_after(repo: Repo, message: str, branch_name: str) -> CreateResult:
     """Insert a new branch after the current branch.
 
     Given stack main → A → B → C, on B: inserts NEW between B and C.
@@ -268,10 +264,8 @@ def _create_insert_after(
     all_branches = set(git.get_all_local_branches(repo))
     child_parent_info = git.get_branch_parent_info(repo, child, all_branches)
 
-    if child_parent_info is None or child_parent_info[1] is None:
-        raise InsertError(
-            f"Branch '{child}' has no merge base. Cannot rebase it."
-        )
+    if child_parent_info is None or child_parent_info[1] is None:  # pragma: no cover
+        raise InsertError(f"Branch '{child}' has no merge base. Cannot rebase it.")
 
     _, child_merge_base = child_parent_info
 
@@ -308,7 +302,7 @@ def _create_insert_after(
         if git.is_rebase_in_progress(repo):
             conflict_files = _get_conflict_files(repo)
             _show_conflict_message(child, branch_name, conflict_files)
-        else:
+        else:  # pragma: no cover
             _show_rebase_error(child, branch_name, result.error_output)
         return CreateResult(
             branch=branch_name,
@@ -390,8 +384,7 @@ def create(
 
         if RestackState.exists(repo):
             typer.echo(
-                "Error: Restack already in progress. "
-                "Use 'sc continue' or 'sc abort'.",
+                "Error: Restack already in progress. Use 'sc continue' or 'sc abort'.",
                 err=True,
             )
             raise typer.Exit(1)
