@@ -6,7 +6,9 @@ from dulwich import porcelain
 from dulwich.repo import Repo
 
 from shortcake import _git as git
+from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 from shortcake._trailers import Trailers
+from shortcake.commands.continue_ import _continue
 from shortcake.commands.restack import _restack
 
 
@@ -193,3 +195,256 @@ def test_restack_preserves_trailer_in_stack_with_empty_commit(
     assert parent_b == "branch_a", (
         f"branch_b should still be tracked with parent 'branch_a', but got {parent_b!r}"
     )
+
+
+def test_restack_preserves_trailer_replays_multiple_surviving_commits(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Trailer restored with replay when 2+ commits survive but trailer is lost.
+
+    Scenario: branch has 3 commits — the first (with trailer + changes) becomes
+    empty, the second and third have unique changes. After restack, the trailer
+    should be on the new first commit and both surviving commits are replayed.
+    """
+    # Create branch_a from main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+
+    # First commit: trailer + file changes that will become empty
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("branch a content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers_a = Trailers(parent_branch="main")
+    message_a = trailers_a.apply_to("feat: branch a first commit")
+    porcelain.commit(temp_repo, message=message_a.encode())
+
+    # Second commit: unique changes
+    file_b = tmp_path / "unique1.txt"
+    file_b.write_text("unique content 1")
+    porcelain.add(temp_repo, paths=[str(file_b)])
+    porcelain.commit(temp_repo, message=b"feat: branch a second commit")
+
+    # Third commit: more unique changes
+    file_c = tmp_path / "unique2.txt"
+    file_c.write_text("unique content 2")
+    porcelain.add(temp_repo, paths=[str(file_c)])
+    porcelain.commit(temp_repo, message=b"feat: branch a third commit")
+
+    # Simulate squash-merge of first commit's changes into main
+    switch_branch(temp_repo, "main")
+    file_a_on_main = tmp_path / "a.txt"
+    file_a_on_main.write_text("branch a content")
+    porcelain.add(temp_repo, paths=[str(file_a_on_main)])
+    porcelain.commit(temp_repo, message=b"chore: squash merge first commit changes")
+
+    # Switch to branch_a for restack
+    switch_branch(temp_repo, "branch_a")
+
+    # Run restack
+    result = _restack(temp_repo)
+
+    assert result.restacked_branches == ["branch_a"]
+    assert result.skipped_empty_commits is True
+
+    # branch_a should still be tracked
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    parent = git.get_branch_parent(temp_repo, "branch_a", all_branches)
+    assert parent == "main"
+
+    # Both surviving commits should be present (2 commits on branch_a)
+    branch_a_head = git.get_branch_head(temp_repo, "branch_a")
+    main_head = git.get_branch_head(temp_repo, "main")
+    commits = git.get_commits_between(temp_repo, branch_a_head, main_head)
+    assert len(commits) == 2
+
+    # Both unique files should be in the tree
+    tree = temp_repo[temp_repo[branch_a_head].tree]
+    file_names = [item.path.decode() for item in tree.items()]
+    assert "unique1.txt" in file_names
+    assert "unique2.txt" in file_names
+
+
+def test_continue_preserves_trailer_current_step(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Trailer restored during sc continue for the current (just-continued) step.
+
+    Covers continue_.py line 93.
+    """
+    # Create branch_a with trailer + changes
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("branch a content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers_a = Trailers(parent_branch="main")
+    message_a = trailers_a.apply_to("feat: branch a")
+    porcelain.commit(temp_repo, message=message_a.encode())
+
+    # Squash-merge branch_a into main
+    switch_branch(temp_repo, "main")
+    file_a_main = tmp_path / "a.txt"
+    file_a_main.write_text("branch a content")
+    porcelain.add(temp_repo, paths=[str(file_a_main)])
+    porcelain.commit(temp_repo, message=b"chore: squash merge branch_a")
+
+    # Now restack branch_a — this will drop the commit and restore trailer
+    switch_branch(temp_repo, "branch_a")
+    result = _restack(temp_repo)
+    assert result.restacked_branches == ["branch_a"]
+
+    # Now set up a continue scenario: create another branch with same pattern
+    # and manually set up restack state as if a conflict was just resolved
+    main_head = git.get_branch_head(temp_repo, "main")
+    branch_a_head = git.get_branch_head(temp_repo, "branch_a")
+
+    # Create branch_b with trailer + changes that will become empty
+    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_head
+    switch_branch(temp_repo, "branch_b")
+
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("branch b content")
+    porcelain.add(temp_repo, paths=[str(file_b)])
+    trailers_b = Trailers(parent_branch="branch_a")
+    message_b = trailers_b.apply_to("feat: branch b")
+    porcelain.commit(temp_repo, message=message_b.encode())
+
+    # Add b.txt to branch_a so branch_b's commit becomes empty
+    switch_branch(temp_repo, "branch_a")
+    file_b_on_a = tmp_path / "b.txt"
+    file_b_on_a.write_text("branch b content")
+    porcelain.add(temp_repo, paths=[str(file_b_on_a)])
+    porcelain.commit(temp_repo, message=b"chore: add b.txt to branch_a")
+
+    branch_a_head = git.get_branch_head(temp_repo, "branch_a")
+    branch_b_head = git.get_branch_head(temp_repo, "branch_b")
+
+    # Set up restack state as if we just resolved a conflict on branch_b
+    # (current_index=0, only step is branch_b)
+    state = RestackState(
+        version=STATE_VERSION,
+        original_branch="branch_b",
+        plan=[
+            RestackStep(
+                branch="branch_b",
+                onto="branch_a",
+                merge_base=branch_a_head.decode(),
+            ),
+        ],
+        current_index=0,
+        original_refs={"branch_b": branch_b_head.decode()},
+    )
+    state.save(temp_repo)
+
+    # Rebase branch_b onto branch_a manually (simulating what would happen
+    # after conflict resolution — the rebase is already done)
+    switch_branch(temp_repo, "branch_b")
+    rebase_result = git.rebase_branch(
+        temp_repo, "branch_b", "branch_a", branch_a_head.decode()
+    )
+    assert rebase_result.success
+
+    # Now run continue — it should detect the lost trailer and restore it
+    result = _continue(temp_repo)
+
+    assert "branch_b" in result.restacked_branches
+
+    # branch_b should still be tracked
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    parent = git.get_branch_parent(temp_repo, "branch_b", all_branches)
+    assert parent == "branch_a"
+
+
+def test_continue_preserves_trailer_remaining_steps(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Trailer restored during sc continue for remaining steps after current.
+
+    Covers continue_.py line 154.
+    """
+    # Create branch_a from main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("branch a content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers_a = Trailers(parent_branch="main")
+    message_a = trailers_a.apply_to("feat: branch a")
+    porcelain.commit(temp_repo, message=message_a.encode())
+    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # Create branch_b from branch_a with changes that will become empty
+    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    switch_branch(temp_repo, "branch_b")
+
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("branch b content")
+    porcelain.add(temp_repo, paths=[str(file_b)])
+    trailers_b = Trailers(parent_branch="branch_a")
+    message_b = trailers_b.apply_to("feat: branch b")
+    porcelain.commit(temp_repo, message=message_b.encode())
+    branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
+
+    # Add b.txt to branch_a so branch_b's commit becomes empty during rebase
+    switch_branch(temp_repo, "branch_a")
+    file_b_on_a = tmp_path / "b.txt"
+    file_b_on_a.write_text("branch b content")
+    porcelain.add(temp_repo, paths=[str(file_b_on_a)])
+    porcelain.commit(temp_repo, message=b"chore: add b.txt")
+    branch_a_new = git.get_branch_head(temp_repo, "branch_a")
+
+    # Also advance main so branch_a needs rebasing too
+    switch_branch(temp_repo, "main")
+    main_file = tmp_path / "main_update.txt"
+    main_file.write_text("main update")
+    porcelain.add(temp_repo, paths=[str(main_file)])
+    porcelain.commit(temp_repo, message=b"chore: update main")
+    main_head = git.get_branch_head(temp_repo, "main")
+
+    # Set up restack state: branch_a is current (index 0), branch_b is remaining
+    # Pretend branch_a was just resolved (current step done), branch_b is next
+    merge_base_a = main_sha  # original fork point
+    state = RestackState(
+        version=STATE_VERSION,
+        original_branch="branch_b",
+        plan=[
+            RestackStep(
+                branch="branch_a",
+                onto="main",
+                merge_base=merge_base_a.decode(),
+            ),
+            RestackStep(
+                branch="branch_b",
+                onto="branch_a",
+                merge_base=branch_a_sha.decode(),
+            ),
+        ],
+        current_index=0,
+        original_refs={
+            "branch_a": branch_a_new.decode(),
+            "branch_b": branch_b_sha.decode(),
+        },
+    )
+    state.save(temp_repo)
+
+    # Rebase branch_a onto main (simulating completed conflict resolution)
+    switch_branch(temp_repo, "branch_a")
+    rebase_result = git.rebase_branch(
+        temp_repo, "branch_a", "main", merge_base_a.decode()
+    )
+    assert rebase_result.success
+
+    # Now run continue — branch_a is done, branch_b will be rebased and lose trailer
+    result = _continue(temp_repo)
+
+    assert "branch_b" in result.restacked_branches
+
+    # branch_b should still be tracked
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    parent = git.get_branch_parent(temp_repo, "branch_b", all_branches)
+    assert parent == "branch_a"
