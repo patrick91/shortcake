@@ -44,9 +44,7 @@ def _get_linear_stack(repo: Repo, current_branch: str) -> tuple[str, list[str]]:
 
     # Check if current branch is tracked
     if git.get_branch_parent(repo, current_branch, all_branches) is None:
-        raise ReorderError(
-            f"Branch '{current_branch}' is not tracked by Shortcake"
-        )
+        raise ReorderError(f"Branch '{current_branch}' is not tracked by Shortcake")
 
     # Walk UP from current to find trunk
     trunk = None
@@ -155,17 +153,14 @@ def _build_editor_content(trunk: str, branches: list[str]) -> str:
         lines.append(branch)
     lines.append("")
     lines.append(
-        f"# Reorder the branches above (bottom-to-top,"
-        f" closest to '{trunk}' first)."
+        f"# Reorder the branches above (bottom-to-top, closest to '{trunk}' first)."
     )
     lines.append("# Lines starting with '#' are ignored.")
     lines.append("# Delete all lines or save an empty file to abort.")
     return "\n".join(lines)
 
 
-def _parse_editor_result(
-    content: str, original_branches: list[str]
-) -> list[str]:
+def _parse_editor_result(content: str, original_branches: list[str]) -> list[str]:
     """Parse editor output and validate the result.
 
     Raises ReorderError if the result is invalid.
@@ -203,9 +198,7 @@ def _parse_editor_result(
     return lines
 
 
-def _reorder(
-    repo: Repo, new_order: list[str] | None = None
-) -> ReorderResult:
+def _reorder(repo: Repo, new_order: list[str] | None = None) -> ReorderResult:
     """Reorder branches in the current stack.
 
     Args:
@@ -220,9 +213,7 @@ def _reorder(
         raise ReorderError("Cannot reorder in detached HEAD state")
 
     if git.has_uncommitted_changes(repo):
-        raise ReorderError(
-            "You have uncommitted changes. Commit or stash them first."
-        )
+        raise ReorderError("You have uncommitted changes. Commit or stash them first.")
 
     if git.is_rebase_in_progress(repo):
         raise ReorderError("Git rebase in progress. Complete or abort it first.")
@@ -359,8 +350,7 @@ def reorder(
     order: Annotated[
         list[str] | None,
         typer.Argument(
-            help="New branch order (bottom-to-top). "
-            "Omit for interactive editor."
+            help="New branch order (bottom-to-top). Omit for interactive editor."
         ),
     ] = None,
 ) -> None:
