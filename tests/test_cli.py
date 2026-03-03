@@ -349,6 +349,193 @@ def test_cli_create_gitmoji_cancelled(
 
 
 # ============================================================================
+# Create --before / --after CLI tests
+# ============================================================================
+
+
+def test_cli_create_before(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create --before inserts branch before current."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app, ["create", "-m", "fix: before-b", "--before", "--allow-empty"]
+    )
+
+    assert result.exit_code == 0
+    assert "Created branch 'fix-before-b' from 'branch_a'" in result.output
+    assert "Rebased 'branch_b' onto 'fix-before-b'" in result.output
+
+
+def test_cli_create_after(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create --after inserts branch after current."""
+    monkeypatch.chdir(tmp_path)
+
+    # Switch to branch_a first (which has branch_b as child)
+    ref = b"refs/heads/branch_a"
+    repo_with_stack.refs.set_symbolic_ref(b"HEAD", ref)
+    porcelain.reset(repo_with_stack, "hard")
+
+    result = runner.invoke(
+        app, ["create", "-m", "fix: after-a", "--after", "--allow-empty"]
+    )
+
+    assert result.exit_code == 0
+    assert "Created branch 'fix-after-a' from 'branch_a'" in result.output
+    assert "Rebased 'branch_b' onto 'fix-after-a'" in result.output
+
+
+def test_cli_create_before_and_after_error(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create with both --before and --after gives error."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["create", "-m", "fix: both", "--before", "--after", "--allow-empty"],
+    )
+
+    assert result.exit_code == 1
+    assert "Cannot use both --before and --after" in result.output
+
+
+def test_cli_create_before_untracked_error(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create --before on untracked branch gives error."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app, ["create", "-m", "fix: something", "--before", "--allow-empty"]
+    )
+
+    assert result.exit_code == 1
+    assert "not tracked" in result.output
+
+
+def test_cli_create_after_no_children(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create --after on leaf branch (no rebase needed)."""
+    monkeypatch.chdir(tmp_path)
+
+    # branch_b is the leaf, already checked out
+    result = runner.invoke(
+        app, ["create", "-m", "fix: leaf", "--after", "--allow-empty"]
+    )
+
+    assert result.exit_code == 0
+    assert "Created branch 'fix-leaf' from 'branch_b'" in result.output
+    # No rebase message since there are no children
+    assert "Rebased" not in result.output
+
+
+def test_cli_create_before_uncommitted_changes(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create --before with uncommitted changes gives error."""
+    monkeypatch.chdir(tmp_path)
+
+    # Create an uncommitted file
+    dirty_file = tmp_path / "dirty.txt"
+    dirty_file.write_text("dirty content")
+    porcelain.add(repo_with_stack, paths=[str(dirty_file)])
+
+    result = runner.invoke(app, ["create", "-m", "fix: dirty", "--before"])
+
+    assert result.exit_code == 1
+    assert "uncommitted changes" in result.output
+
+
+def test_cli_create_after_multiple_children_error(
+    repo_with_fork: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create --after on branch with multiple children gives error."""
+    monkeypatch.chdir(tmp_path)
+
+    # Switch to branch_a which has multiple children (branch_b, branch_c)
+    ref = b"refs/heads/branch_a"
+    repo_with_fork.refs.set_symbolic_ref(b"HEAD", ref)
+    porcelain.reset(repo_with_fork, "hard")
+
+    result = runner.invoke(
+        app, ["create", "-m", "fix: after", "--after", "--allow-empty"]
+    )
+
+    assert result.exit_code == 1
+    assert "multiple children" in result.output
+
+
+def test_cli_create_before_conflict_exit(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create --before exits with code 1 on conflict."""
+    from unittest.mock import patch
+
+    from shortcake.commands.create import CreateResult
+
+    monkeypatch.chdir(tmp_path)
+
+    conflict_result = CreateResult(
+        branch="fix-conflict",
+        parent="branch_a",
+        message="fix: conflict",
+        inserted_before="branch_b",
+        conflict_branch="branch_b",
+    )
+
+    with patch(
+        "shortcake.commands.create._create_insert_before", return_value=conflict_result
+    ):
+        result = runner.invoke(
+            app, ["create", "-m", "fix: conflict", "--before", "--allow-empty"]
+        )
+
+    assert result.exit_code == 1
+    assert "Created branch 'fix-conflict'" in result.output
+
+
+def test_cli_create_before_rebase_in_progress(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create --before with rebase in progress gives error."""
+    from unittest.mock import patch
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch(
+        "shortcake.commands.create.git.is_rebase_in_progress", return_value=True
+    ):
+        result = runner.invoke(
+            app, ["create", "-m", "fix: test", "--before", "--allow-empty"]
+        )
+
+    assert result.exit_code == 1
+    assert "rebase in progress" in result.output
+
+
+def test_cli_create_before_restack_in_progress(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI create --before with restack state gives error."""
+    from unittest.mock import patch
+
+    monkeypatch.chdir(tmp_path)
+
+    with patch("shortcake.commands.create.RestackState.exists", return_value=True):
+        result = runner.invoke(
+            app, ["create", "-m", "fix: test", "--before", "--allow-empty"]
+        )
+
+    assert result.exit_code == 1
+    assert "Restack already in progress" in result.output
+
+
+# ============================================================================
 # Navigation CLI tests
 # ============================================================================
 
