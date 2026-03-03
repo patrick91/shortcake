@@ -13,6 +13,7 @@ class RestackStep(BaseModel):
     branch: str
     onto: str
     merge_base: str
+    new_parent_trailer: str | None = None
 
 
 class RestackState(BaseModel):
