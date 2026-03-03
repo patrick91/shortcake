@@ -113,6 +113,42 @@ $ sc ls
 ◯ main
 ```
 
+## Insert Before with Staged Changes
+
+Switch to feature C and insert a new branch before it using staged changes (no `--allow-empty`):
+
+```console
+$ sc checkout add-feature-c
+Switched to 'add-feature-c'
+```
+
+```console
+$ echo "hotfix" > hotfix.py && git add hotfix.py
+$ sc create -m "Add hotfix before C" --before
+Rebasing 'add-feature-c' onto 'add-hotfix-before-c'...
+Created branch 'add-hotfix-before-c' from 'add-feature-b'
+Rebased 'add-feature-c' onto 'add-hotfix-before-c'
+```
+
+Verify the hotfix branch is in the stack:
+
+```console
+$ sc ls
+◯ add-feature-c
+│
+◉ add-hotfix-before-c (current)
+│
+◯ add-feature-b
+│
+◯ add-fix-before-b
+│
+◯ add-fix-after-a
+│
+◯ add-feature-a
+│
+◯ main
+```
+
 ## Insert After Leaf (No Rebase)
 
 Switch to the top of the stack and insert after it (no children to rebase):
@@ -132,6 +168,8 @@ $ sc ls
 ◉ add-feature-d (current)
 │
 ◯ add-feature-c
+│
+◯ add-hotfix-before-c
 │
 ◯ add-feature-b
 │

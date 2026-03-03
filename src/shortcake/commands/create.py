@@ -1,4 +1,5 @@
 import re
+import subprocess
 from dataclasses import dataclass, field
 from typing import Annotated
 
@@ -131,16 +132,44 @@ def _create_insert_before(repo: Repo, message: str, branch_name: str) -> CreateR
 
     # Create new branch at the parent's HEAD
     parent_head = git.get_branch_head(repo, parent)
+
+    # If there are staged changes, commit them temporarily on the current
+    # branch so we can cleanly switch to the new branch. Then we copy the
+    # exact staged file contents onto the new branch (no 3-way merge needed).
+    has_staged = git.has_staged_changes(repo)
+    staged_files = git.get_staged_files(repo) if has_staged else []
+    original_head = None
+    temp_sha = None
+
+    if has_staged:
+        original_head = git.get_branch_head(repo, current_branch)
+        temp_sha = git.create_commit(
+            repo, "shortcake: temp commit for insert", no_verify=True
+        )
+
     git.create_branch(repo, branch_name, parent_head)
-    # Use switch_branch to properly update working tree and index to match
-    # the parent's state (set_head_to_branch only changes HEAD, leaving the
-    # index with the current branch's files which would create a wrong tree)
     git.switch_branch(repo, branch_name)
 
-    # Commit with trailer pointing to the parent
+    # Build the commit message with trailer
     trailers = Trailers(parent_branch=parent)
     full_message = trailers.apply_to(message)
-    git.create_commit(repo, full_message, no_verify=True)
+
+    if temp_sha:
+        # Reset current branch to drop the temp commit
+        git.update_branch(repo, current_branch, original_head.decode())
+
+        # Copy the exact staged file contents from the temp commit onto
+        # the new branch. This avoids cherry-pick's 3-way merge which can
+        # falsely conflict when files differ between parent and current.
+        subprocess.run(
+            ["git", "checkout", temp_sha.decode(), "--", *staged_files],
+            cwd=repo.path,
+            capture_output=True,
+            check=True,
+        )
+        git.create_commit(repo, full_message, no_verify=True)
+    else:
+        git.create_commit(repo, full_message, no_verify=True)
 
     # Now rebase current branch onto new branch
     # merge_base is the parent of the first commit with trailer on current branch
@@ -368,13 +397,6 @@ def create(
 
     # For insert mode, check additional preconditions
     if insert_mode:
-        if git.has_uncommitted_changes(repo):
-            typer.echo(
-                "Error: You have uncommitted changes. Commit or stash them first.",
-                err=True,
-            )
-            raise typer.Exit(1)
-
         if git.is_rebase_in_progress(repo):
             typer.echo(
                 "Error: Git rebase in progress. Complete or abort it first.",
