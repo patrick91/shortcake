@@ -618,6 +618,8 @@ def _move_hunks(
     source_branch: str,
     target_branch: str,
     hunks: list[HunkSelection],
+    *,
+    no_verify: bool = False,
 ) -> MoveHunksResult:
     """Move selected hunks from source_branch to target_branch.
 
@@ -693,7 +695,7 @@ def _move_hunks(
         _stage_patch_files(repo_path, combined_patch)
         source_head = git.get_branch_head(repo, source_branch)
         source_message = git.get_commit_message(repo, source_head)
-        git.amend_commit(repo, source_message)
+        git.amend_commit(repo, source_message, no_verify=no_verify)
         source_modified = True
 
         # --- Phase 2: Restack after source changes ---
@@ -718,7 +720,7 @@ def _move_hunks(
         _stage_patch_files(repo_path, combined_patch)
         target_head = git.get_branch_head(repo, target_branch)
         target_message = git.get_commit_message(repo, target_head)
-        git.amend_commit(repo, target_message)
+        git.amend_commit(repo, target_message, no_verify=no_verify)
 
         # --- Phase 4: Restack after target changes ---
         restacked_phase2: list[str] = []
