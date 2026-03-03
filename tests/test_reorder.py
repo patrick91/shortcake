@@ -637,7 +637,9 @@ def test_reorder_conflict_abort(temp_repo: Repo, tmp_path: Path) -> None:
     assert temp_repo.refs[b"refs/heads/branch_b"] == original_b
 
 
-def _resolve_conflict_and_continue_rebase(tmp_path: Path, filename: str, content: str) -> None:
+def _resolve_conflict_and_continue_rebase(
+    tmp_path: Path, filename: str, content: str
+) -> None:
     """Helper: resolve a conflict file and continue the git rebase."""
     import os
     import subprocess
