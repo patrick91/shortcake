@@ -139,6 +139,52 @@ def test_reorder_fork_in_stack(repo_with_fork: Repo) -> None:
         _reorder(repo_with_fork, new_order=["branch_b", "branch_c"])
 
 
+def test_reorder_fork_below_current(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """ReorderError when fork is below current branch (downward walk)."""
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+
+    # A (tracked, 1 child B)
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    switch_branch(temp_repo, "branch_a")
+    (tmp_path / "a.txt").write_text("a")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
+    msg_a = Trailers(parent_branch="main").apply_to("feat: a")
+    porcelain.commit(temp_repo, message=msg_a.encode())
+    sha_a = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # B (tracked, child of A, will have 2 children C and D)
+    temp_repo.refs[b"refs/heads/branch_b"] = sha_a
+    switch_branch(temp_repo, "branch_b")
+    (tmp_path / "b.txt").write_text("b")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "b.txt")])
+    msg_b = Trailers(parent_branch="branch_a").apply_to("feat: b")
+    porcelain.commit(temp_repo, message=msg_b.encode())
+    sha_b = temp_repo.refs[b"refs/heads/branch_b"]
+
+    # C (child of B)
+    temp_repo.refs[b"refs/heads/branch_c"] = sha_b
+    switch_branch(temp_repo, "branch_c")
+    (tmp_path / "c.txt").write_text("c")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "c.txt")])
+    msg_c = Trailers(parent_branch="branch_b").apply_to("feat: c")
+    porcelain.commit(temp_repo, message=msg_c.encode())
+
+    # D (also child of B -> fork at B)
+    temp_repo.refs[b"refs/heads/branch_d"] = sha_b
+    switch_branch(temp_repo, "branch_d")
+    (tmp_path / "d.txt").write_text("d")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "d.txt")])
+    msg_d = Trailers(parent_branch="branch_b").apply_to("feat: d")
+    porcelain.commit(temp_repo, message=msg_d.encode())
+
+    # On branch_a, fork is at branch_b (below current, in downward walk)
+    switch_branch(temp_repo, "branch_a")
+    with pytest.raises(ReorderError, match="multiple children"):
+        _reorder(temp_repo, new_order=["branch_a"])
+
+
 def test_reorder_single_branch_stack(
     repo_with_tracked_feature: Repo,
 ) -> None:
@@ -443,6 +489,81 @@ def test_update_branch_trailer(repo_with_tracked_feature: Repo) -> None:
     assert git.get_branch_parent(repo, "feature", all_branches) == "trunk2"
 
 
+def test_reorder_multi_commit_branch(temp_repo: Repo, tmp_path: Path) -> None:
+    """Reorder works with branches that have multiple commits."""
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+
+    # branch_a: 2 commits
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    switch_branch(temp_repo, "branch_a")
+    (tmp_path / "a1.txt").write_text("a1")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "a1.txt")])
+    msg_a = Trailers(parent_branch="main").apply_to("feat: branch a commit 1")
+    porcelain.commit(temp_repo, message=msg_a.encode())
+    (tmp_path / "a2.txt").write_text("a2")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "a2.txt")])
+    porcelain.commit(temp_repo, message=b"feat: branch a commit 2")
+    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # branch_b: 1 commit
+    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    switch_branch(temp_repo, "branch_b")
+    (tmp_path / "b.txt").write_text("b")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "b.txt")])
+    msg_b = Trailers(parent_branch="branch_a").apply_to("feat: branch b")
+    porcelain.commit(temp_repo, message=msg_b.encode())
+
+    # Swap: main -> B -> A
+    result = _reorder(temp_repo, new_order=["branch_b", "branch_a"])
+
+    assert result.conflict_branch is None
+    assert len(result.reordered_branches) == 2
+
+    # Verify trailers
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    assert git.get_branch_parent(temp_repo, "branch_b", all_branches) == "main"
+    assert git.get_branch_parent(temp_repo, "branch_a", all_branches) == "branch_b"
+
+    # Verify files on top
+    switch_branch(temp_repo, "branch_a")
+    assert (tmp_path / "a1.txt").read_text() == "a1"
+    assert (tmp_path / "a2.txt").read_text() == "a2"
+    assert (tmp_path / "b.txt").read_text() == "b"
+
+
+def test_reorder_editor_mode(
+    repo_with_stack: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Editor mode opens editor and parses result."""
+    switch_branch(repo_with_stack, "branch_b")
+
+    # Mock open_editor to return swapped order
+    monkeypatch.setattr(
+        "shortcake.commands.reorder.open_editor",
+        lambda content: "branch_b\nbranch_a",
+    )
+
+    result = _reorder(repo_with_stack)
+
+    assert result.conflict_branch is None
+    assert set(result.reordered_branches) == {"branch_a", "branch_b"}
+
+
+def test_reorder_editor_abort(
+    repo_with_stack: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Editor mode aborts when editor returns None."""
+    switch_branch(repo_with_stack, "branch_b")
+
+    monkeypatch.setattr(
+        "shortcake.commands.reorder.open_editor",
+        lambda content: None,
+    )
+
+    with pytest.raises(ReorderError, match="Aborted"):
+        _reorder(repo_with_stack)
+
+
 # --- Conflict tests ---
 
 
@@ -514,6 +635,192 @@ def test_reorder_conflict_abort(temp_repo: Repo, tmp_path: Path) -> None:
     # Original refs restored
     assert temp_repo.refs[b"refs/heads/branch_a"] == original_a
     assert temp_repo.refs[b"refs/heads/branch_b"] == original_b
+
+
+def _resolve_conflict_and_continue_rebase(tmp_path: Path, filename: str, content: str) -> None:
+    """Helper: resolve a conflict file and continue the git rebase."""
+    import os
+    import subprocess
+
+    (tmp_path / filename).write_text(content)
+    subprocess.run(["git", "add", filename], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "rebase", "--continue"],
+        cwd=tmp_path,
+        check=True,
+        capture_output=True,
+        env={**os.environ, "GIT_EDITOR": "true"},
+    )
+
+
+def test_reorder_conflict_continue(temp_repo: Repo, tmp_path: Path) -> None:
+    """After conflicts, resolve with sc continue and verify trailers.
+
+    Both rebases conflict, so we exercise both trailer-update paths
+    in continue_.py (current step at line 83 and remaining steps at line 141).
+    """
+    from shortcake.commands.continue_ import _continue
+
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+
+    # Create shared.txt on main so both branches can conflict on it
+    switch_branch(temp_repo, "main")
+    (tmp_path / "shared.txt").write_text("original")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "shared.txt")])
+    porcelain.commit(temp_repo, message=b"add shared.txt")
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+
+    # branch_a: modifies shared.txt
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    switch_branch(temp_repo, "branch_a")
+    (tmp_path / "shared.txt").write_text("content from A")
+    (tmp_path / "a.txt").write_text("a")
+    porcelain.add(
+        temp_repo,
+        paths=[str(tmp_path / "shared.txt"), str(tmp_path / "a.txt")],
+    )
+    msg_a = Trailers(parent_branch="main").apply_to("feat: branch a")
+    porcelain.commit(temp_repo, message=msg_a.encode())
+    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # branch_b: modifies shared.txt differently
+    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    switch_branch(temp_repo, "branch_b")
+    (tmp_path / "shared.txt").write_text("content from B")
+    (tmp_path / "b.txt").write_text("b")
+    porcelain.add(
+        temp_repo,
+        paths=[str(tmp_path / "shared.txt"), str(tmp_path / "b.txt")],
+    )
+    msg_b = Trailers(parent_branch="branch_a").apply_to("feat: branch b")
+    porcelain.commit(temp_repo, message=msg_b.encode())
+
+    # Reorder: swap -> both rebases will conflict on shared.txt
+    result = _reorder(temp_repo, new_order=["branch_b", "branch_a"])
+    assert result.conflict_branch == "branch_b"
+
+    # Resolve first conflict (branch_b onto main) and continue rebase
+    _resolve_conflict_and_continue_rebase(
+        tmp_path, "shared.txt", "resolved B"
+    )
+
+    # sc continue: finishes branch_b (trailer update, line 83),
+    # then starts branch_a which also conflicts
+    continue_result = _continue(temp_repo)
+    assert continue_result.conflict_branch == "branch_a"
+
+    # Verify branch_b trailer was already updated
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    assert (
+        git.get_branch_parent(temp_repo, "branch_b", all_branches) == "main"
+    )
+
+    # Resolve second conflict (branch_a onto branch_b)
+    _resolve_conflict_and_continue_rebase(
+        tmp_path, "shared.txt", "resolved A"
+    )
+
+    # sc continue again: finishes branch_a (trailer update, line 141)
+    continue_result2 = _continue(temp_repo)
+    assert continue_result2.conflict_branch is None
+
+    # Verify both trailers updated
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    assert (
+        git.get_branch_parent(temp_repo, "branch_b", all_branches) == "main"
+    )
+    assert (
+        git.get_branch_parent(temp_repo, "branch_a", all_branches)
+        == "branch_b"
+    )
+    assert not RestackState.exists(temp_repo)
+
+
+def test_reorder_conflict_continue_remaining_steps(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Continue after conflict with remaining steps exercises line 141.
+
+    Setup: main -> A (a.txt) -> B (b.txt) -> C (shared.txt modified)
+    C modifies shared.txt which exists on main, causing a conflict
+    when C is moved to the bottom. A and B only add unique files,
+    so they rebase cleanly as remaining steps.
+    """
+    from shortcake.commands.continue_ import _continue
+
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+
+    # shared.txt on main
+    switch_branch(temp_repo, "main")
+    (tmp_path / "shared.txt").write_text("original")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "shared.txt")])
+    porcelain.commit(temp_repo, message=b"add shared.txt")
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+
+    # branch_a: only adds a.txt (no conflict risk)
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    switch_branch(temp_repo, "branch_a")
+    (tmp_path / "a.txt").write_text("a")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
+    msg_a = Trailers(parent_branch="main").apply_to("feat: branch a")
+    porcelain.commit(temp_repo, message=msg_a.encode())
+    sha_a = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # branch_b: only adds b.txt (no conflict risk)
+    temp_repo.refs[b"refs/heads/branch_b"] = sha_a
+    switch_branch(temp_repo, "branch_b")
+    (tmp_path / "b.txt").write_text("b")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "b.txt")])
+    msg_b = Trailers(parent_branch="branch_a").apply_to("feat: branch b")
+    porcelain.commit(temp_repo, message=msg_b.encode())
+    sha_b = temp_repo.refs[b"refs/heads/branch_b"]
+
+    # branch_c: modifies shared.txt (will conflict when rebased onto main)
+    temp_repo.refs[b"refs/heads/branch_c"] = sha_b
+    switch_branch(temp_repo, "branch_c")
+    (tmp_path / "shared.txt").write_text("content from C")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "shared.txt")])
+    msg_c = Trailers(parent_branch="branch_b").apply_to("feat: branch c")
+    porcelain.commit(temp_repo, message=msg_c.encode())
+
+    # Update shared.txt on main so C conflicts when rebased onto it
+    switch_branch(temp_repo, "main")
+    (tmp_path / "shared.txt").write_text("updated on main")
+    porcelain.add(temp_repo, paths=[str(tmp_path / "shared.txt")])
+    porcelain.commit(temp_repo, message=b"update shared.txt on main")
+    switch_branch(temp_repo, "branch_c")
+
+    # Reorder to [C, A, B]: C onto main conflicts (shared.txt)
+    result = _reorder(
+        temp_repo, new_order=["branch_c", "branch_a", "branch_b"]
+    )
+    assert result.conflict_branch == "branch_c"
+
+    # Resolve conflict and continue rebase
+    _resolve_conflict_and_continue_rebase(
+        tmp_path, "shared.txt", "resolved C"
+    )
+
+    # sc continue: finishes C (line 83 - trailer update for current step),
+    # then processes A onto C and B onto A as remaining steps
+    # (line 141 - trailer update in the remaining steps loop)
+    continue_result = _continue(temp_repo)
+    assert continue_result.conflict_branch is None
+
+    # Verify all trailers updated
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    assert (
+        git.get_branch_parent(temp_repo, "branch_c", all_branches) == "main"
+    )
+    assert (
+        git.get_branch_parent(temp_repo, "branch_a", all_branches)
+        == "branch_c"
+    )
+    assert (
+        git.get_branch_parent(temp_repo, "branch_b", all_branches)
+        == "branch_a"
+    )
+    assert not RestackState.exists(temp_repo)
 
 
 # --- CLI tests ---

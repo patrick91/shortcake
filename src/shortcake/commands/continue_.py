@@ -82,7 +82,9 @@ def _continue(repo: Repo) -> ContinueResult:
     if current_step.new_parent_trailer is not None:
         from shortcake.commands.reorder import _update_branch_trailer
 
-        _update_branch_trailer(repo, current_step.branch, current_step.new_parent_trailer)
+        _update_branch_trailer(
+            repo, current_step.branch, current_step.new_parent_trailer
+        )
 
     # Check if parent branch still exists (may have been deleted during resolution)
     if not git.branch_exists(repo, current_step.onto):
