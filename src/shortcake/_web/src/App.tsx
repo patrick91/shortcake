@@ -778,6 +778,7 @@ function DiffFileSection({
   parsedHunks,
   diffStyle,
   resolvedTheme,
+  diffTheme,
   onToggleViewed,
 }: {
   patch: string;
@@ -798,6 +799,7 @@ function DiffFileSection({
   parsedHunks: ParsedHunk[];
   diffStyle: DiffStyle;
   resolvedTheme?: 'dark' | 'light';
+  diffTheme?: string;
   onToggleViewed?: (path: string) => void;
 }) {
   const fileComments = comments.filter((c) => c.file === fileInfo.path);
@@ -814,13 +816,14 @@ function DiffFileSection({
   );
 
   const rt = resolvedTheme ?? 'dark';
+  const activeTheme = diffTheme ?? (rt === 'light' ? 'pierre-light' : 'pierre-dark');
 
   const options = useMemo<PatchDiffProps<CommentMeta>['options']>(
     () => ({
       diffStyle,
       diffIndicators: 'classic',
       hunkSeparators: 'metadata',
-      theme: rt === 'light' ? 'pierre-light' : 'pierre-dark',
+      theme: activeTheme,
       themeType: rt,
       overflow: 'scroll',
       lineDiffType: 'word',
@@ -831,7 +834,7 @@ function DiffFileSection({
         [data-selected-line] { background: rgba(250, 204, 21, 0.10) !important; }
       `,
     }),
-    [diffStyle, handleSelectionEnd, rt],
+    [diffStyle, handleSelectionEnd, rt, activeTheme],
   );
 
   const selectedLines = useMemo<SelectedLineRange | null>(() => {
@@ -982,6 +985,86 @@ function DiffFileSection({
   );
 }
 
+const DIFF_THEMES: { group: string; themes: string[] }[] = [
+  { group: 'Pierre', themes: ['pierre-dark', 'pierre-light'] },
+  { group: 'GitHub', themes: ['github-dark', 'github-dark-default', 'github-dark-dimmed', 'github-dark-high-contrast', 'github-light', 'github-light-default', 'github-light-high-contrast'] },
+  { group: 'Catppuccin', themes: ['catppuccin-frappe', 'catppuccin-latte', 'catppuccin-macchiato', 'catppuccin-mocha'] },
+  { group: 'Material', themes: ['material-theme', 'material-theme-darker', 'material-theme-lighter', 'material-theme-ocean', 'material-theme-palenight'] },
+  { group: 'Gruvbox', themes: ['gruvbox-dark-hard', 'gruvbox-dark-medium', 'gruvbox-dark-soft', 'gruvbox-light-hard', 'gruvbox-light-medium', 'gruvbox-light-soft'] },
+  { group: 'Other', themes: ['andromeeda', 'aurora-x', 'ayu-dark', 'ayu-light', 'ayu-mirage', 'dark-plus', 'dracula', 'dracula-soft', 'everforest-dark', 'everforest-light', 'horizon', 'horizon-bright', 'houston', 'kanagawa-dragon', 'kanagawa-lotus', 'kanagawa-wave', 'laserwave', 'light-plus', 'min-dark', 'min-light', 'monokai', 'night-owl', 'night-owl-light', 'nord', 'one-dark-pro', 'one-light', 'plastic', 'poimandres', 'red', 'rose-pine', 'rose-pine-dawn', 'rose-pine-moon', 'slack-dark', 'slack-ochin', 'snazzy-light', 'solarized-dark', 'solarized-light', 'synthwave-84', 'tokyo-night', 'vesper', 'vitesse-black', 'vitesse-dark', 'vitesse-light'] },
+];
+
+function SettingsModal({
+  isOpen,
+  onClose,
+  diffThemeDark,
+  diffThemeLight,
+  onDarkChange,
+  onLightChange,
+}: {
+  isOpen: boolean;
+  onClose: () => void;
+  diffThemeDark: string;
+  diffThemeLight: string;
+  onDarkChange: (v: string) => void;
+  onLightChange: (v: string) => void;
+}) {
+  if (!isOpen) return null;
+
+  const themeSelect = (value: string, onChange: (v: string) => void) => (
+    <select
+      className="w-full bg-surface border border-border rounded-md px-2.5 py-1.5 font-mono text-[0.78rem] text-text-primary cursor-pointer"
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    >
+      {DIFF_THEMES.map((group) => (
+        <optgroup key={group.group} label={group.group}>
+          {group.themes.map((t) => (
+            <option key={t} value={t}>{t}</option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-surface border border-border rounded-lg shadow-lg w-full max-w-[400px] mx-4">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+          <h2 className="text-text-primary text-[0.95rem] font-semibold m-0">Settings</h2>
+          <button
+            className="appearance-none border-none bg-transparent text-text-muted hover:text-text-primary cursor-pointer p-1"
+            onClick={onClose}
+            type="button"
+            aria-label="Close settings"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M4 4l8 8M12 4l-8 8" />
+            </svg>
+          </button>
+        </div>
+        <div className="px-5 py-4 flex flex-col gap-4">
+          <div>
+            <label className="block font-mono text-[0.72rem] font-medium text-text-secondary mb-1.5 uppercase tracking-[0.08em]">
+              Dark Mode Diff Theme
+            </label>
+            {themeSelect(diffThemeDark, onDarkChange)}
+          </div>
+          <div>
+            <label className="block font-mono text-[0.72rem] font-medium text-text-secondary mb-1.5 uppercase tracking-[0.08em]">
+              Light Mode Diff Theme
+            </label>
+            {themeSelect(diffThemeLight, onLightChange)}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const isWideScreen = useMediaQuery('(min-width: 961px)');
   const savedLayout = useDefaultLayout({
@@ -1023,10 +1106,28 @@ export default function App() {
   const resolvedTheme: 'dark' | 'light' =
     themeMode === 'system' ? (prefersDark ? 'dark' : 'light') : themeMode;
 
+  const [diffThemeDark, setDiffThemeDark] = useState<string>(
+    () => localStorage.getItem('shortcake-diff-theme-dark') ?? 'pierre-dark',
+  );
+  const [diffThemeLight, setDiffThemeLight] = useState<string>(
+    () => localStorage.getItem('shortcake-diff-theme-light') ?? 'pierre-light',
+  );
+  const [showSettings, setShowSettings] = useState(false);
+
+  const activeDiffTheme = resolvedTheme === 'light' ? diffThemeLight : diffThemeDark;
+
   useEffect(() => {
     localStorage.setItem('shortcake-theme', themeMode);
     document.documentElement.dataset.theme = resolvedTheme;
   }, [themeMode, resolvedTheme]);
+
+  useEffect(() => {
+    localStorage.setItem('shortcake-diff-theme-dark', diffThemeDark);
+  }, [diffThemeDark]);
+
+  useEffect(() => {
+    localStorage.setItem('shortcake-diff-theme-light', diffThemeLight);
+  }, [diffThemeLight]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1492,6 +1593,14 @@ export default function App() {
       <Separator className="resize-handle" />
       <Panel id="content" minSize="40%">
       <section className="bg-surface overflow-hidden flex flex-col min-w-0 h-full">
+        <SettingsModal
+          isOpen={showSettings}
+          onClose={() => setShowSettings(false)}
+          diffThemeDark={diffThemeDark}
+          diffThemeLight={diffThemeLight}
+          onDarkChange={setDiffThemeDark}
+          onLightChange={setDiffThemeLight}
+        />
         <header className="px-[1.15rem] h-[60px] shrink-0 border-b border-border flex justify-between items-center gap-4">
           <div>
             <p className="font-mono text-[0.68rem] font-medium uppercase tracking-[0.13em] text-accent m-0 mb-[0.3rem]">
@@ -1573,6 +1682,14 @@ export default function App() {
                 Split
               </button>
             </div>
+            <button
+              className="appearance-none border-none bg-transparent text-text-muted hover:text-text-primary cursor-pointer p-1 transition-colors duration-100"
+              onClick={() => setShowSettings(true)}
+              type="button"
+              aria-label="Settings"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </button>
           </div>
         </header>
 
@@ -1660,6 +1777,7 @@ export default function App() {
                         parsedHunks={parsedHunks}
                         diffStyle={diffStyle}
                         resolvedTheme={resolvedTheme}
+                        diffTheme={activeDiffTheme}
                         onToggleViewed={toggleViewed}
                       />
                     )}
@@ -1830,6 +1948,14 @@ export default function App() {
                 Split
               </button>
             </div>
+            <button
+              className="appearance-none border-none bg-transparent text-text-muted hover:text-text-primary cursor-pointer p-1 transition-colors duration-100"
+              onClick={() => setShowSettings(true)}
+              type="button"
+              aria-label="Settings"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </button>
           </div>
         </header>
 
@@ -1888,6 +2014,7 @@ export default function App() {
                       parsedHunks={parsedHunks}
                       diffStyle={diffStyle}
                       resolvedTheme={resolvedTheme}
+                      diffTheme={activeDiffTheme}
                       onToggleViewed={toggleViewed}
                     />
                   )}
