@@ -4,8 +4,10 @@ import {
   type DiffLineAnnotation,
   type AnnotationSide,
   type SelectedLineRange,
+  WorkerPoolContextProvider,
 } from '@pierre/diffs/react';
-import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import DiffsWorker from '@pierre/diffs/worker/worker.js?worker';
+import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
 
 type DiffStyle = 'unified' | 'split';
@@ -105,6 +107,17 @@ type DiffResponse = {
 
 type WorkingDiffResponse = {
   patch: string;
+};
+
+type HunkSuggestionItem = {
+  file: string;
+  hunkIndex: number;
+  suggestedBranch: string | null;
+  reason: string;
+};
+
+type SuggestionsResponse = {
+  suggestions: HunkSuggestionItem[];
 };
 
 type DiffSelection =
@@ -609,6 +622,120 @@ function ViewedFileHeader({
   );
 }
 
+function LazyDiffFileSection({
+  index,
+  fileInfo,
+  renderContent,
+}: {
+  index: number;
+  fileInfo: FileInfo;
+  renderContent: () => React.ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [visible, setVisible] = useState(index === 0);
+
+  useEffect(() => {
+    if (visible || !ref.current) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry?.isIntersecting) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      { rootMargin: '200px' },
+    );
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, [visible]);
+
+  if (visible) return <>{renderContent()}</>;
+
+  const skeletonLines = Math.min(Math.max(fileInfo.additions + fileInfo.deletions, 3), 8);
+
+  return (
+    <div ref={ref}>
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-hover/40">
+        <span className="font-mono text-[0.72rem] text-text-secondary truncate">
+          {fileInfo.path}
+        </span>
+        <span className="ml-auto flex gap-[5px] text-[0.6rem] shrink-0">
+          {fileInfo.additions > 0 && (
+            <span className="text-stat-add">+{fileInfo.additions}</span>
+          )}
+          {fileInfo.deletions > 0 && (
+            <span className="text-stat-del">-{fileInfo.deletions}</span>
+          )}
+        </span>
+      </div>
+      <div className="px-3 py-2 flex flex-col gap-[6px]">
+        {Array.from({ length: skeletonLines }, (_, i) => (
+          <div
+            key={i}
+            className="h-[14px] rounded-sm animate-pulse"
+            style={{
+              width: `${30 + ((i * 37) % 50)}%`,
+              backgroundColor: 'var(--color-surface-hover)',
+              opacity: 0.5 + (i % 3) * 0.15,
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const LARGE_FILE_THRESHOLD = 500;
+
+function LargeFilePlaceholder({
+  fileInfo,
+  onShow,
+  onToggleViewed,
+}: {
+  fileInfo: FileInfo;
+  onShow: () => void;
+  onToggleViewed?: (path: string) => void;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-hover/40">
+        <span className="font-mono text-[0.72rem] text-text-secondary truncate">
+          {fileInfo.path}
+        </span>
+        <span className="ml-auto flex gap-[5px] text-[0.6rem] shrink-0">
+          {fileInfo.additions > 0 && (
+            <span className="text-stat-add">+{fileInfo.additions}</span>
+          )}
+          {fileInfo.deletions > 0 && (
+            <span className="text-stat-del">-{fileInfo.deletions}</span>
+          )}
+        </span>
+        {onToggleViewed && (
+          <button
+            type="button"
+            className="appearance-none border border-border bg-transparent text-text-muted text-[0.65rem] font-mono px-2 py-0.5 rounded cursor-pointer hover:bg-surface-hover hover:text-text-primary hover:border-border-strong transition-colors duration-100 whitespace-nowrap"
+            onClick={(e) => { e.stopPropagation(); onToggleViewed(fileInfo.path); }}
+          >
+            Viewed
+          </button>
+        )}
+      </div>
+      <div className="flex flex-col items-center justify-center py-8 gap-2 mx-3 my-3 rounded-md border border-yellow-500/30 bg-yellow-500/[0.06]">
+        <p className="text-[0.8rem] text-yellow-200/80">
+          Large file — <span className="font-mono text-[0.72rem]">{fileInfo.additions + fileInfo.deletions}</span> lines changed
+        </p>
+        <button
+          type="button"
+          className="appearance-none border border-yellow-500/40 bg-yellow-500/10 text-yellow-200/90 text-[0.75rem] font-mono px-3 py-1 rounded cursor-pointer hover:bg-yellow-500/20 hover:text-yellow-100 hover:border-yellow-500/60 transition-colors duration-100"
+          onClick={onShow}
+        >
+          Show changes
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function HunkToggle({
   hunkKey,
   isSelected,
@@ -693,6 +820,7 @@ function BranchPicker({
   isMoving,
   moveError,
   mode = 'move',
+  suggestedBranch,
 }: {
   branches: StackBranch[];
   currentBranch: string;
@@ -702,6 +830,7 @@ function BranchPicker({
   isMoving: boolean;
   moveError: string | null;
   mode?: 'move' | 'accept';
+  suggestedBranch?: string | null;
 }) {
   const parentBranch = branches.find((b) => b.name === sourceBranch)?.parent;
   const headerText = mode === 'accept' ? 'Accept into branch' : 'Move to branch';
@@ -735,12 +864,17 @@ function BranchPicker({
         <div className="flex flex-col gap-0.5 max-h-[200px] overflow-y-auto">
           {branches
             .filter((b) => b.name !== sourceBranch)
-            .map((branch) => (
+            .map((branch) => {
+              const isParent = branch.name === parentBranch;
+              const isSuggested = suggestedBranch != null && branch.name === suggestedBranch;
+              return (
               <button
                 key={branch.name}
                 type="button"
                 className={`appearance-none border-none rounded-md py-1.5 px-2 text-left text-[0.75rem] font-mono cursor-pointer transition-colors duration-100 ${
-                  branch.name === parentBranch
+                  isSuggested
+                    ? 'bg-green-500/10 text-green-400 hover:bg-green-500/20'
+                    : isParent
                     ? 'bg-accent/10 text-accent hover:bg-accent/20'
                     : 'bg-transparent text-text-secondary hover:bg-surface-active hover:text-text-primary'
                 }`}
@@ -748,21 +882,29 @@ function BranchPicker({
                 onClick={() => onSelect(branch.name)}
               >
                 {branch.name}
-                {branch.name === parentBranch && (
+                {isSuggested && (
+                  <span className="ml-1.5 text-[0.6rem] text-green-400/70">(suggested)</span>
+                )}
+                {isParent && !isSuggested && (
                   <span className="ml-1.5 text-[0.6rem] text-text-muted">(parent)</span>
                 )}
               </button>
-            ))}
+              );
+            })}
         </div>
       )}
     </div>
   );
 }
 
-function DiffFileSection({
+const EMPTY_HUNKS: ParsedHunk[] = [];
+const EMPTY_COMMENTS: DiffComment[] = [];
+const EMPTY_HUNK_KEYS: Set<HunkKey> = new Set();
+
+const DiffFileSection = React.memo(function DiffFileSection({
   patch,
   fileInfo,
-  comments,
+  fileComments,
   activeInput,
   editingComment,
   toolbarState,
@@ -773,9 +915,9 @@ function DiffFileSection({
   onDeleteComment,
   onCancelInput,
   onToolbarComment,
-  selectedHunks,
+  fileSelectedHunks,
   onHunkToggle,
-  parsedHunks,
+  fileParsedHunks,
   diffStyle,
   resolvedTheme,
   diffTheme,
@@ -783,7 +925,7 @@ function DiffFileSection({
 }: {
   patch: string;
   fileInfo: FileInfo;
-  comments: DiffComment[];
+  fileComments: DiffComment[];
   activeInput: ActiveInput;
   editingComment: DiffComment | null;
   toolbarState: ActiveInput;
@@ -794,15 +936,14 @@ function DiffFileSection({
   onDeleteComment: (id: string) => void;
   onCancelInput: () => void;
   onToolbarComment: () => void;
-  selectedHunks: Set<HunkKey>;
+  fileSelectedHunks: Set<HunkKey>;
   onHunkToggle: (key: HunkKey) => void;
-  parsedHunks: ParsedHunk[];
+  fileParsedHunks: ParsedHunk[];
   diffStyle: DiffStyle;
   resolvedTheme?: 'dark' | 'light';
   diffTheme?: string;
   onToggleViewed?: (path: string) => void;
 }) {
-  const fileComments = comments.filter((c) => c.file === fileInfo.path);
 
   const handleSelectionEnd = useCallback(
     (range: SelectedLineRange | null) => {
@@ -878,8 +1019,7 @@ function DiffFileSection({
     }
 
     // Add hunk toggle annotations for both working changes and branch diffs
-    for (const hunk of parsedHunks) {
-      if (hunk.file !== fileInfo.path) continue;
+    for (const hunk of fileParsedHunks) {
       const key: HunkKey = `${hunk.file}:${hunk.hunkIndex}`;
       annotations.push({
         lineNumber: hunk.firstChangedLine - 1,
@@ -890,14 +1030,14 @@ function DiffFileSection({
           isInput: false,
           isHunkToggle: true,
           hunkKey: key,
-          isSelected: selectedHunks.has(key),
+          isSelected: fileSelectedHunks.has(key),
           hunkContext: hunk.hunkContext,
         },
       });
     }
 
     return annotations;
-  }, [fileComments, activeInput, editingComment, toolbarState, parsedHunks, selectedHunks, fileInfo.path]);
+  }, [fileComments, activeInput, editingComment, toolbarState, fileParsedHunks, fileSelectedHunks, fileInfo.path]);
 
   const renderAnnotation = useCallback(
     (annotation: DiffLineAnnotation<CommentMeta>) => {
@@ -983,7 +1123,7 @@ function DiffFileSection({
       renderHeaderMetadata={onToggleViewed ? renderHeaderMetadata : undefined}
     />
   );
-}
+});
 
 const DIFF_THEMES: { group: string; themes: string[] }[] = [
   { group: 'Pierre', themes: ['pierre-dark', 'pierre-light'] },
@@ -1097,7 +1237,17 @@ export default function App() {
   const [isAccepting, setIsAccepting] = useState(false);
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const [showMovePicker, setShowMovePicker] = useState(false);
+  const [suggestions, setSuggestions] = useState<HunkSuggestionItem[]>([]);
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
+  const [expandedLargeFiles, setExpandedLargeFiles] = useState<Set<string>>(new Set());
+
+  const expandLargeFile = useCallback((path: string) => {
+    setExpandedLargeFiles((prev) => {
+      const next = new Set(prev);
+      next.add(path);
+      return next;
+    });
+  }, []);
 
   const [themeMode, setThemeMode] = useState<ThemeMode>(
     () => (localStorage.getItem('shortcake-theme') as ThemeMode) ?? 'dark',
@@ -1249,6 +1399,55 @@ export default function App() {
     });
   }, [diffPatches, fileInfos, selection]);
 
+  const parsedHunksByFile = useMemo(() => {
+    const map = new Map<string, ParsedHunk[]>();
+    for (const hunk of parsedHunks) {
+      let arr = map.get(hunk.file);
+      if (!arr) { arr = []; map.set(hunk.file, arr); }
+      arr.push(hunk);
+    }
+    return map;
+  }, [parsedHunks]);
+
+  const deferredSelectedHunks = useDeferredValue(selectedHunks);
+
+  const prevSelectedByFileRef = useRef(new Map<string, Set<HunkKey>>());
+  const selectedHunksByFile = useMemo(() => {
+    const prev = prevSelectedByFileRef.current;
+    const next = new Map<string, Set<HunkKey>>();
+    for (const key of deferredSelectedHunks) {
+      const file = key.split(':')[0]!;
+      let s = next.get(file);
+      if (!s) { s = new Set(); next.set(file, s); }
+      s.add(key);
+    }
+    // Reuse previous references for unchanged files to preserve React.memo
+    const result = new Map<string, Set<HunkKey>>();
+    const allFiles = new Set([...prev.keys(), ...next.keys()]);
+    for (const file of allFiles) {
+      const prevSet = prev.get(file);
+      const nextSet = next.get(file);
+      if (prevSet && nextSet && prevSet.size === nextSet.size) {
+        let same = true;
+        for (const k of prevSet) { if (!nextSet.has(k)) { same = false; break; } }
+        if (same) { result.set(file, prevSet); continue; }
+      }
+      if (nextSet) result.set(file, nextSet);
+    }
+    prevSelectedByFileRef.current = result;
+    return result;
+  }, [deferredSelectedHunks]);
+
+  const commentsByFile = useMemo(() => {
+    const map = new Map<string, DiffComment[]>();
+    for (const c of comments) {
+      let arr = map.get(c.file);
+      if (!arr) { arr = []; map.set(c.file, arr); }
+      arr.push(c);
+    }
+    return map;
+  }, [comments]);
+
   const toggleDir = useCallback((path: string) => {
     setCollapsedDirs((prev) => {
       const next = new Set(prev);
@@ -1331,14 +1530,18 @@ export default function App() {
     setToolbarState(null);
   }, [toolbarState]);
 
+  const [, startHunkTransition] = useTransition();
+
   const handleHunkToggle = useCallback((key: HunkKey) => {
-    setSelectedHunks((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
+    startHunkTransition(() => {
+      setSelectedHunks((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      });
     });
-  }, []);
+  }, [startHunkTransition]);
 
   const refreshData = useCallback(async () => {
     try {
@@ -1485,7 +1688,31 @@ export default function App() {
     return map;
   }, [branches, parentIndexMap]);
 
+  const suggestedBranch = useMemo(() => {
+    if (suggestions.length === 0 || selectedHunks.size === 0) return null;
+    const votes = new Map<string, number>();
+    for (const key of selectedHunks) {
+      const [filePath, hunkIndexStr] = key.split(':') as [string, string];
+      const hunkIndex = parseInt(hunkIndexStr, 10);
+      const match = suggestions.find(
+        (s) => s.file === filePath && s.hunkIndex === hunkIndex && s.suggestedBranch,
+      );
+      if (match?.suggestedBranch) {
+        votes.set(match.suggestedBranch, (votes.get(match.suggestedBranch) ?? 0) + 1);
+      }
+    }
+    if (votes.size === 0) return null;
+    const sorted = [...votes.entries()].sort((a, b) => b[1] - a[1]);
+    // No suggestion on tie
+    if (sorted.length > 1 && sorted[0]![1] === sorted[1]![1]) return null;
+    return sorted[0]![0] ?? null;
+  }, [suggestions, selectedHunks]);
+
   return (
+    <WorkerPoolContextProvider
+      poolOptions={{ workerFactory: () => new DiffsWorker(), poolSize: 4 }}
+      highlighterOptions={{}}
+    >
     <main className={`relative h-screen animate-fade-in overflow-hidden ${isWideScreen ? '' : 'flex flex-col'}`}>
       {isWideScreen ? (
       <Group orientation="horizontal" {...savedLayout}>
@@ -1757,29 +1984,33 @@ export default function App() {
                   >
                     {isViewed ? (
                       <ViewedFileHeader fileInfo={info} isViewed={isViewed} onToggle={toggleViewed} />
+                    ) : info.additions + info.deletions >= LARGE_FILE_THRESHOLD && !expandedLargeFiles.has(info.path) ? (
+                      <LargeFilePlaceholder fileInfo={info} onShow={() => expandLargeFile(info.path)} onToggleViewed={toggleViewed} />
                     ) : (
-                      <DiffFileSection
-                        patch={patch}
-                        fileInfo={info}
-                        comments={comments}
-                        activeInput={activeInput}
-                        editingComment={editingComment}
-                        toolbarState={toolbarState}
-                        onRangeSelected={handleRangeSelected}
-                        onStartEdit={handleStartEdit}
-                        onAddComment={handleAddComment}
-                        onUpdateComment={handleUpdateComment}
-                        onDeleteComment={handleDeleteComment}
-                        onCancelInput={handleCancelInput}
-                        onToolbarComment={handleToolbarComment}
-                        selectedHunks={selectedHunks}
-                        onHunkToggle={handleHunkToggle}
-                        parsedHunks={parsedHunks}
-                        diffStyle={diffStyle}
-                        resolvedTheme={resolvedTheme}
-                        diffTheme={activeDiffTheme}
-                        onToggleViewed={toggleViewed}
-                      />
+                      <LazyDiffFileSection index={index} fileInfo={info} renderContent={() => (
+                        <DiffFileSection
+                          patch={patch}
+                          fileInfo={info}
+                          fileComments={commentsByFile.get(info.path) ?? EMPTY_COMMENTS}
+                          activeInput={activeInput}
+                          editingComment={editingComment}
+                          toolbarState={toolbarState}
+                          onRangeSelected={handleRangeSelected}
+                          onStartEdit={handleStartEdit}
+                          onAddComment={handleAddComment}
+                          onUpdateComment={handleUpdateComment}
+                          onDeleteComment={handleDeleteComment}
+                          onCancelInput={handleCancelInput}
+                          onToolbarComment={handleToolbarComment}
+                          fileSelectedHunks={selectedHunksByFile.get(info.path) ?? EMPTY_HUNK_KEYS}
+                          onHunkToggle={handleHunkToggle}
+                          fileParsedHunks={parsedHunksByFile.get(info.path) ?? EMPTY_HUNKS}
+                          diffStyle={diffStyle}
+                          resolvedTheme={resolvedTheme}
+                          diffTheme={activeDiffTheme}
+                          onToggleViewed={toggleViewed}
+                        />
+                      )} />
                     )}
                   </div>
                 );
@@ -1994,29 +2225,33 @@ export default function App() {
                 >
                   {isViewed ? (
                     <ViewedFileHeader fileInfo={info} isViewed={isViewed} onToggle={toggleViewed} />
+                  ) : info.additions + info.deletions >= LARGE_FILE_THRESHOLD && !expandedLargeFiles.has(info.path) ? (
+                    <LargeFilePlaceholder fileInfo={info} onShow={() => expandLargeFile(info.path)} onToggleViewed={toggleViewed} />
                   ) : (
-                    <DiffFileSection
-                      patch={patch}
-                      fileInfo={info}
-                      comments={comments}
-                      activeInput={activeInput}
-                      editingComment={editingComment}
-                      toolbarState={toolbarState}
-                      onRangeSelected={handleRangeSelected}
-                      onStartEdit={handleStartEdit}
-                      onAddComment={handleAddComment}
-                      onUpdateComment={handleUpdateComment}
-                      onDeleteComment={handleDeleteComment}
-                      onCancelInput={handleCancelInput}
-                      onToolbarComment={handleToolbarComment}
-                      selectedHunks={selectedHunks}
-                      onHunkToggle={handleHunkToggle}
-                      parsedHunks={parsedHunks}
-                      diffStyle={diffStyle}
-                      resolvedTheme={resolvedTheme}
-                      diffTheme={activeDiffTheme}
-                      onToggleViewed={toggleViewed}
-                    />
+                    <LazyDiffFileSection index={index} fileInfo={info} renderContent={() => (
+                      <DiffFileSection
+                        patch={patch}
+                        fileInfo={info}
+                        fileComments={commentsByFile.get(info.path) ?? EMPTY_COMMENTS}
+                        activeInput={activeInput}
+                        editingComment={editingComment}
+                        toolbarState={toolbarState}
+                        onRangeSelected={handleRangeSelected}
+                        onStartEdit={handleStartEdit}
+                        onAddComment={handleAddComment}
+                        onUpdateComment={handleUpdateComment}
+                        onDeleteComment={handleDeleteComment}
+                        onCancelInput={handleCancelInput}
+                        onToolbarComment={handleToolbarComment}
+                        fileSelectedHunks={selectedHunksByFile.get(info.path) ?? EMPTY_HUNK_KEYS}
+                        onHunkToggle={handleHunkToggle}
+                        fileParsedHunks={parsedHunksByFile.get(info.path) ?? EMPTY_HUNKS}
+                        diffStyle={diffStyle}
+                        resolvedTheme={resolvedTheme}
+                        diffTheme={activeDiffTheme}
+                        onToggleViewed={toggleViewed}
+                      />
+                    )} />
                   )}
                 </div>
               );
@@ -2030,7 +2265,14 @@ export default function App() {
       {selection?.type === 'working' && selectedHunks.size > 0 && !showAcceptPicker && (
         <AcceptBanner
           count={selectedHunks.size}
-          onAcceptInto={() => { setShowAcceptPicker(true); setAcceptError(null); }}
+          onAcceptInto={() => {
+            setShowAcceptPicker(true);
+            setAcceptError(null);
+            setSuggestions([]);
+            fetchJSON<SuggestionsResponse>('/api/suggestions?mode=working')
+              .then((res) => setSuggestions(res.suggestions))
+              .catch(() => setSuggestions([]));
+          }}
           onClear={() => setSelectedHunks(new Set())}
         />
       )}
@@ -2038,7 +2280,14 @@ export default function App() {
       {selection?.type === 'branch' && selectedHunks.size > 0 && !showMovePicker && (
         <AcceptBanner
           count={selectedHunks.size}
-          onAcceptInto={() => { setShowMovePicker(true); setMoveError(null); }}
+          onAcceptInto={() => {
+            setShowMovePicker(true);
+            setMoveError(null);
+            setSuggestions([]);
+            fetchJSON<SuggestionsResponse>(`/api/suggestions?mode=branch&source=${encodeURIComponent(selection.name)}`)
+              .then((res) => setSuggestions(res.suggestions))
+              .catch(() => setSuggestions([]));
+          }}
           onClear={() => setSelectedHunks(new Set())}
           actionLabel="Move to..."
         />
@@ -2055,6 +2304,7 @@ export default function App() {
             isMoving={isAccepting}
             moveError={acceptError}
             mode="accept"
+            suggestedBranch={suggestedBranch}
           />
         </div>
       )}
@@ -2070,9 +2320,11 @@ export default function App() {
             isMoving={isMoving}
             moveError={moveError}
             mode="move"
+            suggestedBranch={suggestedBranch}
           />
         </div>
       )}
     </main>
+    </WorkerPoolContextProvider>
   );
 }

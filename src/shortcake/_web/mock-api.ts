@@ -414,6 +414,975 @@ index 0000000..6f7a8b9
   },
 };
 
+// --- Large working changes mock for performance testing ---
+
+function generateWorkingChangesPatch(): string {
+  const files: string[] = [];
+
+  // File 1: Large config file with multiple scattered changes
+  files.push(`diff --git a/src/config/settings.py b/src/config/settings.py
+index 1a2b3c4..5e6f7a8 100644
+--- a/src/config/settings.py
++++ b/src/config/settings.py
+@@ -1,6 +1,8 @@
+ import os
++import logging
+ from pathlib import Path
+
++logger = logging.getLogger(__name__)
+
+ BASE_DIR = Path(__file__).resolve().parent.parent
+
+@@ -15,7 +17,9 @@
+ DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///db.sqlite3")
+ REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+-ALLOWED_HOSTS = ["localhost"]
++ALLOWED_HOSTS = ["localhost", "127.0.0.1", "0.0.0.0"]
++CORS_ALLOWED_ORIGINS = ["http://localhost:3000", "http://localhost:5173"]
++CSRF_TRUSTED_ORIGINS = ["http://localhost:3000"]
+
+ INSTALLED_APPS = [
+     "django.contrib.admin",
+@@ -30,6 +34,12 @@
+     "django.contrib.staticfiles",
+ ]
+
++MIDDLEWARE = [
++    "django.middleware.security.SecurityMiddleware",
++    "corsheaders.middleware.CorsMiddleware",
++    "django.middleware.common.CommonMiddleware",
++    "django.middleware.csrf.CsrfViewMiddleware",
++]
+
+ # Email settings
+ EMAIL_BACKEND = os.getenv("EMAIL_BACKEND", "django.core.mail.backends.console.EmailBackend")`);
+
+  // File 2: New API router
+  files.push(`diff --git a/src/api/router.py b/src/api/router.py
+new file mode 100644
+index 0000000..a1b2c3d
+--- /dev/null
++++ b/src/api/router.py
+@@ -0,0 +1,65 @@
++from fastapi import APIRouter, Depends, HTTPException, status
++from typing import Annotated
++
++from ..auth import get_current_user, User
++from ..models import Project, Task
++from ..schemas import ProjectCreate, ProjectUpdate, TaskCreate, TaskUpdate
++from ..database import get_db
++
++router = APIRouter(prefix="/api/v1", tags=["projects"])
++
++
++@router.get("/projects")
++async def list_projects(
++    user: Annotated[User, Depends(get_current_user)],
++    db=Depends(get_db),
++):
++    return await db.fetch_all(
++        Project.select().where(Project.owner_id == user.id)
++    )
++
++
++@router.post("/projects", status_code=status.HTTP_201_CREATED)
++async def create_project(
++    data: ProjectCreate,
++    user: Annotated[User, Depends(get_current_user)],
++    db=Depends(get_db),
++):
++    project = await db.execute(
++        Project.insert().values(**data.model_dump(), owner_id=user.id)
++    )
++    return {"id": project, **data.model_dump()}
++
++
++@router.get("/projects/{project_id}")
++async def get_project(
++    project_id: int,
++    user: Annotated[User, Depends(get_current_user)],
++    db=Depends(get_db),
++):
++    project = await db.fetch_one(
++        Project.select().where(
++            (Project.id == project_id) & (Project.owner_id == user.id)
++        )
++    )
++    if not project:
++        raise HTTPException(status_code=404, detail="Project not found")
++    return project
++
++
++@router.put("/projects/{project_id}")
++async def update_project(
++    project_id: int,
++    data: ProjectUpdate,
++    user: Annotated[User, Depends(get_current_user)],
++    db=Depends(get_db),
++):
++    result = await db.execute(
++        Project.update()
++        .where((Project.id == project_id) & (Project.owner_id == user.id))
++        .values(**data.model_dump(exclude_unset=True))
++    )
++    if result == 0:
++        raise HTTPException(status_code=404, detail="Project not found")
++    return await get_project(project_id, user, db)`);
+
+  // File 3: Database models with modifications
+  files.push(`diff --git a/src/models/project.py b/src/models/project.py
+index 2b3c4d5..6f7a8b9 100644
+--- a/src/models/project.py
++++ b/src/models/project.py
+@@ -1,15 +1,28 @@
+-from sqlalchemy import Column, Integer, String, DateTime
++from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey
++from sqlalchemy.orm import relationship
+ from datetime import datetime
+
+ from .base import Base
+
+
+ class Project(Base):
+     __tablename__ = "projects"
+
+     id = Column(Integer, primary_key=True)
+-    name = Column(String(100), nullable=False)
++    name = Column(String(200), nullable=False, index=True)
++    slug = Column(String(200), nullable=False, unique=True)
++    description = Column(Text, nullable=True)
++    is_archived = Column(Boolean, default=False, nullable=False)
++    owner_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+     created_at = Column(DateTime, default=datetime.utcnow)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++
++    owner = relationship("User", back_populates="projects")
++    tasks = relationship("Task", back_populates="project", cascade="all, delete-orphan")
++
++    def __repr__(self) -> str:
++        return f"<Project {self.slug}>"
++
++    @property
++    def is_active(self) -> bool:
++        return not self.is_archived`);
+
+  // File 4: New task model
+  files.push(`diff --git a/src/models/task.py b/src/models/task.py
+new file mode 100644
+index 0000000..3c4d5e6
+--- /dev/null
++++ b/src/models/task.py
+@@ -0,0 +1,45 @@
++from sqlalchemy import Column, Integer, String, DateTime, Boolean, Text, ForeignKey, Enum
++from sqlalchemy.orm import relationship
++from datetime import datetime
++import enum
++
++from .base import Base
++
++
++class TaskStatus(enum.Enum):
++    TODO = "todo"
++    IN_PROGRESS = "in_progress"
++    IN_REVIEW = "in_review"
++    DONE = "done"
++    CANCELLED = "cancelled"
++
++
++class TaskPriority(enum.Enum):
++    LOW = "low"
++    MEDIUM = "medium"
++    HIGH = "high"
++    CRITICAL = "critical"
++
++
++class Task(Base):
++    __tablename__ = "tasks"
++
++    id = Column(Integer, primary_key=True)
++    title = Column(String(300), nullable=False)
++    description = Column(Text, nullable=True)
++    status = Column(Enum(TaskStatus), default=TaskStatus.TODO, nullable=False)
++    priority = Column(Enum(TaskPriority), default=TaskPriority.MEDIUM, nullable=False)
++    project_id = Column(Integer, ForeignKey("projects.id"), nullable=False)
++    assignee_id = Column(Integer, ForeignKey("users.id"), nullable=True)
++    created_at = Column(DateTime, default=datetime.utcnow)
++    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
++    due_date = Column(DateTime, nullable=True)
++    completed_at = Column(DateTime, nullable=True)
++
++    project = relationship("Project", back_populates="tasks")
++    assignee = relationship("User", back_populates="assigned_tasks")
++
++    @property
++    def is_overdue(self) -> bool:
++        if self.due_date and self.status != TaskStatus.DONE:
++            return datetime.utcnow() > self.due_date
++        return False`);
+
+  // File 5: Pydantic schemas
+  files.push(`diff --git a/src/schemas/project.py b/src/schemas/project.py
+new file mode 100644
+index 0000000..4d5e6f7
+--- /dev/null
++++ b/src/schemas/project.py
+@@ -0,0 +1,38 @@
++from pydantic import BaseModel, Field
++from datetime import datetime
++
++
++class ProjectCreate(BaseModel):
++    name: str = Field(..., min_length=1, max_length=200)
++    slug: str = Field(..., min_length=1, max_length=200, pattern=r"^[a-z0-9-]+$")
++    description: str | None = None
++
++
++class ProjectUpdate(BaseModel):
++    name: str | None = Field(None, min_length=1, max_length=200)
++    description: str | None = None
++    is_archived: bool | None = None
++
++
++class ProjectResponse(BaseModel):
++    id: int
++    name: str
++    slug: str
++    description: str | None
++    is_archived: bool
++    owner_id: int
++    created_at: datetime
++    updated_at: datetime
++
++    model_config = {"from_attributes": True}
++
++
++class TaskCreate(BaseModel):
++    title: str = Field(..., min_length=1, max_length=300)
++    description: str | None = None
++    priority: str = "medium"
++    assignee_id: int | None = None
++    due_date: datetime | None = None
++
++
++class TaskUpdate(BaseModel):
++    title: str | None = Field(None, min_length=1, max_length=300)
++    status: str | None = None
++    priority: str | None = None
++    assignee_id: int | None = None
++    due_date: datetime | None = None`);
+
+  // File 6: Test file with many test functions
+  files.push(`diff --git a/tests/test_api_projects.py b/tests/test_api_projects.py
+new file mode 100644
+index 0000000..5e6f7a8
+--- /dev/null
++++ b/tests/test_api_projects.py
+@@ -0,0 +1,82 @@
++import pytest
++from httpx import AsyncClient
++
++from src.models import Project
++
++
++@pytest.fixture
++async def auth_client(client: AsyncClient, test_user):
++    client.headers["Authorization"] = f"Bearer {test_user.token}"
++    return client
++
++
++@pytest.fixture
++async def sample_project(auth_client: AsyncClient):
++    resp = await auth_client.post("/api/v1/projects", json={
++        "name": "Test Project",
++        "slug": "test-project",
++        "description": "A test project",
++    })
++    return resp.json()
++
++
++class TestListProjects:
++    async def test_empty_list(self, auth_client):
++        resp = await auth_client.get("/api/v1/projects")
++        assert resp.status_code == 200
++        assert resp.json() == []
++
++    async def test_returns_own_projects(self, auth_client, sample_project):
++        resp = await auth_client.get("/api/v1/projects")
++        assert resp.status_code == 200
++        assert len(resp.json()) == 1
++        assert resp.json()[0]["slug"] == "test-project"
++
++    async def test_unauthenticated(self, client):
++        resp = await client.get("/api/v1/projects")
++        assert resp.status_code == 401
++
++
++class TestCreateProject:
++    async def test_create_success(self, auth_client):
++        resp = await auth_client.post("/api/v1/projects", json={
++            "name": "New Project",
++            "slug": "new-project",
++        })
++        assert resp.status_code == 201
++        assert resp.json()["name"] == "New Project"
++
++    async def test_duplicate_slug(self, auth_client, sample_project):
++        resp = await auth_client.post("/api/v1/projects", json={
++            "name": "Duplicate",
++            "slug": "test-project",
++        })
++        assert resp.status_code == 409
++
++    async def test_invalid_slug(self, auth_client):
++        resp = await auth_client.post("/api/v1/projects", json={
++            "name": "Bad Slug",
++            "slug": "Bad Slug!",
++        })
++        assert resp.status_code == 422
++
++
++class TestGetProject:
++    async def test_get_success(self, auth_client, sample_project):
++        pid = sample_project["id"]
++        resp = await auth_client.get(f"/api/v1/projects/{pid}")
++        assert resp.status_code == 200
++        assert resp.json()["slug"] == "test-project"
++
++    async def test_not_found(self, auth_client):
++        resp = await auth_client.get("/api/v1/projects/999")
++        assert resp.status_code == 404
++
++
++class TestUpdateProject:
++    async def test_update_name(self, auth_client, sample_project):
++        pid = sample_project["id"]
++        resp = await auth_client.put(f"/api/v1/projects/{pid}", json={
++            "name": "Updated Name",
++        })
++        assert resp.status_code == 200
++        assert resp.json()["name"] == "Updated Name"
++
++    async def test_archive_project(self, auth_client, sample_project):
++        pid = sample_project["id"]
++        resp = await auth_client.put(f"/api/v1/projects/{pid}", json={
++            "is_archived": True,
++        })
++        assert resp.status_code == 200
++        assert resp.json()["is_archived"] is True`);
+
+  // File 7: Database migrations
+  files.push(`diff --git a/src/database/migrations/002_add_projects.py b/src/database/migrations/002_add_projects.py
+new file mode 100644
+index 0000000..6f7a8b9
+--- /dev/null
++++ b/src/database/migrations/002_add_projects.py
+@@ -0,0 +1,35 @@
++"""Add projects and tasks tables."""
++
++from alembic import op
++import sqlalchemy as sa
++
++
++revision = "002"
++down_revision = "001"
++
++
++def upgrade() -> None:
++    op.create_table(
++        "projects",
++        sa.Column("id", sa.Integer(), primary_key=True),
++        sa.Column("name", sa.String(200), nullable=False),
++        sa.Column("slug", sa.String(200), nullable=False, unique=True),
++        sa.Column("description", sa.Text(), nullable=True),
++        sa.Column("is_archived", sa.Boolean(), default=False),
++        sa.Column("owner_id", sa.Integer(), sa.ForeignKey("users.id")),
++        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now()),
++        sa.Column("updated_at", sa.DateTime(), server_default=sa.func.now()),
++    )
++    op.create_index("ix_projects_slug", "projects", ["slug"])
++    op.create_index("ix_projects_owner", "projects", ["owner_id"])
++
++    op.create_table(
++        "tasks",
++        sa.Column("id", sa.Integer(), primary_key=True),
++        sa.Column("title", sa.String(300), nullable=False),
++        sa.Column("project_id", sa.Integer(), sa.ForeignKey("projects.id")),
++        sa.Column("status", sa.String(20), default="todo"),
++        sa.Column("priority", sa.String(20), default="medium"),
++    )
++
++
++def downgrade() -> None:
++    op.drop_table("tasks")
++    op.drop_table("projects")`);
+
+  // File 8: Utility functions
+  files.push(`diff --git a/src/utils/slugify.py b/src/utils/slugify.py
+new file mode 100644
+index 0000000..7a8b9c0
+--- /dev/null
++++ b/src/utils/slugify.py
+@@ -0,0 +1,22 @@
++import re
++import unicodedata
++
++
++def slugify(value: str, max_length: int = 200) -> str:
++    """Convert a string to a URL-friendly slug."""
++    value = unicodedata.normalize("NFKD", value)
++    value = value.encode("ascii", "ignore").decode("ascii")
++    value = re.sub(r"[^\w\s-]", "", value.lower())
++    value = re.sub(r"[-\s]+", "-", value).strip("-")
++    return value[:max_length]
++
++
++def unique_slug(base: str, existing: set[str], max_length: int = 200) -> str:
++    """Generate a unique slug by appending a counter if needed."""
++    slug = slugify(base, max_length)
++    if slug not in existing:
++        return slug
++    counter = 1
++    while f"{slug}-{counter}" in existing:
++        counter += 1
++    return f"{slug}-{counter}"`);
+
+  // File 9: Logging configuration changes
+  files.push(`diff --git a/src/config/logging.py b/src/config/logging.py
+index 8b9c0d1..2e3f4a5 100644
+--- a/src/config/logging.py
++++ b/src/config/logging.py
+@@ -1,8 +1,15 @@
+ import logging
++import logging.handlers
++import sys
++from pathlib import Path
+
+
+-def setup_logging(level: str = "INFO") -> None:
+-    logging.basicConfig(level=level)
++LOG_DIR = Path("logs")
++
++
++def setup_logging(level: str = "INFO", log_file: str | None = None) -> None:
++    LOG_DIR.mkdir(exist_ok=True)
++
+     root = logging.getLogger()
+     root.setLevel(level)
+
+@@ -11,4 +18,18 @@
+         "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+     )
+
+-    root.handlers[0].setFormatter(formatter)
++    console = logging.StreamHandler(sys.stdout)
++    console.setFormatter(formatter)
++    root.addHandler(console)
++
++    if log_file:
++        file_handler = logging.handlers.RotatingFileHandler(
++            LOG_DIR / log_file,
++            maxBytes=10 * 1024 * 1024,
++            backupCount=5,
++        )
++        file_handler.setFormatter(formatter)
++        root.addHandler(file_handler)
++
++    # Silence noisy third-party loggers
++    logging.getLogger("httpx").setLevel(logging.WARNING)
++    logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)`);
+
+  // File 10: New CLI commands
+  files.push(`diff --git a/src/cli/commands.py b/src/cli/commands.py
+new file mode 100644
+index 0000000..9c0d1e2
+--- /dev/null
++++ b/src/cli/commands.py
+@@ -0,0 +1,48 @@
++import typer
++from rich.console import Console
++from rich.table import Table
++
++from ..database import get_sync_db
++from ..models import Project, Task, TaskStatus
++
++app = typer.Typer(help="Project management CLI")
++console = Console()
++
++
++@app.command()
++def list_projects(archived: bool = False):
++    """List all projects."""
++    db = get_sync_db()
++    query = Project.select()
++    if not archived:
++        query = query.where(Project.is_archived == False)
++
++    projects = db.fetch_all(query)
++    table = Table(title="Projects")
++    table.add_column("ID", style="dim")
++    table.add_column("Name", style="bold")
++    table.add_column("Slug")
++    table.add_column("Tasks", justify="right")
++    table.add_column("Status")
++
++    for p in projects:
++        task_count = db.count(Task.select().where(Task.project_id == p.id))
++        status = "[red]Archived[/]" if p.is_archived else "[green]Active[/]"
++        table.add_row(str(p.id), p.name, p.slug, str(task_count), status)
++
++    console.print(table)
++
++
++@app.command()
++def create_project(name: str, slug: str = None, description: str = None):
++    """Create a new project."""
++    from ..utils.slugify import slugify
++    db = get_sync_db()
++    if slug is None:
++        slug = slugify(name)
++    project_id = db.execute(
++        Project.insert().values(name=name, slug=slug, description=description)
++    )
++    console.print(f"[green]Created project '{name}' (id={project_id})[/]")
++
++
++@app.command()
++def project_stats():
++    """Show project statistics."""
++    db = get_sync_db()
++    total = db.count(Project.select())
++    active = db.count(Project.select().where(Project.is_archived == False))
++    console.print(f"Total: {total}, Active: {active}, Archived: {total - active}")`);
+
+  // File 11: TypeScript frontend component
+  files.push(`diff --git a/frontend/src/components/ProjectList.tsx b/frontend/src/components/ProjectList.tsx
+new file mode 100644
+index 0000000..0d1e2f3
+--- /dev/null
++++ b/frontend/src/components/ProjectList.tsx
+@@ -0,0 +1,52 @@
++import { useEffect, useState } from 'react';
++
++interface Project {
++  id: number;
++  name: string;
++  slug: string;
++  description: string | null;
++  is_archived: boolean;
++  created_at: string;
++}
++
++export function ProjectList() {
++  const [projects, setProjects] = useState<Project[]>([]);
++  const [loading, setLoading] = useState(true);
++  const [error, setError] = useState<string | null>(null);
++
++  useEffect(() => {
++    fetch('/api/v1/projects')
++      .then((res) => {
++        if (!res.ok) throw new Error('Failed to fetch projects');
++        return res.json();
++      })
++      .then(setProjects)
++      .catch((err) => setError(err.message))
++      .finally(() => setLoading(false));
++  }, []);
++
++  if (loading) return <div className="animate-pulse">Loading projects...</div>;
++  if (error) return <div className="text-red-500">Error: {error}</div>;
++
++  return (
++    <div className="space-y-4">
++      <h2 className="text-xl font-bold">Projects</h2>
++      {projects.length === 0 ? (
++        <p className="text-gray-500">No projects yet. Create your first one!</p>
++      ) : (
++        <ul className="divide-y">
++          {projects.map((project) => (
++            <li key={project.id} className="py-3 flex items-center justify-between">
++              <div>
++                <h3 className="font-medium">{project.name}</h3>
++                <p className="text-sm text-gray-500">{project.slug}</p>
++                {project.description && (
++                  <p className="text-sm mt-1">{project.description}</p>
++                )}
++              </div>
++              {project.is_archived && (
++                <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded">
++                  Archived
++                </span>
++              )}
++            </li>
++          ))}
++        </ul>
++      )}
++    </div>
++  );
++}`);
+
+  // File 12: CSS module changes
+  files.push(`diff --git a/frontend/src/styles/projects.css b/frontend/src/styles/projects.css
+new file mode 100644
+index 0000000..1e2f3a4
+--- /dev/null
++++ b/frontend/src/styles/projects.css
+@@ -0,0 +1,28 @@
++.project-card {
++  border: 1px solid var(--border-color);
++  border-radius: 8px;
++  padding: 16px;
++  transition: box-shadow 0.2s ease;
++}
++
++.project-card:hover {
++  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
++}
++
++.project-card__title {
++  font-size: 1.125rem;
++  font-weight: 600;
++  margin-bottom: 4px;
++}
++
++.project-card__slug {
++  font-family: monospace;
++  font-size: 0.75rem;
++  color: var(--text-muted);
++}
++
++.project-card__badge {
++  font-size: 0.625rem;
++  padding: 2px 6px;
++  border-radius: 9999px;
++  text-transform: uppercase;
++}`);
+
+  // File 13: Docker configuration
+  files.push(`diff --git a/docker-compose.yml b/docker-compose.yml
+index 3f4a5b6..7c8d9e0 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -1,11 +1,32 @@
+-version: "3.8"
+ services:
+   app:
+     build: .
+-    ports:
+-      - "8000:8000"
++    ports: ["8000:8000"]
++    depends_on:
++      db:
++        condition: service_healthy
++      redis:
++        condition: service_started
+     environment:
+-      - DATABASE_URL=sqlite:///db.sqlite3
++      DATABASE_URL: postgres://app:secret@db:5432/shortcake
++      REDIS_URL: redis://redis:6379/0
++      LOG_LEVEL: INFO
++    volumes:
++      - ./logs:/app/logs
++    restart: unless-stopped
++
++  db:
++    image: postgres:16-alpine
++    environment:
++      POSTGRES_USER: app
++      POSTGRES_PASSWORD: secret
++      POSTGRES_DB: shortcake
++    volumes:
++      - pgdata:/var/lib/postgresql/data
++    healthcheck:
++      test: pg_isready -U app
++      interval: 5s
++      retries: 5
++
++  redis:
++    image: redis:7-alpine
++    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+
+ volumes:
+-  data:
++  pgdata:`);
+
+  // File 14: README changes
+  files.push(`diff --git a/README.md b/README.md
+index 4a5b6c7..8d9e0f1 100644
+--- a/README.md
++++ b/README.md
+@@ -1,8 +1,16 @@
+ # Shortcake
+
+-A simple project template.
++A stacked PR workflow tool using git trailers.
+
+ ## Getting Started
+
+-1. Clone the repo
+-2. Run the app
++1. Install dependencies: \`pip install -e ".[dev]"\`
++2. Run migrations: \`alembic upgrade head\`
++3. Start the server: \`uvicorn src.main:app --reload\`
++4. Start the frontend: \`cd frontend && npm run dev\`
++
++## Development
++
++- Run tests: \`pytest\`
++- Format code: \`ruff format .\`
++- Type check: \`mypy src/\``);
+
+  // File 15: GitHub Actions workflow
+  files.push(`diff --git a/.github/workflows/ci.yml b/.github/workflows/ci.yml
+new file mode 100644
+index 0000000..2f3a4b5
+--- /dev/null
++++ b/.github/workflows/ci.yml
+@@ -0,0 +1,42 @@
++name: CI
++on:
++  push:
++    branches: [main]
++  pull_request:
++    branches: [main]
++
++jobs:
++  test:
++    runs-on: ubuntu-latest
++    services:
++      postgres:
++        image: postgres:16-alpine
++        env:
++          POSTGRES_USER: test
++          POSTGRES_PASSWORD: test
++          POSTGRES_DB: test_db
++        options: --health-cmd pg_isready --health-interval 5s --health-retries 5
++        ports: ["5432:5432"]
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.14"
++      - run: pip install -e ".[dev]"
++      - run: pytest --cov --cov-report=xml
++        env:
++          DATABASE_URL: postgres://test:test@localhost:5432/test_db
++      - uses: codecov/codecov-action@v4
++
++  lint:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-python@v5
++        with:
++          python-version: "3.14"
++      - run: pip install ruff mypy
++      - run: ruff check .
++      - run: ruff format --check .
++      - run: mypy src/`);
+
+  // Generate many more files programmatically for stress testing
+  const modules = [
+    'cache', 'permissions', 'rate_limiter', 'analytics', 'search',
+    'billing', 'webhooks', 'export', 'import_data', 'audit_log',
+    'health_check', 'feature_flags', 'i18n', 'file_storage', 'queue',
+    'scheduler', 'metrics', 'middleware_chain', 'pagination', 'serializers',
+  ];
+
+  for (const mod of modules) {
+    const lines: string[] = [];
+    const lineCount = 30 + Math.floor(mod.length * 7); // vary size per module
+    lines.push(`diff --git a/src/services/${mod}.py b/src/services/${mod}.py`);
+    lines.push('new file mode 100644');
+    lines.push('index 0000000..abcdef1');
+    lines.push('--- /dev/null');
+    lines.push(`+++ b/src/services/${mod}.py`);
+    lines.push(`@@ -0,0 +1,${lineCount} @@`);
+    lines.push(`+"""${mod.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())} service module."""`);
+    lines.push('+');
+    lines.push('+from __future__ import annotations');
+    lines.push('+from dataclasses import dataclass, field');
+    lines.push('+from datetime import datetime, timedelta');
+    lines.push('+from typing import Any, Protocol');
+    lines.push('+import logging');
+    lines.push('+');
+    lines.push(`+logger = logging.getLogger("${mod}")`);
+    lines.push('+');
+    lines.push('+');
+    lines.push(`+class ${mod.split('_').map(w => w[0]!.toUpperCase() + w.slice(1)).join('')}Error(Exception):`);
+    lines.push(`+    """Raised when ${mod.replace(/_/g, ' ')} operation fails."""`);
+    lines.push('+');
+    lines.push('+');
+    lines.push('+@dataclass');
+    lines.push(`+class ${mod.split('_').map(w => w[0]!.toUpperCase() + w.slice(1)).join('')}Config:`);
+    lines.push('+    enabled: bool = True');
+    lines.push('+    timeout: int = 30');
+    lines.push('+    max_retries: int = 3');
+    lines.push(`+    namespace: str = "${mod}"`);
+    lines.push('+    metadata: dict[str, Any] = field(default_factory=dict)');
+    lines.push('+');
+    lines.push('+');
+    lines.push('+class ServiceProtocol(Protocol):');
+    lines.push('+    def initialize(self) -> None: ...');
+    lines.push('+    def shutdown(self) -> None: ...');
+    lines.push('+    def health_check(self) -> bool: ...');
+    lines.push('+');
+    lines.push('+');
+    lines.push(`+class ${mod.split('_').map(w => w[0]!.toUpperCase() + w.slice(1)).join('')}Service:`);
+    lines.push(`+    """Main ${mod.replace(/_/g, ' ')} service implementation."""`);
+    lines.push('+');
+    lines.push(`+    def __init__(self, config: ${mod.split('_').map(w => w[0]!.toUpperCase() + w.slice(1)).join('')}Config | None = None) -> None:`);
+    lines.push(`+        self.config = config or ${mod.split('_').map(w => w[0]!.toUpperCase() + w.slice(1)).join('')}Config()`);
+    lines.push('+        self._initialized = False');
+    lines.push('+        self._data: dict[str, Any] = {}');
+    lines.push(`+        logger.info("${mod.split('_').map(w => w[0]!.toUpperCase() + w.slice(1)).join('')}Service created")`);
+    lines.push('+');
+    lines.push('+    def initialize(self) -> None:');
+    lines.push('+        if self._initialized:');
+    lines.push('+            return');
+    lines.push('+        self._initialized = True');
+    lines.push(`+        logger.info("${mod} service initialized")`);
+    lines.push('+');
+    lines.push('+    def shutdown(self) -> None:');
+    lines.push('+        self._initialized = False');
+    lines.push('+        self._data.clear()');
+    lines.push(`+        logger.info("${mod} service shut down")`);
+    lines.push('+');
+    lines.push('+    def health_check(self) -> bool:');
+    lines.push('+        return self._initialized');
+    lines.push('+');
+    lines.push(`+    def process(self, key: str, value: Any) -> dict[str, Any]:`);
+    lines.push('+        if not self._initialized:');
+    lines.push(`+            raise ${mod.split('_').map(w => w[0]!.toUpperCase() + w.slice(1)).join('')}Error("Service not initialized")`);
+    lines.push('+        self._data[key] = value');
+    lines.push('+        return {"key": key, "status": "processed", "timestamp": datetime.utcnow().isoformat()}');
+    lines.push('+');
+    lines.push('+    def get(self, key: str) -> Any | None:');
+    lines.push('+        return self._data.get(key)');
+    lines.push('+');
+    lines.push('+    def delete(self, key: str) -> bool:');
+    lines.push('+        if key in self._data:');
+    lines.push('+            del self._data[key]');
+    lines.push('+            return True');
+    lines.push('+        return False');
+    lines.push('+');
+    lines.push('+    def list_keys(self) -> list[str]:');
+    lines.push('+        return list(self._data.keys())');
+    lines.push('+');
+    lines.push('+    @property');
+    lines.push('+    def size(self) -> int:');
+    lines.push('+        return len(self._data)');
+
+    // Add test file for each module too
+    const testLines: string[] = [];
+    testLines.push(`diff --git a/tests/test_${mod}.py b/tests/test_${mod}.py`);
+    testLines.push('new file mode 100644');
+    testLines.push('index 0000000..fedcba9');
+    testLines.push('--- /dev/null');
+    testLines.push(`+++ b/tests/test_${mod}.py`);
+    testLines.push(`@@ -0,0 +1,35 @@`);
+    testLines.push('+import pytest');
+    testLines.push(`+from src.services.${mod} import ${mod.split('_').map(w => w[0]!.toUpperCase() + w.slice(1)).join('')}Service, ${mod.split('_').map(w => w[0]!.toUpperCase() + w.slice(1)).join('')}Config`);
+    testLines.push('+');
+    testLines.push('+');
+    testLines.push('+@pytest.fixture');
+    testLines.push('+def service():');
+    testLines.push(`+    svc = ${mod.split('_').map(w => w[0]!.toUpperCase() + w.slice(1)).join('')}Service()`);
+    testLines.push('+    svc.initialize()');
+    testLines.push('+    yield svc');
+    testLines.push('+    svc.shutdown()');
+    testLines.push('+');
+    testLines.push('+');
+    testLines.push('+def test_initialize(service):');
+    testLines.push('+    assert service.health_check() is True');
+    testLines.push('+');
+    testLines.push('+');
+    testLines.push('+def test_process(service):');
+    testLines.push('+    result = service.process("key1", {"value": 42})');
+    testLines.push('+    assert result["status"] == "processed"');
+    testLines.push('+    assert service.get("key1") == {"value": 42}');
+    testLines.push('+');
+    testLines.push('+');
+    testLines.push('+def test_delete(service):');
+    testLines.push('+    service.process("key1", "val")');
+    testLines.push('+    assert service.delete("key1") is True');
+    testLines.push('+    assert service.delete("key1") is False');
+    testLines.push('+');
+    testLines.push('+');
+    testLines.push('+def test_list_keys(service):');
+    testLines.push('+    service.process("a", 1)');
+    testLines.push('+    service.process("b", 2)');
+    testLines.push('+    assert sorted(service.list_keys()) == ["a", "b"]');
+    testLines.push('+');
+    testLines.push('+');
+    testLines.push('+def test_not_initialized():');
+    testLines.push(`+    svc = ${mod.split('_').map(w => w[0]!.toUpperCase() + w.slice(1)).join('')}Service()`);
+    testLines.push('+    with pytest.raises(Exception):');
+    testLines.push('+        svc.process("key", "value")');
+
+    files.push(lines.join('\n'));
+    files.push(testLines.join('\n'));
+  }
+
+  // Add a massive generated file to test large-file gating
+  const bigLines: string[] = [];
+  const bigCount = 800;
+  bigLines.push('diff --git a/src/generated/schemas.gen.ts b/src/generated/schemas.gen.ts');
+  bigLines.push('new file mode 100644');
+  bigLines.push('index 0000000..1234567');
+  bigLines.push('--- /dev/null');
+  bigLines.push('+++ b/src/generated/schemas.gen.ts');
+  bigLines.push(`@@ -0,0 +1,${bigCount} @@`);
+  bigLines.push('+// Auto-generated — do not edit');
+  bigLines.push('+/* eslint-disable */');
+  bigLines.push('+export const schemas = {');
+  for (let i = 0; i < bigCount - 5; i++) {
+    const name = `field_${String(i).padStart(4, '0')}`;
+    bigLines.push(`+  ${name}: { type: "string", description: "Generated field ${i}", required: ${i % 3 === 0} },`);
+  }
+  bigLines.push('+} as const;');
+  bigLines.push('+export type Schemas = typeof schemas;');
+  files.push(bigLines.join('\n'));
+
+  return files.join('\n');
+}
+
+const MOCK_WORKING_PATCH = generateWorkingChangesPatch();
+
+const MOCK_WORKING_SUGGESTIONS = [
+  { file: 'src/config/settings.py', hunkIndex: 0, suggestedBranch: 'feat/auth', reason: 'Logging config relates to auth middleware' },
+  { file: 'src/config/settings.py', hunkIndex: 1, suggestedBranch: 'feat/auth', reason: 'CORS origins for auth flow' },
+  { file: 'src/config/settings.py', hunkIndex: 2, suggestedBranch: 'feat/auth', reason: 'Middleware relates to auth' },
+  { file: 'src/api/router.py', hunkIndex: 0, suggestedBranch: 'feat/auth', reason: 'API routes use auth' },
+  { file: 'src/models/project.py', hunkIndex: 0, suggestedBranch: 'feat/notifications', reason: 'Model changes for notification project' },
+  { file: 'src/models/task.py', hunkIndex: 0, suggestedBranch: 'feat/notifications', reason: 'Task model for notification triggers' },
+  { file: 'src/schemas/project.py', hunkIndex: 0, suggestedBranch: 'feat/notifications', reason: 'Schemas for notification project' },
+  { file: 'tests/test_api_projects.py', hunkIndex: 0, suggestedBranch: null, reason: 'Tests could go to multiple branches' },
+  { file: 'src/database/migrations/002_add_projects.py', hunkIndex: 0, suggestedBranch: 'feat/notifications', reason: 'Migration for project tables' },
+  { file: 'src/utils/slugify.py', hunkIndex: 0, suggestedBranch: null, reason: 'Generic utility' },
+  { file: 'src/config/logging.py', hunkIndex: 0, suggestedBranch: 'feat/auth', reason: 'Logging setup for auth module' },
+  { file: 'src/config/logging.py', hunkIndex: 1, suggestedBranch: 'feat/auth', reason: 'Log file handler for auth' },
+  { file: 'src/cli/commands.py', hunkIndex: 0, suggestedBranch: 'feat/notifications', reason: 'CLI for project management' },
+  { file: 'frontend/src/components/ProjectList.tsx', hunkIndex: 0, suggestedBranch: 'feat/notifications', reason: 'Frontend for notifications project' },
+  { file: 'frontend/src/styles/projects.css', hunkIndex: 0, suggestedBranch: 'feat/notifications', reason: 'Styles for project cards' },
+  { file: 'docker-compose.yml', hunkIndex: 0, suggestedBranch: null, reason: 'Infrastructure change' },
+  { file: 'README.md', hunkIndex: 0, suggestedBranch: null, reason: 'Documentation change' },
+  { file: '.github/workflows/ci.yml', hunkIndex: 0, suggestedBranch: null, reason: 'CI configuration' },
+  // Generated service modules — alternate between branches
+  ...['cache', 'permissions', 'rate_limiter', 'analytics', 'search',
+    'billing', 'webhooks', 'export', 'import_data', 'audit_log',
+    'health_check', 'feature_flags', 'i18n', 'file_storage', 'queue',
+    'scheduler', 'metrics', 'middleware_chain', 'pagination', 'serializers',
+  ].flatMap((mod, i) => {
+    const branches = ['feat/auth', 'feat/notifications', 'feat/oauth', 'feat/login-form', null];
+    const branch = branches[i % branches.length]!;
+    return [
+      { file: `src/services/${mod}.py`, hunkIndex: 0, suggestedBranch: branch, reason: `${mod} service module` },
+      { file: `tests/test_${mod}.py`, hunkIndex: 0, suggestedBranch: branch, reason: `Tests for ${mod}` },
+    ];
+  }),
+];
+
 function json(res: import('http').ServerResponse, status: number, data: unknown) {
   const body = JSON.stringify(data);
   res.writeHead(status, {
@@ -437,6 +1406,18 @@ export function mockApi(): Plugin {
 
         if (url.pathname === '/api/stack') {
           return json(res, 200, MOCK_STACK);
+        }
+
+        if (url.pathname === '/api/diff/working') {
+          return json(res, 200, { patch: MOCK_WORKING_PATCH });
+        }
+
+        if (url.pathname === '/api/suggestions') {
+          // Simulate a slight delay like an LLM call
+          setTimeout(() => {
+            json(res, 200, { suggestions: MOCK_WORKING_SUGGESTIONS });
+          }, 300);
+          return;
         }
 
         if (url.pathname === '/api/diff') {

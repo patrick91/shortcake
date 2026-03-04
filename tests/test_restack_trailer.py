@@ -298,7 +298,7 @@ def test_continue_preserves_trailer_current_step(
 
     # Now set up a continue scenario: create another branch with same pattern
     # and manually set up restack state as if a conflict was just resolved
-    main_head = git.get_branch_head(temp_repo, "main")
+    git.get_branch_head(temp_repo, "main")
     branch_a_head = git.get_branch_head(temp_repo, "branch_a")
 
     # Create branch_b with trailer + changes that will become empty
@@ -404,7 +404,7 @@ def test_continue_preserves_trailer_remaining_steps(
     main_file.write_text("main update")
     porcelain.add(temp_repo, paths=[str(main_file)])
     porcelain.commit(temp_repo, message=b"chore: update main")
-    main_head = git.get_branch_head(temp_repo, "main")
+    git.get_branch_head(temp_repo, "main")
 
     # Set up restack state: branch_a is current (index 0), branch_b is remaining
     # Pretend branch_a was just resolved (current step done), branch_b is next

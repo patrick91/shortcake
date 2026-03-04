@@ -7,7 +7,15 @@ const apiOrigin = process.env.SHORTCAKE_API_ORIGIN;
 const useMock = !apiOrigin;
 
 export default defineConfig({
-  plugins: [tailwindcss(), react(), ...(useMock ? [mockApi()] : [])],
+  plugins: [
+    tailwindcss(),
+    react({
+      babel: {
+        plugins: ['babel-plugin-react-compiler'],
+      },
+    }),
+    ...(useMock ? [mockApi()] : []),
+  ],
   server: {
     host: '127.0.0.1',
     port: 5173,
