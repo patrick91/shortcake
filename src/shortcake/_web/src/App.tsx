@@ -9,6 +9,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExtern
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
 
 type DiffStyle = 'unified' | 'split';
+type ThemeMode = 'dark' | 'light' | 'system';
 
 type DiffComment = {
   id: string;
@@ -776,6 +777,7 @@ function DiffFileSection({
   onHunkToggle,
   parsedHunks,
   diffStyle,
+  resolvedTheme,
   onToggleViewed,
 }: {
   patch: string;
@@ -795,6 +797,7 @@ function DiffFileSection({
   onHunkToggle: (key: HunkKey) => void;
   parsedHunks: ParsedHunk[];
   diffStyle: DiffStyle;
+  resolvedTheme?: 'dark' | 'light';
   onToggleViewed?: (path: string) => void;
 }) {
   const fileComments = comments.filter((c) => c.file === fileInfo.path);
@@ -810,13 +813,15 @@ function DiffFileSection({
     [fileInfo.path, onRangeSelected],
   );
 
+  const rt = resolvedTheme ?? 'dark';
+
   const options = useMemo<PatchDiffProps<CommentMeta>['options']>(
     () => ({
       diffStyle,
       diffIndicators: 'classic',
       hunkSeparators: 'metadata',
-      theme: 'pierre-dark',
-      themeType: 'dark',
+      theme: rt === 'light' ? 'pierre-light' : 'pierre-dark',
+      themeType: rt,
       overflow: 'scroll',
       lineDiffType: 'word',
       enableLineSelection: true,
@@ -826,7 +831,7 @@ function DiffFileSection({
         [data-selected-line] { background: rgba(250, 204, 21, 0.10) !important; }
       `,
     }),
-    [diffStyle, handleSelectionEnd],
+    [diffStyle, handleSelectionEnd, rt],
   );
 
   const selectedLines = useMemo<SelectedLineRange | null>(() => {
@@ -1010,6 +1015,18 @@ export default function App() {
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const [showMovePicker, setShowMovePicker] = useState(false);
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
+
+  const [themeMode, setThemeMode] = useState<ThemeMode>(
+    () => (localStorage.getItem('shortcake-theme') as ThemeMode) ?? 'dark',
+  );
+  const prefersDark = useMediaQuery('(prefers-color-scheme: dark)');
+  const resolvedTheme: 'dark' | 'light' =
+    themeMode === 'system' ? (prefersDark ? 'dark' : 'light') : themeMode;
+
+  useEffect(() => {
+    localStorage.setItem('shortcake-theme', themeMode);
+    document.documentElement.dataset.theme = resolvedTheme;
+  }, [themeMode, resolvedTheme]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1438,7 +1455,7 @@ export default function App() {
                       {branch.name}
                     </span>
                     {branch.isCurrent && (
-                      <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-[rgba(52,211,153,0.1)] border border-[rgba(52,211,153,0.18)] ml-1.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
+                      <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-accent/10 border border-accent/18 ml-1.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
                         current
                       </span>
                     )}
@@ -1521,7 +1538,23 @@ export default function App() {
               </span>
             )}
             <div
-              className="flex bg-white/4 border border-border rounded-md p-0.5"
+              className="flex bg-surface-hover border border-border rounded-md p-0.5"
+              role="group"
+              aria-label="Theme"
+            >
+              {(['dark', 'light', 'system'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  className={`appearance-none border-none rounded-[6px] font-mono text-[0.7rem] tracking-[0.02em] px-2.5 py-1 cursor-pointer transition-[color,background] duration-[120ms] ease-in-out capitalize ${themeMode === mode ? 'text-text-primary bg-surface-active' : 'bg-transparent text-text-muted hover:text-text-secondary'}`}
+                  onClick={() => setThemeMode(mode)}
+                  type="button"
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+            <div
+              className="flex bg-surface-hover border border-border rounded-md p-0.5"
               role="group"
               aria-label="Diff layout"
             >
@@ -1626,6 +1659,7 @@ export default function App() {
                         onHunkToggle={handleHunkToggle}
                         parsedHunks={parsedHunks}
                         diffStyle={diffStyle}
+                        resolvedTheme={resolvedTheme}
                         onToggleViewed={toggleViewed}
                       />
                     )}
@@ -1703,7 +1737,7 @@ export default function App() {
                     {branch.name}
                   </span>
                   {branch.isCurrent && (
-                    <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-[rgba(52,211,153,0.1)] border border-[rgba(52,211,153,0.18)] ml-1.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
+                    <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-accent/10 border border-accent/18 ml-1.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
                       current
                     </span>
                   )}
@@ -1761,7 +1795,23 @@ export default function App() {
               </span>
             )}
             <div
-              className="flex bg-white/4 border border-border rounded-md p-0.5"
+              className="flex bg-surface-hover border border-border rounded-md p-0.5"
+              role="group"
+              aria-label="Theme"
+            >
+              {(['dark', 'light', 'system'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  className={`appearance-none border-none rounded-[6px] font-mono text-[0.7rem] tracking-[0.02em] px-2.5 py-1 cursor-pointer transition-[color,background] duration-[120ms] ease-in-out capitalize ${themeMode === mode ? 'text-text-primary bg-surface-active' : 'bg-transparent text-text-muted hover:text-text-secondary'}`}
+                  onClick={() => setThemeMode(mode)}
+                  type="button"
+                >
+                  {mode}
+                </button>
+              ))}
+            </div>
+            <div
+              className="flex bg-surface-hover border border-border rounded-md p-0.5"
               role="group"
               aria-label="Diff layout"
             >
@@ -1837,6 +1887,7 @@ export default function App() {
                       onHunkToggle={handleHunkToggle}
                       parsedHunks={parsedHunks}
                       diffStyle={diffStyle}
+                      resolvedTheme={resolvedTheme}
                       onToggleViewed={toggleViewed}
                     />
                   )}
