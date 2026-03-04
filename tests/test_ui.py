@@ -13,6 +13,7 @@ from shortcake.commands.ui import (
     _build_diff_payload,
     _build_request_handler,
     _build_stack_payload,
+    _build_suggestions_payload,
     _build_working_diff_payload,
     _find_open_port,
     _git_diff_patch,
@@ -1059,3 +1060,100 @@ def test_ui_port_fallback_messages(
 
     captured = capsys.readouterr()
     assert "is in use" in captured.out
+
+
+# --- GET /api/suggestions handler tests ---
+
+
+def test_handler_suggestions_missing_mode(temp_repo: Repo) -> None:
+    """GET /api/suggestions without mode returns 400."""
+    fake = _make_handler(temp_repo, "/api/suggestions")
+    assert fake._status == 400
+    assert "mode" in fake.response_json()["error"]
+
+
+def test_handler_suggestions_invalid_mode(temp_repo: Repo) -> None:
+    """GET /api/suggestions with invalid mode returns 400."""
+    fake = _make_handler(temp_repo, "/api/suggestions?mode=invalid")
+    assert fake._status == 400
+    assert "mode" in fake.response_json()["error"]
+
+
+def test_handler_suggestions_working_mode(repo_with_stack: Repo) -> None:
+    """GET /api/suggestions?mode=working returns valid JSON."""
+    fake = _make_handler(repo_with_stack, "/api/suggestions?mode=working")
+    assert fake._status == 200
+    data = fake.response_json()
+    assert "suggestions" in data
+    assert isinstance(data["suggestions"], list)
+
+
+def test_handler_suggestions_branch_mode(repo_with_stack: Repo) -> None:
+    """GET /api/suggestions?mode=branch&source=branch_b returns valid JSON."""
+    fake = _make_handler(
+        repo_with_stack, "/api/suggestions?mode=branch&source=branch_b"
+    )
+    assert fake._status == 200
+    data = fake.response_json()
+    assert "suggestions" in data
+    assert isinstance(data["suggestions"], list)
+
+
+def test_handler_suggestions_branch_mode_missing_source(
+    repo_with_stack: Repo,
+) -> None:
+    """GET /api/suggestions?mode=branch without source returns 400."""
+    fake = _make_handler(repo_with_stack, "/api/suggestions?mode=branch")
+    assert fake._status == 400
+    assert "source" in fake.response_json()["error"].lower()
+
+
+def test_handler_suggestions_branch_mode_untracked(temp_repo: Repo) -> None:
+    """GET /api/suggestions?mode=branch&source=main returns 400 for untracked."""
+    fake = _make_handler(temp_repo, "/api/suggestions?mode=branch&source=main")
+    assert fake._status == 400
+    assert "not tracked" in fake.response_json()["error"]
+
+
+def test_handler_suggestions_error(repo_with_stack: Repo) -> None:
+    """GET /api/suggestions returns 500 on unexpected error."""
+    with patch(
+        "shortcake.commands.ui._build_suggestions_payload",
+        side_effect=RuntimeError("boom"),
+    ):
+        fake = _make_handler(
+            repo_with_stack, "/api/suggestions?mode=working"
+        )
+    assert fake._status == 500
+    assert "boom" in fake.response_json()["error"]
+
+
+# --- _build_suggestions_payload ---
+
+
+def test_build_suggestions_payload_working(repo_with_stack: Repo) -> None:
+    """_build_suggestions_payload returns suggestions for working mode."""
+    payload = _build_suggestions_payload(repo_with_stack, "working")
+    assert "suggestions" in payload
+    assert isinstance(payload["suggestions"], list)
+
+
+def test_build_suggestions_payload_branch(repo_with_stack: Repo) -> None:
+    """_build_suggestions_payload returns suggestions for branch mode."""
+    payload = _build_suggestions_payload(repo_with_stack, "branch", "branch_b")
+    assert "suggestions" in payload
+    assert isinstance(payload["suggestions"], list)
+
+
+def test_build_suggestions_payload_invalid_mode(repo_with_stack: Repo) -> None:
+    """_build_suggestions_payload raises for invalid mode."""
+    with pytest.raises(ValueError, match="Invalid mode"):
+        _build_suggestions_payload(repo_with_stack, "bad")
+
+
+def test_build_suggestions_payload_branch_no_source(
+    repo_with_stack: Repo,
+) -> None:
+    """_build_suggestions_payload raises when branch mode has no source."""
+    with pytest.raises(ValueError, match="Missing required parameter"):
+        _build_suggestions_payload(repo_with_stack, "branch")

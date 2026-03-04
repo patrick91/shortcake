@@ -7,6 +7,7 @@ import socket
 import subprocess
 import threading
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -18,6 +19,7 @@ from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._tree import BranchNode, StackTree
+from shortcake.commands._suggest import _compute_suggestions
 from shortcake.commands.move_lines import (
     HunkSelection,
     MoveError,
@@ -179,6 +181,67 @@ def _build_working_diff_payload(repo: Repo) -> dict[str, Any]:
     return {"patch": patch}
 
 
+def _build_suggestions_payload(
+    repo: Repo, mode: str, source_branch: str | None = None
+) -> dict[str, Any]:
+    """Build payload for branch suggestion endpoint."""
+    tracked = _tracked_branch_parents(repo)
+    repo_path = Path(repo.path)
+
+    # Get source patch
+    if mode == "working":
+        source_patch = _git_working_diff(repo_path)
+        exclude_branch = None
+    elif mode == "branch":
+        if not source_branch:
+            raise ValueError("Missing required parameter: source")
+        if source_branch not in tracked:
+            raise ValueError(f"Branch '{source_branch}' is not tracked")
+        parent = tracked[source_branch]
+        all_branches = set(git.get_all_local_branches(repo))
+        if parent not in all_branches:
+            raise ValueError(f"Parent branch '{parent}' does not exist locally")
+        source_patch = _git_diff_patch(repo_path, parent, source_branch)
+        exclude_branch = source_branch
+    else:
+        raise ValueError(f"Invalid mode: {mode}")
+
+    # Get patches for all tracked branches (concurrently)
+    branch_patches: dict[str, str] = {}
+    all_branches = set(git.get_all_local_branches(repo))
+    diffable = [
+        (branch, parent)
+        for branch, parent in tracked.items()
+        if parent in all_branches
+    ]
+
+    def _diff_branch(args: tuple[str, str]) -> tuple[str, str | None]:
+        branch, parent = args
+        try:
+            return branch, _git_diff_patch(repo_path, parent, branch)
+        except ValueError:
+            return branch, None
+
+    with ThreadPoolExecutor(max_workers=min(8, len(diffable) or 1)) as pool:
+        for branch, patch in pool.map(_diff_branch, diffable):
+            if patch is not None:
+                branch_patches[branch] = patch
+
+    suggestions = _compute_suggestions(source_patch, branch_patches, exclude_branch)
+
+    return {
+        "suggestions": [
+            {
+                "file": s.file,
+                "hunkIndex": s.hunk_index,
+                "suggestedBranch": s.suggested_branch,
+                "reason": s.reason,
+            }
+            for s in suggestions
+        ],
+    }
+
+
 def _write_json(
     handler: BaseHTTPRequestHandler,
     status: int,
@@ -231,6 +294,29 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
             if parsed.path == "/api/diff/working":
                 try:
                     _write_json(self, 200, _build_working_diff_payload(repo))
+                except Exception as exc:
+                    _write_json(self, 500, {"error": str(exc)})
+                return
+
+            if parsed.path == "/api/suggestions":
+                qs = parse_qs(parsed.query)
+                mode = qs.get("mode", [None])[0]
+                if not mode or mode not in ("working", "branch"):
+                    _write_json(
+                        self,
+                        400,
+                        {"error": "Missing or invalid query parameter: mode"},
+                    )
+                    return
+                source = qs.get("source", [None])[0]
+                try:
+                    _write_json(
+                        self,
+                        200,
+                        _build_suggestions_payload(repo, mode, source),
+                    )
+                except ValueError as exc:
+                    _write_json(self, 400, {"error": str(exc)})
                 except Exception as exc:
                     _write_json(self, 500, {"error": str(exc)})
                 return
