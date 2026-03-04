@@ -1121,9 +1121,7 @@ def test_handler_suggestions_error(repo_with_stack: Repo) -> None:
         "shortcake.commands.ui._build_suggestions_payload",
         side_effect=RuntimeError("boom"),
     ):
-        fake = _make_handler(
-            repo_with_stack, "/api/suggestions?mode=working"
-        )
+        fake = _make_handler(repo_with_stack, "/api/suggestions?mode=working")
     assert fake._status == 500
     assert "boom" in fake.response_json()["error"]
 
@@ -1157,3 +1155,27 @@ def test_build_suggestions_payload_branch_no_source(
     """_build_suggestions_payload raises when branch mode has no source."""
     with pytest.raises(ValueError, match="Missing required parameter"):
         _build_suggestions_payload(repo_with_stack, "branch")
+
+
+def test_build_suggestions_payload_branch_parent_missing(
+    repo_with_stack: Repo,
+) -> None:
+    """_build_suggestions_payload raises when parent branch doesn't exist locally."""
+    # Delete branch_a so branch_b's parent is missing
+    del repo_with_stack.refs[b"refs/heads/branch_a"]
+    with pytest.raises(ValueError, match="does not exist locally"):
+        _build_suggestions_payload(repo_with_stack, "branch", "branch_b")
+
+
+def test_build_suggestions_payload_diff_error(repo_with_stack: Repo) -> None:
+    """_build_suggestions_payload handles ValueError from _git_diff_patch gracefully."""
+    original = _git_diff_patch
+
+    def _failing_diff(repo_path, parent, branch):
+        if branch == "branch_a":
+            raise ValueError("diff failed")
+        return original(repo_path, parent, branch)
+
+    with patch("shortcake.commands.ui._git_diff_patch", side_effect=_failing_diff):
+        payload = _build_suggestions_payload(repo_with_stack, "working")
+    assert "suggestions" in payload

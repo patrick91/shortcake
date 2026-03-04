@@ -210,9 +210,7 @@ def _build_suggestions_payload(
     branch_patches: dict[str, str] = {}
     all_branches = set(git.get_all_local_branches(repo))
     diffable = [
-        (branch, parent)
-        for branch, parent in tracked.items()
-        if parent in all_branches
+        (branch, parent) for branch, parent in tracked.items() if parent in all_branches
     ]
 
     def _diff_branch(args: tuple[str, str]) -> tuple[str, str | None]:

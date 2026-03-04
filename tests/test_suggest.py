@@ -1,7 +1,19 @@
+import pytest
+
 from shortcake.commands._suggest import (
     _compute_suggestions,
+    _parse_new_side_range,
     _parse_patch_file_touches,
 )
+
+# --- _parse_new_side_range ---
+
+
+def test_parse_new_side_range_invalid_line() -> None:
+    """Non-hunk-header line raises ValueError."""
+    with pytest.raises(ValueError, match="Invalid hunk header"):
+        _parse_new_side_range("not a hunk header")
+
 
 # --- _parse_patch_file_touches ---
 
@@ -207,9 +219,7 @@ def test_exclude_branch_is_excluded() -> None:
         "self-branch": _make_new_file_patch("app.py"),
         "other-branch": _make_modify_patch("app.py", start=10, count=3, added=1),
     }
-    result = _compute_suggestions(
-        source, branch_patches, exclude_branch="self-branch"
-    )
+    result = _compute_suggestions(source, branch_patches, exclude_branch="self-branch")
     assert len(result) == 1
     assert result[0].suggested_branch == "other-branch"
 
@@ -249,10 +259,9 @@ def test_multiple_hunks_in_source() -> None:
 
 def test_multiple_files_in_source() -> None:
     """Hunks across multiple files each get suggestions."""
-    source = (
-        _make_modify_patch("a.py", start=10, count=3, added=1)
-        + _make_modify_patch("b.py", start=20, count=3, added=1)
-    )
+    source = _make_modify_patch(
+        "a.py", start=10, count=3, added=1
+    ) + _make_modify_patch("b.py", start=20, count=3, added=1)
     branch_patches = {
         "feat-a": _make_modify_patch("a.py", start=10, count=3, added=1),
         "feat-b": _make_modify_patch("b.py", start=20, count=3, added=1),

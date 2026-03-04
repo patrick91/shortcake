@@ -46,9 +46,7 @@ def _parse_new_side_range(line: str) -> tuple[int, int]:
     return start, end
 
 
-def _parse_patch_file_touches(
-    branch_name: str, patch: str
-) -> list[BranchFileTouch]:
+def _parse_patch_file_touches(branch_name: str, patch: str) -> list[BranchFileTouch]:
     """Parse a unified diff to extract per-file touch info for a branch."""
     if not patch.strip():
         return []
@@ -164,8 +162,6 @@ def _compute_suggestions(
 
             for touch in candidates:
                 branch = touch.branch
-                if branch == exclude_branch:
-                    continue
 
                 best_score = branch_scores.get(branch, (0, ""))[0]
                 best_reason = branch_scores.get(branch, (0, ""))[1]
