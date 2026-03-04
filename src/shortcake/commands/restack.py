@@ -8,6 +8,7 @@ from dulwich.repo import Repo
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
+from shortcake._trailers import Trailers
 
 
 class RestackError(ShortcakeError):
@@ -143,6 +144,65 @@ def _rebase_branch(
     return git.rebase_branch(repo, branch, onto, merge_base)
 
 
+def _restore_trailer(repo: Repo, branch: str, parent: str) -> None:
+    """Restore Shortcake-Parent trailer if it was lost during rebase.
+
+    When --empty=drop drops the commit carrying the trailer (because its file
+    changes are already in the new parent), the branch becomes untracked.
+    This re-adds the trailer to the first commit of the branch, or creates
+    a new empty commit with the trailer if all commits were dropped.
+    """
+    import time
+
+    from dulwich.objects import Commit
+
+    from shortcake.commands.adopt import _replay_commits
+
+    branch_head = git.get_branch_head(repo, branch)
+    parent_head = git.get_branch_head(repo, parent)
+    commits = git.get_commits_between(repo, branch_head, parent_head)
+
+    if not commits:
+        # All commits were dropped — create a new empty commit with the trailer
+        new_trailers = Trailers(parent_branch=parent)
+        message = new_trailers.apply_to(f"chore: track {branch}")
+
+        parent_commit = repo[parent_head]
+        new_commit = Commit()
+        new_commit.tree = parent_commit.tree
+        new_commit.parents = [parent_head]
+        new_commit.author = parent_commit.author
+        new_commit.committer = parent_commit.committer
+        new_commit.author_time = int(time.time())
+        new_commit.author_timezone = parent_commit.author_timezone
+        new_commit.commit_time = int(time.time())
+        new_commit.commit_timezone = parent_commit.commit_timezone
+        new_commit.encoding = parent_commit.encoding
+        new_commit.message = message.encode()
+
+        repo.object_store.add_object(new_commit)
+        git.update_branch(repo, branch, new_commit.id.decode())
+        return
+
+    # The oldest commit is last in list (walker returns newest-first)
+    first_commit_sha = commits[-1]
+    message = git.get_commit_message(repo, first_commit_sha)
+
+    # Add the trailer to the first commit
+    new_trailers = Trailers(parent_branch=parent)
+    new_message = new_trailers.apply_to(message)
+    new_first_sha = git.amend_commit_message(repo, first_commit_sha, new_message)
+
+    # Replay any commits above the first one
+    if len(commits) > 1:
+        new_head = _replay_commits(repo, commits[:-1], new_first_sha)
+    else:
+        new_head = new_first_sha
+
+    # Update branch ref
+    git.update_branch(repo, branch, new_head.decode())
+
+
 def _get_conflict_files(repo: Repo | str) -> list[str]:
     """Get list of files with conflicts."""
     try:
@@ -266,6 +326,11 @@ def _restack(repo: Repo, dry_run: bool = False) -> RestackResult:
         if result.skipped_empty:
             typer.echo(f"  Skipped empty commit (changes already in '{step.onto}')")
             any_skipped_empty = True
+
+        # Check if trailer survived the rebase (--empty=drop may have dropped it)
+        all_branches = set(git.get_all_local_branches(repo))
+        if git.get_branch_parent(repo, step.branch, all_branches) is None:
+            _restore_trailer(repo, step.branch, step.onto)
 
         restacked.append(step.branch)
 

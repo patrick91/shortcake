@@ -432,6 +432,61 @@ def test_create_insert_with_allow_empty(repo_with_stack: Repo) -> None:
     assert result.inserted_before == "branch_b"
 
 
+def test_create_insert_before_with_staged_changes(
+    repo_with_stack: Repo, tmp_path: Path
+) -> None:
+    """Test that insert-before works when there are staged changes.
+
+    Staged changes are committed temporarily, cherry-picked onto the new
+    branch, then the temp commit is dropped.
+    """
+    # Stage a new file while on branch_b
+    new_file = tmp_path / "new_feature.py"
+    new_file.write_text("print('hello')")
+    porcelain.add(repo_with_stack, paths=[str(new_file)])
+
+    result = _create_insert_before(
+        repo_with_stack, "fix: with-staged", "fix-with-staged"
+    )
+
+    assert result.branch == "fix-with-staged"
+    assert result.parent == "branch_a"
+    assert result.inserted_before == "branch_b"
+    assert result.rebased_branches == ["branch_b"]
+
+    # Verify the staged file is in the new branch's commit
+    head = git.get_branch_head(repo_with_stack, "fix-with-staged")
+    commit = repo_with_stack[head]
+    tree = repo_with_stack[commit.tree]
+    assert b"new_feature.py" in [entry.path for entry in tree.items()]
+
+
+def test_create_insert_before_staged_changes_on_shared_file(
+    repo_with_stack: Repo, tmp_path: Path
+) -> None:
+    """Test insert-before with staged changes to a file that differs between branches.
+
+    b.txt exists on branch_b but not on branch_a. Modifying it and inserting
+    before should still work because we copy exact file contents (no 3-way merge).
+    """
+    b_file = tmp_path / "b.txt"
+    b_file.write_text("modified b content")
+    porcelain.add(repo_with_stack, paths=[str(b_file)])
+
+    result = _create_insert_before(
+        repo_with_stack, "fix: shared-file", "fix-shared-file"
+    )
+
+    assert result.branch == "fix-shared-file"
+    assert result.parent == "branch_a"
+
+    # Verify the modified file is in the new branch's commit
+    head = git.get_branch_head(repo_with_stack, "fix-shared-file")
+    commit = repo_with_stack[head]
+    tree = repo_with_stack[commit.tree]
+    assert b"b.txt" in [entry.path for entry in tree.items()]
+
+
 def test_create_insert_before_conflict(repo_with_stack: Repo, tmp_path: Path) -> None:
     """Test insert-before returns conflict result when rebase fails."""
     from unittest.mock import patch
