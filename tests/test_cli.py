@@ -434,21 +434,22 @@ def test_cli_create_after_no_children(
     assert "Rebased" not in result.output
 
 
-def test_cli_create_before_uncommitted_changes(
+def test_cli_create_before_with_staged_changes(
     repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test CLI create --before with uncommitted changes gives error."""
+    """Test CLI create --before works with staged changes."""
     monkeypatch.chdir(tmp_path)
 
-    # Create an uncommitted file
-    dirty_file = tmp_path / "dirty.txt"
-    dirty_file.write_text("dirty content")
-    porcelain.add(repo_with_stack, paths=[str(dirty_file)])
+    # Stage a new file
+    new_file = tmp_path / "new_feature.py"
+    new_file.write_text("print('hello')")
+    porcelain.add(repo_with_stack, paths=[str(new_file)])
 
-    result = runner.invoke(app, ["create", "-m", "fix: dirty", "--before"])
+    result = runner.invoke(app, ["create", "-m", "fix: staged", "--before"])
 
-    assert result.exit_code == 1
-    assert "uncommitted changes" in result.output
+    assert result.exit_code == 0
+    assert "Created branch 'fix-staged' from 'branch_a'" in result.output
+    assert "Rebased 'branch_b' onto 'fix-staged'" in result.output
 
 
 def test_cli_create_after_multiple_children_error(

@@ -10,6 +10,7 @@ from shortcake.commands.restack import (
     _get_conflict_files,
     _needs_restack,
     _rebase_branch,
+    _restore_trailer,
     _show_conflict_message,
     _show_rebase_error,
 )
@@ -86,6 +87,11 @@ def _continue(repo: Repo) -> ContinueResult:
             repo, current_step.branch, current_step.new_parent_trailer
         )
 
+    # Check if trailer survived the rebase (--empty=drop may have dropped it)
+    all_branches = set(git.get_all_local_branches(repo))
+    if git.get_branch_parent(repo, current_step.branch, all_branches) is None:
+        _restore_trailer(repo, current_step.branch, current_step.onto)
+
     # Check if parent branch still exists (may have been deleted during resolution)
     if not git.branch_exists(repo, current_step.onto):
         raise ContinueError(
@@ -141,6 +147,11 @@ def _continue(repo: Repo) -> ContinueResult:
             from shortcake.commands.reorder import _update_branch_trailer
 
             _update_branch_trailer(repo, step.branch, step.new_parent_trailer)
+
+        # Check if trailer survived the rebase (--empty=drop may have dropped it)
+        all_branches = set(git.get_all_local_branches(repo))
+        if git.get_branch_parent(repo, step.branch, all_branches) is None:
+            _restore_trailer(repo, step.branch, step.onto)
 
         restacked.append(step.branch)
 
