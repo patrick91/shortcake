@@ -123,6 +123,47 @@ body::before {
   background: var(--color-accent);
 }
 
+:root[data-theme="light"] {
+  color-scheme: light;
+  --color-bg: #f8f8fa;
+  --color-surface: #ffffff;
+  --color-surface-hover: #f0f0f3;
+  --color-surface-active: #e6e6eb;
+  --color-border: rgba(0, 0, 0, 0.08);
+  --color-border-strong: rgba(0, 0, 0, 0.15);
+  --color-guide: #d4d4d8;
+  --color-text-primary: #18181b;
+  --color-text-secondary: #52525b;
+  --color-text-muted: #a1a1aa;
+  --color-accent: #059669;
+  --color-accent-bg: rgba(5, 150, 105, 0.08);
+  --color-danger: #dc2626;
+  --color-stat-add: #16a34a;
+  --color-stat-del: #dc2626;
+}
+
+:root[data-theme="light"] body {
+  color-scheme: light;
+}
+
+:root[data-theme="light"] body::before {
+  background:
+    radial-gradient(ellipse 60% 45% at 15% 0%, rgba(5, 150, 105, 0.04), transparent),
+    radial-gradient(ellipse 50% 35% at 90% 100%, rgba(139, 92, 246, 0.025), transparent);
+}
+
+:root[data-theme="light"] * {
+  scrollbar-color: rgba(0, 0, 0, 0.12) transparent;
+}
+
+:root[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+:root[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.2);
+}
+
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
