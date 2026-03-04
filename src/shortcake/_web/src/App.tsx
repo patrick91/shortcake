@@ -1477,7 +1477,7 @@ export default function App() {
     }
     setActiveFileIndex(index);
     requestAnimationFrame(() => {
-      fileRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      fileRefs.current[index]?.scrollIntoView({ behavior: 'instant', block: 'start' });
     });
   }, [fileInfos, viewedFiles]);
 
