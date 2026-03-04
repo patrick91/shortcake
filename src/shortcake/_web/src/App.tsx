@@ -328,6 +328,7 @@ function FileTreeEntries({
   activeIndex,
   onFileClick,
   filter,
+  viewedFiles,
 }: {
   entries: TreeEntry[];
   depth: number;
@@ -336,6 +337,7 @@ function FileTreeEntries({
   activeIndex: number | null;
   onFileClick: (index: number) => void;
   filter: string;
+  viewedFiles?: Set<string>;
 }) {
   const lowerFilter = filter.toLowerCase();
 
@@ -374,6 +376,7 @@ function FileTreeEntries({
                   activeIndex={activeIndex}
                   onFileClick={onFileClick}
                   filter={filter}
+                  viewedFiles={viewedFiles}
                 />
               )}
             </div>
@@ -385,17 +388,22 @@ function FileTreeEntries({
         }
 
         const active = entry.info.patchIndex === activeIndex;
+        const isViewed = viewedFiles?.has(entry.info.path) ?? false;
 
         return (
           <button
             key={entry.info.path}
-            className={`appearance-none border-none bg-transparent flex items-center gap-1.5 w-full py-[3px] px-2.5 font-mono text-[0.72rem] cursor-pointer select-none transition-[background,color] duration-100 ease-in-out ${active ? 'bg-accent-bg text-text-primary' : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'}`}
+            className={`appearance-none border-none bg-transparent flex items-center gap-1.5 w-full py-[3px] px-2.5 font-mono text-[0.72rem] cursor-pointer select-none transition-[background,color,opacity] duration-100 ease-in-out ${active ? 'bg-accent-bg text-text-primary' : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'}`}
             style={{
               paddingInlineStart: `${FILE_TREE_INDENT_BASE + depth * FILE_TREE_INDENT_STEP}px`,
+              opacity: isViewed ? 0.5 : 1,
             }}
             onClick={() => onFileClick(entry.info.patchIndex)}
             type="button"
           >
+            {isViewed && (
+              <span className="text-accent text-[0.6rem] shrink-0">{'\u2713'}</span>
+            )}
             <span className="whitespace-nowrap overflow-hidden text-ellipsis">
               {entry.name}
             </span>
@@ -543,6 +551,59 @@ function SelectionToolbar({
       >
         Comment
       </button>
+    </div>
+  );
+}
+
+function ViewedFileHeader({
+  fileInfo,
+  isViewed,
+  onToggle,
+}: {
+  fileInfo: FileInfo;
+  isViewed: boolean;
+  onToggle: (path: string) => void;
+}) {
+  return (
+    <div
+      className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer select-none transition-colors duration-100 ${
+        isViewed
+          ? 'bg-surface-hover/60 hover:bg-surface-hover'
+          : 'bg-transparent hover:bg-surface-hover/40'
+      }`}
+      onClick={() => onToggle(fileInfo.path)}
+    >
+      <span
+        className={`inline-flex items-center justify-center w-4 h-4 rounded border text-[0.6rem] shrink-0 transition-colors duration-100 ${
+          isViewed
+            ? 'bg-accent/15 border-accent/40 text-accent'
+            : 'border-border text-transparent hover:border-border-strong'
+        }`}
+      >
+        {isViewed ? '\u2713' : ''}
+      </span>
+      <span
+        className={`font-mono text-[0.72rem] truncate transition-opacity duration-100 ${
+          isViewed ? 'text-text-muted opacity-60' : 'text-text-secondary'
+        }`}
+      >
+        {fileInfo.path}
+      </span>
+      {isViewed && (
+        <span className="ml-auto flex gap-[5px] text-[0.6rem] shrink-0 opacity-50">
+          {fileInfo.additions > 0 && (
+            <span className="text-stat-add">+{fileInfo.additions}</span>
+          )}
+          {fileInfo.deletions > 0 && (
+            <span className="text-stat-del">-{fileInfo.deletions}</span>
+          )}
+        </span>
+      )}
+      {!isViewed && (
+        <span className="ml-auto font-mono text-[0.6rem] text-text-muted opacity-0 group-hover:opacity-100">
+          Mark as viewed
+        </span>
+      )}
     </div>
   );
 }
@@ -715,6 +776,7 @@ function DiffFileSection({
   onHunkToggle,
   parsedHunks,
   diffStyle,
+  onToggleViewed,
 }: {
   patch: string;
   fileInfo: FileInfo;
@@ -733,6 +795,7 @@ function DiffFileSection({
   onHunkToggle: (key: HunkKey) => void;
   parsedHunks: ParsedHunk[];
   diffStyle: DiffStyle;
+  onToggleViewed?: (path: string) => void;
 }) {
   const fileComments = comments.filter((c) => c.file === fileInfo.path);
 
@@ -889,6 +952,19 @@ function DiffFileSection({
     [fileComments, editingComment, activeInput, toolbarState, fileInfo.path, onAddComment, onUpdateComment, onDeleteComment, onCancelInput, onStartEdit, onToolbarComment, onHunkToggle],
   );
 
+  const renderHeaderMetadata = useCallback(() => {
+    if (!onToggleViewed) return null;
+    return (
+      <button
+        type="button"
+        className="appearance-none border border-border bg-transparent text-text-muted text-[0.65rem] font-mono px-2 py-0.5 rounded cursor-pointer hover:bg-surface-hover hover:text-text-primary hover:border-border-strong transition-colors duration-100 whitespace-nowrap"
+        onClick={(e) => { e.stopPropagation(); onToggleViewed(fileInfo.path); }}
+      >
+        Viewed
+      </button>
+    );
+  }, [onToggleViewed, fileInfo.path]);
+
   return (
     <PatchDiff<CommentMeta>
       patch={patch}
@@ -896,6 +972,7 @@ function DiffFileSection({
       lineAnnotations={lineAnnotations}
       renderAnnotation={renderAnnotation}
       selectedLines={selectedLines}
+      renderHeaderMetadata={onToggleViewed ? renderHeaderMetadata : undefined}
     />
   );
 }
@@ -932,6 +1009,7 @@ export default function App() {
   const [isAccepting, setIsAccepting] = useState(false);
   const [acceptError, setAcceptError] = useState<string | null>(null);
   const [showMovePicker, setShowMovePicker] = useState(false);
+  const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -1024,6 +1102,7 @@ export default function App() {
     setShowAcceptPicker(false);
     setAcceptError(null);
     setShowMovePicker(false);
+    setViewedFiles(new Set());
   }, [selection]);
 
   const activePatch = selection?.type === 'working' ? workingPatch : diff?.patch;
@@ -1061,10 +1140,29 @@ export default function App() {
     });
   }, []);
 
-  const scrollToFile = useCallback((index: number) => {
-    setActiveFileIndex(index);
-    fileRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const toggleViewed = useCallback((path: string) => {
+    setViewedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
   }, []);
+
+  const scrollToFile = useCallback((index: number) => {
+    const info = fileInfos[index];
+    if (info && viewedFiles.has(info.path)) {
+      setViewedFiles((prev) => {
+        const next = new Set(prev);
+        next.delete(info.path);
+        return next;
+      });
+    }
+    setActiveFileIndex(index);
+    requestAnimationFrame(() => {
+      fileRefs.current[index]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, [fileInfos, viewedFiles]);
 
   const handleRangeSelected = useCallback(
     (file: string, startLine: number, endLine: number, side: AnnotationSide) => {
@@ -1412,6 +1510,11 @@ export default function App() {
                 {copyFeedback ? 'Copied!' : `Copy ${comments.length} comment${comments.length === 1 ? '' : 's'}`}
               </button>
             )}
+            {!isDiffLoading && diffPatches.length > 0 && viewedFiles.size > 0 && (
+              <span className="font-mono text-[0.68rem] text-accent bg-accent/10 border border-accent/20 px-2 py-[3px] rounded-full whitespace-nowrap">
+                {viewedFiles.size}/{diffPatches.length} viewed
+              </span>
+            )}
             {!isDiffLoading && diffPatches.length > 0 && (
               <span className="font-mono text-[0.68rem] text-text-secondary bg-surface-hover border border-border px-2 py-[3px] rounded-full whitespace-nowrap">
                 {diffPatches.length} file{diffPatches.length === 1 ? '' : 's'}
@@ -1486,6 +1589,7 @@ export default function App() {
                   activeIndex={activeFileIndex}
                   onFileClick={scrollToFile}
                   filter={fileFilter}
+                  viewedFiles={viewedFiles}
                 />
               </div>
             </aside>
@@ -1494,31 +1598,37 @@ export default function App() {
               {diffPatches.map((patch, index) => {
                 const info = fileInfos[index];
                 if (!info) return null;
+                const isViewed = viewedFiles.has(info.path);
                 return (
                   <div
                     className={index > 0 ? 'border-t border-border' : undefined}
                     key={`${selection?.type === 'working' ? 'working' : diff?.branch}-${index}`}
                     ref={(el) => { fileRefs.current[index] = el; }}
                   >
-                    <DiffFileSection
-                      patch={patch}
-                      fileInfo={info}
-                      comments={comments}
-                      activeInput={activeInput}
-                      editingComment={editingComment}
-                      toolbarState={toolbarState}
-                      onRangeSelected={handleRangeSelected}
-                      onStartEdit={handleStartEdit}
-                      onAddComment={handleAddComment}
-                      onUpdateComment={handleUpdateComment}
-                      onDeleteComment={handleDeleteComment}
-                      onCancelInput={handleCancelInput}
-                      onToolbarComment={handleToolbarComment}
-                      selectedHunks={selectedHunks}
-                      onHunkToggle={handleHunkToggle}
-                      parsedHunks={parsedHunks}
-                      diffStyle={diffStyle}
-                    />
+                    {isViewed ? (
+                      <ViewedFileHeader fileInfo={info} isViewed={isViewed} onToggle={toggleViewed} />
+                    ) : (
+                      <DiffFileSection
+                        patch={patch}
+                        fileInfo={info}
+                        comments={comments}
+                        activeInput={activeInput}
+                        editingComment={editingComment}
+                        toolbarState={toolbarState}
+                        onRangeSelected={handleRangeSelected}
+                        onStartEdit={handleStartEdit}
+                        onAddComment={handleAddComment}
+                        onUpdateComment={handleUpdateComment}
+                        onDeleteComment={handleDeleteComment}
+                        onCancelInput={handleCancelInput}
+                        onToolbarComment={handleToolbarComment}
+                        selectedHunks={selectedHunks}
+                        onHunkToggle={handleHunkToggle}
+                        parsedHunks={parsedHunks}
+                        diffStyle={diffStyle}
+                        onToggleViewed={toggleViewed}
+                      />
+                    )}
                   </div>
                 );
               })}
@@ -1640,6 +1750,11 @@ export default function App() {
                 {copyFeedback ? 'Copied!' : `Copy ${comments.length} comment${comments.length === 1 ? '' : 's'}`}
               </button>
             )}
+            {!isDiffLoading && diffPatches.length > 0 && viewedFiles.size > 0 && (
+              <span className="font-mono text-[0.68rem] text-accent bg-accent/10 border border-accent/20 px-2 py-[3px] rounded-full whitespace-nowrap">
+                {viewedFiles.size}/{diffPatches.length} viewed
+              </span>
+            )}
             {!isDiffLoading && diffPatches.length > 0 && (
               <span className="font-mono text-[0.68rem] text-text-secondary bg-surface-hover border border-border px-2 py-[3px] rounded-full whitespace-nowrap">
                 {diffPatches.length} file{diffPatches.length === 1 ? '' : 's'}
@@ -1695,30 +1810,36 @@ export default function App() {
             {diffPatches.map((patch, index) => {
               const info = fileInfos[index];
               if (!info) return null;
+              const isViewed = viewedFiles.has(info.path);
               return (
                 <div
                   className={index > 0 ? 'border-t border-border' : undefined}
                   key={`mobile-${selection?.type === 'working' ? 'working' : diff?.branch}-${index}`}
                 >
-                  <DiffFileSection
-                    patch={patch}
-                    fileInfo={info}
-                    comments={comments}
-                    activeInput={activeInput}
-                    editingComment={editingComment}
-                    toolbarState={toolbarState}
-                    onRangeSelected={handleRangeSelected}
-                    onStartEdit={handleStartEdit}
-                    onAddComment={handleAddComment}
-                    onUpdateComment={handleUpdateComment}
-                    onDeleteComment={handleDeleteComment}
-                    onCancelInput={handleCancelInput}
-                    onToolbarComment={handleToolbarComment}
-                    selectedHunks={selectedHunks}
-                    onHunkToggle={handleHunkToggle}
-                    parsedHunks={parsedHunks}
-                    diffStyle={diffStyle}
-                  />
+                  {isViewed ? (
+                    <ViewedFileHeader fileInfo={info} isViewed={isViewed} onToggle={toggleViewed} />
+                  ) : (
+                    <DiffFileSection
+                      patch={patch}
+                      fileInfo={info}
+                      comments={comments}
+                      activeInput={activeInput}
+                      editingComment={editingComment}
+                      toolbarState={toolbarState}
+                      onRangeSelected={handleRangeSelected}
+                      onStartEdit={handleStartEdit}
+                      onAddComment={handleAddComment}
+                      onUpdateComment={handleUpdateComment}
+                      onDeleteComment={handleDeleteComment}
+                      onCancelInput={handleCancelInput}
+                      onToolbarComment={handleToolbarComment}
+                      selectedHunks={selectedHunks}
+                      onHunkToggle={handleHunkToggle}
+                      parsedHunks={parsedHunks}
+                      diffStyle={diffStyle}
+                      onToggleViewed={toggleViewed}
+                    />
+                  )}
                 </div>
               );
             })}
