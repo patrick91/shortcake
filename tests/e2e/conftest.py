@@ -180,6 +180,7 @@ def ui_page(page: Page, ui_url: str):
     page.goto(ui_url)
     # Wait for stack sidebar to render branch buttons
     page.wait_for_selector("text=branch_a", timeout=15_000)
-    # Wait for default branch diff to load (branch_b is auto-selected)
+    # Default view is now working changes; click branch_b to load a diff
+    page.locator("button", has_text="branch_b").first.click()
     page.wait_for_selector(".diff-content", timeout=10_000)
     return page
