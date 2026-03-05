@@ -1221,9 +1221,7 @@ def test_get_branch_github_info_with_pr_and_checks() -> None:
     respx.get("https://api.github.com/repos/owner/repo/commits/feat/check-runs").mock(
         return_value=httpx.Response(
             200,
-            json={
-                "check_runs": [{"conclusion": "success", "status": "completed"}]
-            },
+            json={"check_runs": [{"conclusion": "success", "status": "completed"}]},
         )
     )
 

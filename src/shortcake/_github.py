@@ -234,8 +234,7 @@ class GitHubClient:
                 return None
 
             statuses = [
-                run.get("conclusion") or run.get("status")
-                for run in check_runs
+                run.get("conclusion") or run.get("status") for run in check_runs
             ]
             fail = ("failure", "timed_out", "cancelled")
             pend = ("in_progress", "queued", "pending", "waiting")

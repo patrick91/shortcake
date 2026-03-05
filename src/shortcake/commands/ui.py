@@ -246,9 +246,7 @@ def _build_suggestions_payload(
     }
 
 
-def _build_github_info_payload(
-    repo: Repo, branch_names: list[str]
-) -> dict[str, Any]:
+def _build_github_info_payload(repo: Repo, branch_names: list[str]) -> dict[str, Any]:
     """Build payload with PR + CI info for all tracked branches."""
     token = get_github_token()
     if not token:

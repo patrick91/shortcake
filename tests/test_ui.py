@@ -1214,9 +1214,7 @@ def test_build_github_info_payload_fetches_info(temp_repo: Repo) -> None:
     with (
         patch("shortcake.commands.ui.get_github_token", return_value="token"),
         patch("shortcake.commands.ui.get_repo_info", return_value=("owner", "repo")),
-        patch(
-            "shortcake.commands.ui.GitHubClient"
-        ) as mock_client_cls,
+        patch("shortcake.commands.ui.GitHubClient") as mock_client_cls,
     ):
         mock_client = mock_client_cls.return_value
         mock_client.get_branch_github_info.return_value = mock_info
