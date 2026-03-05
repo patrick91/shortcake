@@ -28,10 +28,14 @@ from shortcake._tree import BranchNode, StackTree
 from shortcake.commands._suggest import _compute_suggestions
 from shortcake.commands.move_lines import (
     HunkSelection,
+    LineSelection,
     MoveError,
+    SplitChunk,
     _accept_working_hunks,
     _move_hunks,
     _move_lock,
+    _split_hunks,
+    _split_lines_batch,
 )
 
 
@@ -499,6 +503,197 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
                             {
                                 "targetBranch": result.target_branch,
                                 "filePaths": result.file_paths,
+                                "restackedBranches": result.restacked_branches,
+                            },
+                        )
+                    except MoveError as exc:
+                        _write_json(self, 400, {"error": str(exc)})
+                    except Exception as exc:
+                        _write_json(self, 500, {"error": str(exc)})
+                return
+
+            if parsed.path == "/api/split-hunks":
+                content_length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(content_length)
+                try:
+                    body = json.loads(raw)
+                except (json.JSONDecodeError, ValueError):
+                    _write_json(self, 400, {"error": "Invalid JSON body"})
+                    return
+
+                required = ["sourceBranch", "commitMessage", "placement", "hunks"]
+                missing = [f for f in required if f not in body]
+                if missing:
+                    _write_json(
+                        self,
+                        400,
+                        {"error": f"Missing required fields: {', '.join(missing)}"},
+                    )
+                    return
+
+                placement = body["placement"]
+                if placement not in ("before", "after"):
+                    _write_json(
+                        self,
+                        400,
+                        {"error": "placement must be 'before' or 'after'"},
+                    )
+                    return
+
+                raw_hunks = body["hunks"]
+                if not isinstance(raw_hunks, list) or len(raw_hunks) == 0:
+                    _write_json(self, 400, {"error": "hunks must be a non-empty array"})
+                    return
+
+                hunk_selections: list[HunkSelection] = []
+                for h in raw_hunks:
+                    if not isinstance(h, dict):
+                        _write_json(self, 400, {"error": "Each hunk must be an object"})
+                        return
+                    hunk_required = ["filePath", "filePatch", "hunkIndex"]
+                    hunk_missing = [f for f in hunk_required if f not in h]
+                    if hunk_missing:
+                        msg = f"Hunk missing fields: {', '.join(hunk_missing)}"
+                        _write_json(self, 400, {"error": msg})
+                        return
+                    hunk_selections.append(
+                        HunkSelection(
+                            file_path=h["filePath"],
+                            file_patch=h["filePatch"],
+                            hunk_index=h["hunkIndex"],
+                        )
+                    )
+
+                with _move_lock:
+                    try:
+                        result = _split_hunks(
+                            repo,
+                            source_branch=body["sourceBranch"],
+                            commit_message=body["commitMessage"],
+                            placement=placement,
+                            hunks=hunk_selections,
+                            no_verify=True,
+                        )
+                        _write_json(
+                            self,
+                            200,
+                            {
+                                "sourceBranch": result.source_branch,
+                                "newBranch": result.new_branch,
+                                "placement": result.placement,
+                                "filePaths": result.file_paths,
+                                "restackedBranches": result.restacked_branches,
+                            },
+                        )
+                    except MoveError as exc:
+                        _write_json(self, 400, {"error": str(exc)})
+                    except Exception as exc:
+                        _write_json(self, 500, {"error": str(exc)})
+                return
+
+            if parsed.path == "/api/split-lines":
+                content_length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(content_length)
+                try:
+                    body = json.loads(raw)
+                except (json.JSONDecodeError, ValueError):
+                    _write_json(self, 400, {"error": "Invalid JSON body"})
+                    return
+
+                required = ["sourceBranch", "chunks"]
+                missing = [f for f in required if f not in body]
+                if missing:
+                    _write_json(
+                        self,
+                        400,
+                        {"error": f"Missing required fields: {', '.join(missing)}"},
+                    )
+                    return
+
+                raw_chunks = body["chunks"]
+                if not isinstance(raw_chunks, list) or len(raw_chunks) == 0:
+                    _write_json(
+                        self, 400, {"error": "chunks must be a non-empty array"}
+                    )
+                    return
+
+                split_chunks: list[SplitChunk] = []
+                for c in raw_chunks:
+                    if not isinstance(c, dict):
+                        _write_json(
+                            self, 400, {"error": "Each chunk must be an object"}
+                        )
+                        return
+                    if "commitMessage" not in c or "selections" not in c:
+                        _write_json(
+                            self,
+                            400,
+                            {
+                                "error": "Each chunk must have 'commitMessage' and 'selections'"
+                            },
+                        )
+                        return
+                    raw_sels = c["selections"]
+                    if not isinstance(raw_sels, list) or len(raw_sels) == 0:
+                        _write_json(
+                            self,
+                            400,
+                            {"error": "selections must be a non-empty array"},
+                        )
+                        return
+                    selections: list[LineSelection] = []
+                    for s in raw_sels:
+                        if not isinstance(s, dict):
+                            _write_json(
+                                self,
+                                400,
+                                {"error": "Each selection must be an object"},
+                            )
+                            return
+                        sel_required = [
+                            "filePath",
+                            "filePatch",
+                            "startLine",
+                            "endLine",
+                            "side",
+                        ]
+                        sel_missing = [f for f in sel_required if f not in s]
+                        if sel_missing:
+                            msg = (
+                                f"Selection missing fields: {', '.join(sel_missing)}"
+                            )
+                            _write_json(self, 400, {"error": msg})
+                            return
+                        selections.append(
+                            LineSelection(
+                                file_path=s["filePath"],
+                                file_patch=s["filePatch"],
+                                start_line=s["startLine"],
+                                end_line=s["endLine"],
+                                side=s["side"],
+                            )
+                        )
+                    split_chunks.append(
+                        SplitChunk(
+                            commit_message=c["commitMessage"],
+                            selections=selections,
+                        )
+                    )
+
+                with _move_lock:
+                    try:
+                        result = _split_lines_batch(
+                            repo,
+                            source_branch=body["sourceBranch"],
+                            chunks=split_chunks,
+                            no_verify=True,
+                        )
+                        _write_json(
+                            self,
+                            200,
+                            {
+                                "sourceBranch": result.source_branch,
+                                "newBranches": result.new_branches,
                                 "restackedBranches": result.restacked_branches,
                             },
                         )
