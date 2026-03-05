@@ -9,6 +9,7 @@ import respx
 from dulwich.repo import Repo
 
 from shortcake._github import (
+    BranchGitHubInfo,
     GitHubClient,
     get_github_token,
     get_repo_info,
@@ -1010,3 +1011,249 @@ def test_github_client_transferred_repo_creates_pr_with_new_owner() -> None:
 
     assert result.number == 42
     assert create_route.called
+
+
+# Tests for get_check_status
+
+
+@respx.mock
+def test_get_check_status_success() -> None:
+    """All checks passed returns 'success'."""
+    respx.get("https://api.github.com/repos/owner/repo/commits/feat/check-runs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "check_runs": [
+                    {"conclusion": "success", "status": "completed"},
+                    {"conclusion": "skipped", "status": "completed"},
+                ]
+            },
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        assert client.get_check_status("feat") == "success"
+
+
+@respx.mock
+def test_get_check_status_failure() -> None:
+    """Any failed check returns 'failure'."""
+    respx.get("https://api.github.com/repos/owner/repo/commits/feat/check-runs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "check_runs": [
+                    {"conclusion": "success", "status": "completed"},
+                    {"conclusion": "failure", "status": "completed"},
+                ]
+            },
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        assert client.get_check_status("feat") == "failure"
+
+
+@respx.mock
+def test_get_check_status_pending() -> None:
+    """In-progress checks return 'pending'."""
+    respx.get("https://api.github.com/repos/owner/repo/commits/feat/check-runs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "check_runs": [
+                    {"conclusion": None, "status": "in_progress"},
+                    {"conclusion": "success", "status": "completed"},
+                ]
+            },
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        assert client.get_check_status("feat") == "pending"
+
+
+@respx.mock
+def test_get_check_status_no_checks() -> None:
+    """No check runs returns None."""
+    respx.get("https://api.github.com/repos/owner/repo/commits/feat/check-runs").mock(
+        return_value=httpx.Response(200, json={"check_runs": []})
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        assert client.get_check_status("feat") is None
+
+
+@respx.mock
+def test_get_check_status_api_error() -> None:
+    """Non-200 response returns None."""
+    respx.get("https://api.github.com/repos/owner/repo/commits/feat/check-runs").mock(
+        return_value=httpx.Response(404)
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        assert client.get_check_status("feat") is None
+
+
+@respx.mock
+def test_get_check_status_network_error() -> None:
+    """Network error returns None."""
+    respx.get("https://api.github.com/repos/owner/repo/commits/feat/check-runs").mock(
+        side_effect=httpx.ConnectError("connection failed")
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        assert client.get_check_status("feat") is None
+
+
+@respx.mock
+def test_get_check_status_timed_out() -> None:
+    """Timed out check returns 'failure'."""
+    respx.get("https://api.github.com/repos/owner/repo/commits/feat/check-runs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "check_runs": [
+                    {"conclusion": "timed_out", "status": "completed"},
+                ]
+            },
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        assert client.get_check_status("feat") == "failure"
+
+
+@respx.mock
+def test_get_check_status_cancelled() -> None:
+    """Cancelled check returns 'failure'."""
+    respx.get("https://api.github.com/repos/owner/repo/commits/feat/check-runs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "check_runs": [
+                    {"conclusion": "cancelled", "status": "completed"},
+                ]
+            },
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        assert client.get_check_status("feat") == "failure"
+
+
+@respx.mock
+def test_get_check_status_queued() -> None:
+    """Queued check returns 'pending'."""
+    respx.get("https://api.github.com/repos/owner/repo/commits/feat/check-runs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "check_runs": [
+                    {"conclusion": None, "status": "queued"},
+                ]
+            },
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        assert client.get_check_status("feat") == "pending"
+
+
+@respx.mock
+def test_get_check_status_unknown_conclusion() -> None:
+    """Unknown conclusion falls back to 'pending'."""
+    respx.get("https://api.github.com/repos/owner/repo/commits/feat/check-runs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "check_runs": [
+                    {"conclusion": "action_required", "status": "completed"},
+                ]
+            },
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        assert client.get_check_status("feat") == "pending"
+
+
+@respx.mock
+def test_get_check_status_neutral() -> None:
+    """Neutral conclusion counts as success."""
+    respx.get("https://api.github.com/repos/owner/repo/commits/feat/check-runs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "check_runs": [
+                    {"conclusion": "neutral", "status": "completed"},
+                ]
+            },
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        assert client.get_check_status("feat") == "success"
+
+
+# Tests for get_branch_github_info
+
+
+@respx.mock
+def test_get_branch_github_info_with_pr_and_checks() -> None:
+    """Returns combined PR and CI info."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 42,
+                    "html_url": "https://github.com/owner/repo/pull/42",
+                    "base": {"ref": "main"},
+                    "title": "Test",
+                    "body": "",
+                    "state": "open",
+                    "draft": True,
+                }
+            ],
+        )
+    )
+    respx.get("https://api.github.com/repos/owner/repo/commits/feat/check-runs").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "check_runs": [{"conclusion": "success", "status": "completed"}]
+            },
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        info = client.get_branch_github_info("feat")
+
+    assert info == BranchGitHubInfo(
+        pr_number=42,
+        pr_url="https://github.com/owner/repo/pull/42",
+        pr_is_draft=True,
+        check_status="success",
+    )
+
+
+@respx.mock
+def test_get_branch_github_info_no_pr_no_checks() -> None:
+    """Returns None fields when no PR or checks exist."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    respx.get("https://api.github.com/repos/owner/repo/commits/feat/check-runs").mock(
+        return_value=httpx.Response(200, json={"check_runs": []})
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        info = client.get_branch_github_info("feat")
+
+    assert info == BranchGitHubInfo(
+        pr_number=None,
+        pr_url=None,
+        pr_is_draft=False,
+        check_status=None,
+    )

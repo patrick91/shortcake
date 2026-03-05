@@ -233,10 +233,15 @@ class GitHubClient:
             if not check_runs:
                 return None
 
-            statuses = [run.get("conclusion") or run.get("status") for run in check_runs]
-            if any(s in ("failure", "timed_out", "cancelled") for s in statuses):
+            statuses = [
+                run.get("conclusion") or run.get("status")
+                for run in check_runs
+            ]
+            fail = ("failure", "timed_out", "cancelled")
+            pend = ("in_progress", "queued", "pending", "waiting")
+            if any(s in fail for s in statuses):
                 return "failure"
-            if any(s in ("in_progress", "queued", "pending", "waiting") for s in statuses):
+            if any(s in pend for s in statuses):
                 return "pending"
             if all(s in ("success", "skipped", "neutral") for s in statuses):
                 return "success"

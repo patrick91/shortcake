@@ -18,7 +18,12 @@ import typer
 from dulwich.repo import Repo
 
 from shortcake import _git as git
-from shortcake._github import BranchGitHubInfo, GitHubClient, get_github_token, get_repo_info
+from shortcake._github import (
+    BranchGitHubInfo,
+    GitHubClient,
+    get_github_token,
+    get_repo_info,
+)
 from shortcake._tree import BranchNode, StackTree
 from shortcake.commands._suggest import _compute_suggestions
 from shortcake.commands.move_lines import (
