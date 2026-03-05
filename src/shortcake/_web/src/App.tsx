@@ -120,6 +120,17 @@ type SuggestionsResponse = {
   suggestions: HunkSuggestionItem[];
 };
 
+type GitHubBranchInfo = {
+  prNumber: number | null;
+  prUrl: string | null;
+  prIsDraft: boolean;
+  checkStatus: 'success' | 'failure' | 'pending' | null;
+};
+
+type GitHubInfoResponse = {
+  branches: Record<string, GitHubBranchInfo>;
+};
+
 type DiffSelection =
   | { type: 'branch'; name: string }
   | { type: 'working' };
@@ -1257,6 +1268,7 @@ export default function App() {
   const [suggestions, setSuggestions] = useState<HunkSuggestionItem[]>([]);
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
   const [expandedLargeFiles, setExpandedLargeFiles] = useState<Set<string>>(new Set());
+  const [githubInfo, setGithubInfo] = useState<Record<string, GitHubBranchInfo>>({});
 
   const setSelection = useCallback((sel: DiffSelection | null) => {
     setSelectionRaw(sel);
@@ -1669,6 +1681,30 @@ export default function App() {
     };
   }, [isMoving, isAccepting]);
 
+  // Fetch GitHub info (PR links + CI status) on a slower polling interval
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchGithubInfo = async () => {
+      try {
+        const data = await fetchJSON<GitHubInfoResponse>('/api/github-info');
+        if (!cancelled) {
+          setGithubInfo(data.branches);
+        }
+      } catch {
+        // Silent failure — GitHub info is optional
+      }
+    };
+
+    fetchGithubInfo();
+
+    const intervalId = setInterval(fetchGithubInfo, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, []);
+
   const handleMoveHunksBranchSelect = useCallback(
     async (targetBranch: string) => {
       if (selectedHunks.size === 0 || selection?.type !== 'branch') return;
@@ -1873,6 +1909,7 @@ export default function App() {
               STACK_CARD_INDENT_BASE + branch.depth * STACK_CARD_INDENT_STEP;
             const parentIndex = parentIndexMap.get(branch.parent) ?? -1;
             const lastChildIdx = lastChildIndexMap.get(index);
+            const ghInfo = githubInfo[branch.name];
 
             return (
               <React.Fragment key={branch.name}>
@@ -1893,6 +1930,27 @@ export default function App() {
                     {branch.isCurrent && (
                       <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-accent/10 border border-accent/18 ml-1.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
                         current
+                      </span>
+                    )}
+                    {ghInfo?.prNumber != null && ghInfo.prUrl && (
+                      <a
+                        href={ghInfo.prUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className={`font-mono text-[0.58rem] font-medium no-underline ml-0.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5] border ${ghInfo.prIsDraft ? 'text-text-muted bg-surface-hover border-border' : 'text-purple-400 bg-purple-400/10 border-purple-400/18'}`}
+                      >
+                        #{ghInfo.prNumber}
+                      </a>
+                    )}
+                    {ghInfo?.checkStatus != null && (
+                      <span
+                        className="shrink-0 text-[0.7rem] leading-none"
+                        title={`CI: ${ghInfo.checkStatus}`}
+                      >
+                        {ghInfo.checkStatus === 'success' && <span className="text-green-400">&#10003;</span>}
+                        {ghInfo.checkStatus === 'failure' && <span className="text-red-400">&#10007;</span>}
+                        {ghInfo.checkStatus === 'pending' && <span className="text-yellow-400">&#9679;</span>}
                       </span>
                     )}
                   </span>
@@ -2177,6 +2235,7 @@ export default function App() {
             const active = selection?.type === 'branch' && branch.name === selection.name;
             const branchPadding =
               STACK_CARD_INDENT_BASE + branch.depth * STACK_CARD_INDENT_STEP;
+            const ghInfo = githubInfo[branch.name];
 
             return (
               <button
@@ -2196,6 +2255,27 @@ export default function App() {
                   {branch.isCurrent && (
                     <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-accent/10 border border-accent/18 ml-1.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
                       current
+                    </span>
+                  )}
+                  {ghInfo?.prNumber != null && ghInfo.prUrl && (
+                    <a
+                      href={ghInfo.prUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className={`font-mono text-[0.58rem] font-medium no-underline ml-0.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5] border ${ghInfo.prIsDraft ? 'text-text-muted bg-surface-hover border-border' : 'text-purple-400 bg-purple-400/10 border-purple-400/18'}`}
+                    >
+                      #{ghInfo.prNumber}
+                    </a>
+                  )}
+                  {ghInfo?.checkStatus != null && (
+                    <span
+                      className="shrink-0 text-[0.7rem] leading-none"
+                      title={`CI: ${ghInfo.checkStatus}`}
+                    >
+                      {ghInfo.checkStatus === 'success' && <span className="text-green-400">&#10003;</span>}
+                      {ghInfo.checkStatus === 'failure' && <span className="text-red-400">&#10007;</span>}
+                      {ghInfo.checkStatus === 'pending' && <span className="text-yellow-400">&#9679;</span>}
                     </span>
                   )}
                 </span>

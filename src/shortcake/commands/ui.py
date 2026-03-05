@@ -18,6 +18,7 @@ import typer
 from dulwich.repo import Repo
 
 from shortcake import _git as git
+from shortcake._github import BranchGitHubInfo, GitHubClient, get_github_token, get_repo_info
 from shortcake._tree import BranchNode, StackTree
 from shortcake.commands._suggest import _compute_suggestions
 from shortcake.commands.move_lines import (
@@ -240,6 +241,42 @@ def _build_suggestions_payload(
     }
 
 
+def _build_github_info_payload(
+    repo: Repo, branch_names: list[str]
+) -> dict[str, Any]:
+    """Build payload with PR + CI info for all tracked branches."""
+    token = get_github_token()
+    if not token:
+        return {"branches": {}}
+
+    repo_info = get_repo_info(repo)
+    if not repo_info:
+        return {"branches": {}}
+
+    owner, repo_name = repo_info
+
+    try:
+        client = GitHubClient(token, owner, repo_name)
+    except Exception:
+        return {"branches": {}}
+
+    def _fetch_info(branch: str) -> tuple[str, BranchGitHubInfo]:
+        return branch, client.get_branch_github_info(branch)
+
+    result: dict[str, dict[str, Any]] = {}
+    with ThreadPoolExecutor(max_workers=min(8, len(branch_names) or 1)) as pool:
+        for branch, info in pool.map(_fetch_info, branch_names):
+            result[branch] = {
+                "prNumber": info.pr_number,
+                "prUrl": info.pr_url,
+                "prIsDraft": info.pr_is_draft,
+                "checkStatus": info.check_status,
+            }
+
+    client.client.close()
+    return {"branches": result}
+
+
 def _write_json(
     handler: BaseHTTPRequestHandler,
     status: int,
@@ -267,6 +304,17 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
             if parsed.path == "/api/stack":
                 try:
                     _write_json(self, 200, _build_stack_payload(repo))
+                except Exception as exc:
+                    _write_json(self, 500, {"error": str(exc)})
+                return
+
+            if parsed.path == "/api/github-info":
+                try:
+                    tracked = _tracked_branch_parents(repo)
+                    branch_names = list(tracked.keys())
+                    _write_json(
+                        self, 200, _build_github_info_payload(repo, branch_names)
+                    )
                 except Exception as exc:
                     _write_json(self, 500, {"error": str(exc)})
                 return

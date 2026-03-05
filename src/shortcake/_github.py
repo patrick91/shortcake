@@ -27,6 +27,16 @@ class PRInfo:
     head_ref: str | None = None  # Branch name (head ref)
 
 
+@dataclass
+class BranchGitHubInfo:
+    """Combined GitHub info (PR + CI status) for a branch."""
+
+    pr_number: int | None
+    pr_url: str | None
+    pr_is_draft: bool
+    check_status: str | None  # "success" | "failure" | "pending" | None
+
+
 def get_github_token() -> str | None:
     """Get GitHub token from environment or gh CLI config.
 
@@ -204,6 +214,45 @@ class GitHubClient:
             state=pr["state"],
             is_draft=pr.get("draft", False),
             head_ref=pr["head"]["ref"],
+        )
+
+    def get_check_status(self, branch: str) -> str | None:
+        """Get combined CI check status for a branch's HEAD.
+
+        Returns "success", "failure", "pending", or None (no checks).
+        """
+        try:
+            response = self.client.get(
+                f"/repos/{self.owner}/{self.repo}/commits/{branch}/check-runs",
+                params={"per_page": 100},
+            )
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            check_runs = data.get("check_runs", [])
+            if not check_runs:
+                return None
+
+            statuses = [run.get("conclusion") or run.get("status") for run in check_runs]
+            if any(s in ("failure", "timed_out", "cancelled") for s in statuses):
+                return "failure"
+            if any(s in ("in_progress", "queued", "pending", "waiting") for s in statuses):
+                return "pending"
+            if all(s in ("success", "skipped", "neutral") for s in statuses):
+                return "success"
+            return "pending"
+        except (httpx.RequestError, KeyError):
+            return None
+
+    def get_branch_github_info(self, branch: str) -> BranchGitHubInfo:
+        """Get combined PR + CI info for a branch."""
+        pr = self.get_pr_for_branch(branch)
+        check_status = self.get_check_status(branch)
+        return BranchGitHubInfo(
+            pr_number=pr.number if pr else None,
+            pr_url=pr.url if pr else None,
+            pr_is_draft=pr.is_draft if pr else False,
+            check_status=check_status,
         )
 
     def has_merged_pr(self, branch: str) -> bool:
