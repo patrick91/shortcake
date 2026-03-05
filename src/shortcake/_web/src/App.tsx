@@ -1923,7 +1923,7 @@ export default function App() {
                   onClick={() => setSelection({ type: 'branch', name: branch.name })}
                   type="button"
                 >
-                  <span className="relative z-[2] flex items-center gap-[7px]">
+                  <span className="relative z-[2] flex items-center gap-[7px] w-full">
                     <span className="text-[0.88rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
                       {branch.name}
                     </span>
@@ -1932,25 +1932,29 @@ export default function App() {
                         current
                       </span>
                     )}
-                    {ghInfo?.prNumber != null && ghInfo.prUrl && (
-                      <a
-                        href={ghInfo.prUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className={`font-mono text-[0.58rem] font-medium no-underline ml-0.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5] border ${ghInfo.prIsDraft ? 'text-text-muted bg-surface-hover border-border' : 'text-purple-400 bg-purple-400/10 border-purple-400/18'}`}
-                      >
-                        #{ghInfo.prNumber}
-                      </a>
-                    )}
-                    {ghInfo?.checkStatus != null && (
-                      <span
-                        className="shrink-0 text-[0.7rem] leading-none"
-                        title={`CI: ${ghInfo.checkStatus}`}
-                      >
-                        {ghInfo.checkStatus === 'success' && <span className="text-green-400">&#10003;</span>}
-                        {ghInfo.checkStatus === 'failure' && <span className="text-red-400">&#10007;</span>}
-                        {ghInfo.checkStatus === 'pending' && <span className="text-yellow-400">&#9679;</span>}
+                    {(ghInfo?.prNumber != null || ghInfo?.checkStatus != null) && (
+                      <span className="ml-auto flex items-center gap-[5px] shrink-0">
+                        {ghInfo?.prNumber != null && ghInfo.prUrl && (
+                          <a
+                            href={ghInfo.prUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className={`font-mono text-[0.58rem] font-medium no-underline px-[5px] py-px rounded-full leading-[1.5] border ${ghInfo.prIsDraft ? 'text-text-muted bg-surface-hover border-border' : 'text-green-400 bg-green-400/10 border-green-400/18'}`}
+                          >
+                            #{ghInfo.prNumber}
+                          </a>
+                        )}
+                        {ghInfo?.checkStatus != null && (
+                          <span
+                            className="shrink-0 text-[0.7rem] leading-none"
+                            title={`CI: ${ghInfo.checkStatus}`}
+                          >
+                            {ghInfo.checkStatus === 'success' && <span className="text-green-400">&#10003;</span>}
+                            {ghInfo.checkStatus === 'failure' && <span className="text-red-400">&#10007;</span>}
+                            {ghInfo.checkStatus === 'pending' && <span className="text-yellow-400">&#9679;</span>}
+                          </span>
+                        )}
                       </span>
                     )}
                   </span>
@@ -2248,7 +2252,7 @@ export default function App() {
                 onClick={() => setSelection({ type: 'branch', name: branch.name })}
                 type="button"
               >
-                <span className="relative z-[2] flex items-center gap-[7px]">
+                <span className="relative z-[2] flex items-center gap-[7px] w-full">
                   <span className="text-[0.88rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
                     {branch.name}
                   </span>
@@ -2257,25 +2261,29 @@ export default function App() {
                       current
                     </span>
                   )}
-                  {ghInfo?.prNumber != null && ghInfo.prUrl && (
-                    <a
-                      href={ghInfo.prUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      onClick={(e) => e.stopPropagation()}
-                      className={`font-mono text-[0.58rem] font-medium no-underline ml-0.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5] border ${ghInfo.prIsDraft ? 'text-text-muted bg-surface-hover border-border' : 'text-purple-400 bg-purple-400/10 border-purple-400/18'}`}
-                    >
-                      #{ghInfo.prNumber}
-                    </a>
-                  )}
-                  {ghInfo?.checkStatus != null && (
-                    <span
-                      className="shrink-0 text-[0.7rem] leading-none"
-                      title={`CI: ${ghInfo.checkStatus}`}
-                    >
-                      {ghInfo.checkStatus === 'success' && <span className="text-green-400">&#10003;</span>}
-                      {ghInfo.checkStatus === 'failure' && <span className="text-red-400">&#10007;</span>}
-                      {ghInfo.checkStatus === 'pending' && <span className="text-yellow-400">&#9679;</span>}
+                  {(ghInfo?.prNumber != null || ghInfo?.checkStatus != null) && (
+                    <span className="ml-auto flex items-center gap-[5px] shrink-0">
+                      {ghInfo?.prNumber != null && ghInfo.prUrl && (
+                        <a
+                          href={ghInfo.prUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className={`font-mono text-[0.58rem] font-medium no-underline px-[5px] py-px rounded-full leading-[1.5] border ${ghInfo.prIsDraft ? 'text-text-muted bg-surface-hover border-border' : 'text-green-400 bg-green-400/10 border-green-400/18'}`}
+                        >
+                          #{ghInfo.prNumber}
+                        </a>
+                      )}
+                      {ghInfo?.checkStatus != null && (
+                        <span
+                          className="shrink-0 text-[0.7rem] leading-none"
+                          title={`CI: ${ghInfo.checkStatus}`}
+                        >
+                          {ghInfo.checkStatus === 'success' && <span className="text-green-400">&#10003;</span>}
+                          {ghInfo.checkStatus === 'failure' && <span className="text-red-400">&#10007;</span>}
+                          {ghInfo.checkStatus === 'pending' && <span className="text-yellow-400">&#9679;</span>}
+                        </span>
+                      )}
                     </span>
                   )}
                 </span>
