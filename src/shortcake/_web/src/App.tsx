@@ -124,6 +124,21 @@ type DiffSelection =
   | { type: 'branch'; name: string }
   | { type: 'working' };
 
+function selectionFromHash(hash: string): DiffSelection | null {
+  const path = hash.replace(/^#\/?/, '');
+  if (path === 'working') return { type: 'working' };
+  if (path.startsWith('branch/')) {
+    const name = decodeURIComponent(path.slice('branch/'.length));
+    if (name) return { type: 'branch', name };
+  }
+  return null;
+}
+
+function selectionToHash(sel: DiffSelection): string {
+  if (sel.type === 'working') return '#/working';
+  return `#/branch/${encodeURIComponent(sel.name)}`;
+}
+
 type FileInfo = {
   path: string;
   name: string;
@@ -1213,7 +1228,9 @@ export default function App() {
     panelIds: ['sidebar', 'content'],
   });
   const [stack, setStack] = useState<StackResponse | null>(null);
-  const [selection, setSelection] = useState<DiffSelection | null>(null);
+  const [selection, setSelectionRaw] = useState<DiffSelection | null>(
+    () => selectionFromHash(window.location.hash),
+  );
   const [diff, setDiff] = useState<DiffResponse | null>(null);
   const [workingPatch, setWorkingPatch] = useState<string | null>(null);
   const [isStackLoading, setIsStackLoading] = useState(true);
@@ -1240,6 +1257,29 @@ export default function App() {
   const [suggestions, setSuggestions] = useState<HunkSuggestionItem[]>([]);
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
   const [expandedLargeFiles, setExpandedLargeFiles] = useState<Set<string>>(new Set());
+
+  const setSelection = useCallback((sel: DiffSelection | null) => {
+    setSelectionRaw(sel);
+    if (sel) {
+      const newHash = selectionToHash(sel);
+      if (window.location.hash !== newHash) {
+        window.history.pushState(null, '', newHash);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    const onHashChange = () => {
+      const sel = selectionFromHash(window.location.hash);
+      if (sel) setSelectionRaw(sel);
+    };
+    window.addEventListener('hashchange', onHashChange);
+    window.addEventListener('popstate', onHashChange);
+    return () => {
+      window.removeEventListener('hashchange', onHashChange);
+      window.removeEventListener('popstate', onHashChange);
+    };
+  }, []);
 
   const expandLargeFile = useCallback((path: string) => {
     setExpandedLargeFiles((prev) => {
@@ -1291,12 +1331,20 @@ export default function App() {
 
         setStack(data);
 
-        const currentBranch = data.branches.find((b) => b.name === data.currentBranch);
-        if (currentBranch) {
-          setSelection({ type: 'branch', name: currentBranch.name });
-        } else if (data.branches[0]) {
-          setSelection({ type: 'branch', name: data.branches[0].name });
+        // If we already have a selection from the URL hash, keep it
+        // (but validate branch selections still exist)
+        const hashSel = selectionFromHash(window.location.hash);
+        if (hashSel) {
+          if (hashSel.type === 'working') {
+            setSelection(hashSel);
+          } else if (data.branches.some((b) => b.name === hashSel.name)) {
+            setSelection(hashSel);
+          } else {
+            // Branch from hash no longer exists, default to working
+            setSelection({ type: 'working' });
+          }
         } else {
+          // No hash — default to working changes
           setSelection({ type: 'working' });
         }
       } catch (err) {
