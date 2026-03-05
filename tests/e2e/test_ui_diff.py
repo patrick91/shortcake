@@ -122,5 +122,6 @@ def test_empty_diff(page: Page, ui_url: str):
     page.goto(ui_url)
     page.wait_for_selector("text=branch_a", timeout=15_000)
 
-    # branch_b is auto-selected; the mocked response has an empty patch
+    # Click branch_b to trigger the mocked empty diff response
+    page.locator("button", has_text="branch_b").first.click()
     expect(page.get_by_text("No file differences")).to_be_visible(timeout=5_000)
