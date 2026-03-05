@@ -9,8 +9,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from dulwich.repo import Repo
 
+from shortcake._github import BranchGitHubInfo
 from shortcake.commands.ui import (
     _build_diff_payload,
+    _build_github_info_payload,
     _build_request_handler,
     _build_stack_payload,
     _build_suggestions_payload,
@@ -1179,3 +1181,109 @@ def test_build_suggestions_payload_diff_error(repo_with_stack: Repo) -> None:
     with patch("shortcake.commands.ui._git_diff_patch", side_effect=_failing_diff):
         payload = _build_suggestions_payload(repo_with_stack, "working")
     assert "suggestions" in payload
+
+
+# Tests for _build_github_info_payload
+
+
+def test_build_github_info_payload_no_token(temp_repo: Repo) -> None:
+    """Returns empty branches when no GitHub token is available."""
+    with patch("shortcake.commands.ui.get_github_token", return_value=None):
+        payload = _build_github_info_payload(temp_repo, ["branch_a"])
+    assert payload == {"branches": {}}
+
+
+def test_build_github_info_payload_no_repo_info(temp_repo: Repo) -> None:
+    """Returns empty branches when repo info cannot be determined."""
+    with (
+        patch("shortcake.commands.ui.get_github_token", return_value="token"),
+        patch("shortcake.commands.ui.get_repo_info", return_value=None),
+    ):
+        payload = _build_github_info_payload(temp_repo, ["branch_a"])
+    assert payload == {"branches": {}}
+
+
+def test_build_github_info_payload_fetches_info(temp_repo: Repo) -> None:
+    """Returns PR + CI info for branches."""
+    mock_info = BranchGitHubInfo(
+        pr_number=42,
+        pr_url="https://github.com/owner/repo/pull/42",
+        pr_is_draft=False,
+        check_status="success",
+    )
+    with (
+        patch("shortcake.commands.ui.get_github_token", return_value="token"),
+        patch("shortcake.commands.ui.get_repo_info", return_value=("owner", "repo")),
+        patch("shortcake.commands.ui.GitHubClient") as mock_client_cls,
+    ):
+        mock_client = mock_client_cls.return_value
+        mock_client.get_branch_github_info.return_value = mock_info
+        mock_client.client = MagicMock()
+        payload = _build_github_info_payload(temp_repo, ["feat"])
+
+    assert payload == {
+        "branches": {
+            "feat": {
+                "prNumber": 42,
+                "prUrl": "https://github.com/owner/repo/pull/42",
+                "prIsDraft": False,
+                "checkStatus": "success",
+            }
+        }
+    }
+
+
+def test_build_github_info_payload_client_error(temp_repo: Repo) -> None:
+    """Returns empty branches when GitHubClient constructor fails."""
+    with (
+        patch("shortcake.commands.ui.get_github_token", return_value="token"),
+        patch("shortcake.commands.ui.get_repo_info", return_value=("owner", "repo")),
+        patch(
+            "shortcake.commands.ui.GitHubClient",
+            side_effect=RuntimeError("bad"),
+        ),
+    ):
+        payload = _build_github_info_payload(temp_repo, ["feat"])
+    assert payload == {"branches": {}}
+
+
+# Tests for /api/github-info handler
+
+
+def test_handler_github_info(repo_with_stack: Repo) -> None:
+    """GitHub info endpoint returns branch info."""
+    mock_info = BranchGitHubInfo(
+        pr_number=10,
+        pr_url="https://github.com/o/r/pull/10",
+        pr_is_draft=True,
+        check_status="pending",
+    )
+    with patch(
+        "shortcake.commands.ui._build_github_info_payload",
+        return_value={
+            "branches": {
+                "branch_a": {
+                    "prNumber": mock_info.pr_number,
+                    "prUrl": mock_info.pr_url,
+                    "prIsDraft": mock_info.pr_is_draft,
+                    "checkStatus": mock_info.check_status,
+                }
+            }
+        },
+    ):
+        fake = _make_handler(repo_with_stack, "/api/github-info")
+    assert fake._status == 200
+    data = fake.response_json()
+    assert "branches" in data
+    assert data["branches"]["branch_a"]["prNumber"] == 10
+
+
+def test_handler_github_info_error(repo_with_stack: Repo) -> None:
+    """GitHub info endpoint returns 500 on error."""
+    with patch(
+        "shortcake.commands.ui._build_github_info_payload",
+        side_effect=RuntimeError("boom"),
+    ):
+        fake = _make_handler(repo_with_stack, "/api/github-info")
+    assert fake._status == 500
+    assert "error" in fake.response_json()

@@ -1408,6 +1408,20 @@ export function mockApi(): Plugin {
           return json(res, 200, MOCK_STACK);
         }
 
+        if (url.pathname === '/api/github-info') {
+          return json(res, 200, {
+            branches: {
+              'feat/auth': { prNumber: 42, prUrl: 'https://github.com/example/repo/pull/42', prIsDraft: false, checkStatus: 'success' },
+              'feat/login-form': { prNumber: 43, prUrl: 'https://github.com/example/repo/pull/43', prIsDraft: true, checkStatus: 'pending' },
+              'feat/login-validation': { prNumber: null, prUrl: null, prIsDraft: false, checkStatus: null },
+              'feat/oauth': { prNumber: 45, prUrl: 'https://github.com/example/repo/pull/45', prIsDraft: false, checkStatus: 'failure' },
+              'feat/oauth-github': { prNumber: 46, prUrl: 'https://github.com/example/repo/pull/46', prIsDraft: false, checkStatus: 'success' },
+              'feat/notifications': { prNumber: 50, prUrl: 'https://github.com/example/repo/pull/50', prIsDraft: false, checkStatus: 'pending' },
+              'feat/email-alerts': { prNumber: 51, prUrl: 'https://github.com/example/repo/pull/51', prIsDraft: true, checkStatus: null },
+            },
+          });
+        }
+
         if (url.pathname === '/api/diff/working') {
           return json(res, 200, { patch: MOCK_WORKING_PATCH });
         }

@@ -120,6 +120,17 @@ type SuggestionsResponse = {
   suggestions: HunkSuggestionItem[];
 };
 
+type GitHubBranchInfo = {
+  prNumber: number | null;
+  prUrl: string | null;
+  prIsDraft: boolean;
+  checkStatus: 'success' | 'failure' | 'pending' | null;
+};
+
+type GitHubInfoResponse = {
+  branches: Record<string, GitHubBranchInfo>;
+};
+
 type DiffSelection =
   | { type: 'branch'; name: string }
   | { type: 'working' };
@@ -1257,6 +1268,8 @@ export default function App() {
   const [suggestions, setSuggestions] = useState<HunkSuggestionItem[]>([]);
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
   const [expandedLargeFiles, setExpandedLargeFiles] = useState<Set<string>>(new Set());
+  const [githubInfo, setGithubInfo] = useState<Record<string, GitHubBranchInfo>>({});
+  const [isGithubInfoLoading, setIsGithubInfoLoading] = useState(true);
 
   const setSelection = useCallback((sel: DiffSelection | null) => {
     setSelectionRaw(sel);
@@ -1669,6 +1682,32 @@ export default function App() {
     };
   }, [isMoving, isAccepting]);
 
+  // Fetch GitHub info (PR links + CI status) on a slower polling interval
+  useEffect(() => {
+    let cancelled = false;
+
+    const fetchGithubInfo = async () => {
+      try {
+        const data = await fetchJSON<GitHubInfoResponse>('/api/github-info');
+        if (!cancelled) {
+          setGithubInfo(data.branches);
+          setIsGithubInfoLoading(false);
+        }
+      } catch {
+        // Silent failure — GitHub info is optional
+        if (!cancelled) setIsGithubInfoLoading(false);
+      }
+    };
+
+    fetchGithubInfo();
+
+    const intervalId = setInterval(fetchGithubInfo, 30_000);
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+    };
+  }, []);
+
   const handleMoveHunksBranchSelect = useCallback(
     async (targetBranch: string) => {
       if (selectedHunks.size === 0 || selection?.type !== 'branch') return;
@@ -1873,6 +1912,7 @@ export default function App() {
               STACK_CARD_INDENT_BASE + branch.depth * STACK_CARD_INDENT_STEP;
             const parentIndex = parentIndexMap.get(branch.parent) ?? -1;
             const lastChildIdx = lastChildIndexMap.get(index);
+            const ghInfo = githubInfo[branch.name];
 
             return (
               <React.Fragment key={branch.name}>
@@ -1886,7 +1926,7 @@ export default function App() {
                   onClick={() => setSelection({ type: 'branch', name: branch.name })}
                   type="button"
                 >
-                  <span className="relative z-[2] flex items-center gap-[7px]">
+                  <span className="relative z-[2] flex items-center gap-[7px] w-full">
                     <span className="text-[0.88rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
                       {branch.name}
                     </span>
@@ -1895,6 +1935,36 @@ export default function App() {
                         current
                       </span>
                     )}
+                    {isGithubInfoLoading ? (
+                      <span className="ml-auto flex items-center gap-[5px] shrink-0">
+                        <span className="inline-block w-[32px] h-[14px] rounded-full bg-surface-hover animate-pulse" />
+                        <span className="inline-block w-[10px] h-[10px] rounded-full bg-surface-hover animate-pulse" />
+                      </span>
+                    ) : (ghInfo?.prNumber != null || ghInfo?.checkStatus != null) ? (
+                      <span className="ml-auto flex items-center gap-[5px] shrink-0">
+                        {ghInfo?.prNumber != null && ghInfo.prUrl && (
+                          <a
+                            href={ghInfo.prUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            onClick={(e) => e.stopPropagation()}
+                            className={`font-mono text-[0.58rem] font-medium no-underline px-[5px] py-px rounded-full leading-[1.5] border ${ghInfo.prIsDraft ? 'text-text-muted bg-surface-hover border-border' : 'text-green-400 bg-green-400/10 border-green-400/18'}`}
+                          >
+                            #{ghInfo.prNumber}
+                          </a>
+                        )}
+                        {ghInfo?.checkStatus != null && (
+                          <span
+                            className="shrink-0 text-[0.7rem] leading-none"
+                            title={`CI: ${ghInfo.checkStatus}`}
+                          >
+                            {ghInfo.checkStatus === 'success' && <span className="text-green-400">&#10003;</span>}
+                            {ghInfo.checkStatus === 'failure' && <span className="text-red-400">&#10007;</span>}
+                            {ghInfo.checkStatus === 'pending' && <span className="text-yellow-400">&#9679;</span>}
+                          </span>
+                        )}
+                      </span>
+                    ) : null}
                   </span>
                 </button>
                 {lastChildIdx !== undefined && (
@@ -2177,6 +2247,7 @@ export default function App() {
             const active = selection?.type === 'branch' && branch.name === selection.name;
             const branchPadding =
               STACK_CARD_INDENT_BASE + branch.depth * STACK_CARD_INDENT_STEP;
+            const ghInfo = githubInfo[branch.name];
 
             return (
               <button
@@ -2189,7 +2260,7 @@ export default function App() {
                 onClick={() => setSelection({ type: 'branch', name: branch.name })}
                 type="button"
               >
-                <span className="relative z-[2] flex items-center gap-[7px]">
+                <span className="relative z-[2] flex items-center gap-[7px] w-full">
                   <span className="text-[0.88rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
                     {branch.name}
                   </span>
@@ -2198,6 +2269,36 @@ export default function App() {
                       current
                     </span>
                   )}
+                  {isGithubInfoLoading ? (
+                    <span className="ml-auto flex items-center gap-[5px] shrink-0">
+                      <span className="inline-block w-[32px] h-[14px] rounded-full bg-surface-hover animate-pulse" />
+                      <span className="inline-block w-[10px] h-[10px] rounded-full bg-surface-hover animate-pulse" />
+                    </span>
+                  ) : (ghInfo?.prNumber != null || ghInfo?.checkStatus != null) ? (
+                    <span className="ml-auto flex items-center gap-[5px] shrink-0">
+                      {ghInfo?.prNumber != null && ghInfo.prUrl && (
+                        <a
+                          href={ghInfo.prUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          className={`font-mono text-[0.58rem] font-medium no-underline px-[5px] py-px rounded-full leading-[1.5] border ${ghInfo.prIsDraft ? 'text-text-muted bg-surface-hover border-border' : 'text-green-400 bg-green-400/10 border-green-400/18'}`}
+                        >
+                          #{ghInfo.prNumber}
+                        </a>
+                      )}
+                      {ghInfo?.checkStatus != null && (
+                        <span
+                          className="shrink-0 text-[0.7rem] leading-none"
+                          title={`CI: ${ghInfo.checkStatus}`}
+                        >
+                          {ghInfo.checkStatus === 'success' && <span className="text-green-400">&#10003;</span>}
+                          {ghInfo.checkStatus === 'failure' && <span className="text-red-400">&#10007;</span>}
+                          {ghInfo.checkStatus === 'pending' && <span className="text-yellow-400">&#9679;</span>}
+                        </span>
+                      )}
+                    </span>
+                  ) : null}
                 </span>
               </button>
             );
