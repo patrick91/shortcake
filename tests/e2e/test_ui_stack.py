@@ -38,16 +38,18 @@ def test_branch_selection_highlights(ui_page: Page):
     expect(header).to_contain_text("main")
 
 
-def test_default_selection(ui_page: Page):
-    """On load, the current branch (branch_b) is auto-selected."""
-    # branch_b button should have active styling
-    branch_b_btn = ui_page.locator("button", has_text="branch_b").first
-    expect(branch_b_btn).to_have_class(re.compile(r"bg-accent-bg"))
+def test_default_selection(page: Page, ui_url: str):
+    """On load, working changes is auto-selected by default."""
+    page.goto(ui_url)
+    page.wait_for_selector("text=branch_a", timeout=15_000)
 
-    # The diff header should show branch_b -> branch_a
-    header = ui_page.locator("header h2")
-    expect(header).to_contain_text("branch_b")
-    expect(header).to_contain_text("branch_a")
+    # Working Changes button should have active styling
+    working_btn = page.locator("button", has_text="Working Changes").first
+    expect(working_btn).to_have_class(re.compile(r"bg-accent-bg"))
+
+    # The diff header should show "Uncommitted changes"
+    header = page.locator("header h2")
+    expect(header).to_contain_text("Uncommitted changes")
 
 
 def test_no_branches_message(page: Page, ui_url: str):
