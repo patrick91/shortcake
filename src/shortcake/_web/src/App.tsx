@@ -1269,6 +1269,7 @@ export default function App() {
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
   const [expandedLargeFiles, setExpandedLargeFiles] = useState<Set<string>>(new Set());
   const [githubInfo, setGithubInfo] = useState<Record<string, GitHubBranchInfo>>({});
+  const [isGithubInfoLoading, setIsGithubInfoLoading] = useState(true);
 
   const setSelection = useCallback((sel: DiffSelection | null) => {
     setSelectionRaw(sel);
@@ -1690,9 +1691,11 @@ export default function App() {
         const data = await fetchJSON<GitHubInfoResponse>('/api/github-info');
         if (!cancelled) {
           setGithubInfo(data.branches);
+          setIsGithubInfoLoading(false);
         }
       } catch {
         // Silent failure — GitHub info is optional
+        if (!cancelled) setIsGithubInfoLoading(false);
       }
     };
 
@@ -1932,7 +1935,12 @@ export default function App() {
                         current
                       </span>
                     )}
-                    {(ghInfo?.prNumber != null || ghInfo?.checkStatus != null) && (
+                    {isGithubInfoLoading ? (
+                      <span className="ml-auto flex items-center gap-[5px] shrink-0">
+                        <span className="inline-block w-[32px] h-[14px] rounded-full bg-surface-hover animate-pulse" />
+                        <span className="inline-block w-[10px] h-[10px] rounded-full bg-surface-hover animate-pulse" />
+                      </span>
+                    ) : (ghInfo?.prNumber != null || ghInfo?.checkStatus != null) ? (
                       <span className="ml-auto flex items-center gap-[5px] shrink-0">
                         {ghInfo?.prNumber != null && ghInfo.prUrl && (
                           <a
@@ -1956,7 +1964,7 @@ export default function App() {
                           </span>
                         )}
                       </span>
-                    )}
+                    ) : null}
                   </span>
                 </button>
                 {lastChildIdx !== undefined && (
@@ -2261,7 +2269,12 @@ export default function App() {
                       current
                     </span>
                   )}
-                  {(ghInfo?.prNumber != null || ghInfo?.checkStatus != null) && (
+                  {isGithubInfoLoading ? (
+                    <span className="ml-auto flex items-center gap-[5px] shrink-0">
+                      <span className="inline-block w-[32px] h-[14px] rounded-full bg-surface-hover animate-pulse" />
+                      <span className="inline-block w-[10px] h-[10px] rounded-full bg-surface-hover animate-pulse" />
+                    </span>
+                  ) : (ghInfo?.prNumber != null || ghInfo?.checkStatus != null) ? (
                     <span className="ml-auto flex items-center gap-[5px] shrink-0">
                       {ghInfo?.prNumber != null && ghInfo.prUrl && (
                         <a
@@ -2285,7 +2298,7 @@ export default function App() {
                         </span>
                       )}
                     </span>
-                  )}
+                  ) : null}
                 </span>
               </button>
             );
