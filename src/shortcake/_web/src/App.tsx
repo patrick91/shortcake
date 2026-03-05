@@ -1561,6 +1561,66 @@ export default function App() {
     }
   }, [selection]);
 
+  // Poll for external changes every 3 seconds
+  const lastStackKeyRef = useRef<string>('');
+  const refreshDataRef = useRef(refreshData);
+  refreshDataRef.current = refreshData;
+
+  useEffect(() => {
+    if (stack) {
+      lastStackKeyRef.current = JSON.stringify(
+        stack.branches.map((b) => ({ name: b.name, commit: b.commit })),
+      );
+    }
+  }, [stack]);
+
+  useEffect(() => {
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const startPolling = () => {
+      if (intervalId) return;
+      intervalId = setInterval(async () => {
+        if (isMoving || isAccepting) return;
+        try {
+          const data = await fetchJSON<StackResponse>('/api/stack');
+          const newKey = JSON.stringify(
+            data.branches.map((b) => ({ name: b.name, commit: b.commit })),
+          );
+          if (newKey !== lastStackKeyRef.current) {
+            await refreshDataRef.current();
+          }
+        } catch {
+          // Silent failure — will retry on next poll
+        }
+      }, 3000);
+    };
+
+    const stopPolling = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        startPolling();
+      } else {
+        stopPolling();
+      }
+    };
+
+    if (document.visibilityState === 'visible') {
+      startPolling();
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      stopPolling();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [isMoving, isAccepting]);
+
   const handleMoveHunksBranchSelect = useCallback(
     async (targetBranch: string) => {
       if (selectedHunks.size === 0 || selection?.type !== 'branch') return;
