@@ -1,5 +1,6 @@
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from dulwich import porcelain
@@ -946,7 +947,9 @@ def test_split_hunks_after_no_child(temp_repo: Repo, tmp_path: Path) -> None:
     assert new_parent == "leaf"
 
 
-def test_split_hunks_after_multiple_children_error(temp_repo: Repo, tmp_path: Path) -> None:
+def test_split_hunks_after_multiple_children_error(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
     """Split 'after' fails when source has multiple children."""
     repo = temp_repo
     main_sha = repo.refs[b"refs/heads/main"]
@@ -1090,6 +1093,209 @@ def test_split_hunks_multiple_hunks(temp_repo: Repo, tmp_path: Path) -> None:
     switch_branch(repo, "multi")
     source_patch = _git_diff_patch(repo_path, "feat-extract-both-files", "multi")
     assert source_patch.strip() == ""
+
+
+def test_split_hunks_rebase_in_progress_error(
+    repo_for_split: Repo,
+) -> None:
+    """Error when rebase is in progress."""
+    repo = repo_for_split
+    rebase_dir = Path(repo.controldir()) / "rebase-merge"
+    rebase_dir.mkdir(exist_ok=True)
+    try:
+        with pytest.raises(MoveError, match="rebase in progress"):
+            _split_hunks(
+                repo,
+                source_branch="child_a",
+                commit_message="feat: extract",
+                placement="before",
+                hunks=[
+                    HunkSelection(
+                        file_path="app.py", file_patch="x", hunk_index=0
+                    )
+                ],
+            )
+    finally:
+        rebase_dir.rmdir()
+
+
+def test_split_hunks_nonexistent_branch_error(temp_repo: Repo) -> None:
+    """Error when source branch does not exist."""
+    with pytest.raises(MoveError, match="does not exist"):
+        _split_hunks(
+            temp_repo,
+            source_branch="nonexistent-branch",
+            commit_message="feat: extract",
+            placement="before",
+            hunks=[
+                HunkSelection(file_path="app.py", file_patch="x", hunk_index=0)
+            ],
+        )
+
+
+def test_split_hunks_before_restack_failure_triggers_rollback(
+    repo_for_split: Repo, tmp_path: Path
+) -> None:
+    """Phase 2a restack failure triggers rollback for 'before' placement."""
+    repo = repo_for_split
+    repo_path = Path(repo.path)
+
+    full_patch = _git_diff_patch(repo_path, "main", "child_a")
+    file_patch = _get_file_patch(full_patch, "app.py")
+    child_a_sha_before = git.get_branch_head(repo, "child_a").decode()
+
+    hunks = [HunkSelection(file_path="app.py", file_patch=file_patch, hunk_index=0)]
+
+    failing_result = MagicMock()
+    failing_result.success = False
+    failing_result.error_output = "simulated conflict"
+
+    with (
+        patch(
+            "shortcake.commands.move_lines._rebase_branch",
+            return_value=failing_result,
+        ),
+        pytest.raises(MoveError, match="Restack failed"),
+    ):
+        _split_hunks(
+            repo,
+            source_branch="child_a",
+            commit_message="feat: extract hello",
+            placement="before",
+            hunks=hunks,
+            no_verify=True,
+        )
+
+    # Rollback must restore child_a's ref
+    child_a_sha_after = git.get_branch_head(repo, "child_a").decode()
+    assert child_a_sha_after == child_a_sha_before
+    # New branch must NOT exist (failure occurred before Phase 3a)
+    assert not git.branch_exists(repo, "feat-extract-hello")
+
+
+def test_split_hunks_after_restack_failure_triggers_rollback(
+    repo_for_split: Repo, tmp_path: Path
+) -> None:
+    """Phase 2b restack failure triggers rollback for 'after' placement."""
+    repo = repo_for_split
+    repo_path = Path(repo.path)
+
+    full_patch = _git_diff_patch(repo_path, "main", "child_a")
+    file_patch = _get_file_patch(full_patch, "app.py")
+    child_a_sha_before = git.get_branch_head(repo, "child_a").decode()
+
+    hunks = [HunkSelection(file_path="app.py", file_patch=file_patch, hunk_index=0)]
+
+    failing_result = MagicMock()
+    failing_result.success = False
+    failing_result.error_output = "simulated conflict"
+
+    with (
+        patch(
+            "shortcake.commands.move_lines._rebase_branch",
+            return_value=failing_result,
+        ),
+        pytest.raises(MoveError, match="Restack failed"),
+    ):
+        _split_hunks(
+            repo,
+            source_branch="child_a",
+            commit_message="feat: extract hello after",
+            placement="after",
+            hunks=hunks,
+            no_verify=True,
+        )
+
+    # Rollback must restore child_a's ref
+    child_a_sha_after = git.get_branch_head(repo, "child_a").decode()
+    assert child_a_sha_after == child_a_sha_before
+
+
+def test_split_hunks_after_phase5b_failure_triggers_rollback(
+    repo_for_split: Repo, tmp_path: Path
+) -> None:
+    """Phase 5b restack failure triggers rollback for 'after' placement."""
+    repo = repo_for_split
+    repo_path = Path(repo.path)
+
+    # child_a has child_b: Phase 2b restacks child_b (1st call), then
+    # Phase 5b restacks child_b onto new branch (2nd call → failure).
+    full_patch = _git_diff_patch(repo_path, "main", "child_a")
+    file_patch = _get_file_patch(full_patch, "app.py")
+    child_a_sha_before = git.get_branch_head(repo, "child_a").decode()
+
+    hunks = [HunkSelection(file_path="app.py", file_patch=file_patch, hunk_index=0)]
+
+    success_result = MagicMock()
+    success_result.success = True
+    failing_result = MagicMock()
+    failing_result.success = False
+    failing_result.error_output = "simulated conflict"
+
+    with (
+        patch(
+            "shortcake.commands.move_lines._rebase_branch",
+            side_effect=[success_result, failing_result],
+        ),
+        pytest.raises(MoveError, match="Restack failed"),
+    ):
+        _split_hunks(
+            repo,
+            source_branch="child_a",
+            commit_message="feat: extract hello phase5b",
+            placement="after",
+            hunks=hunks,
+            no_verify=True,
+        )
+
+    # Rollback must restore child_a's ref
+    child_a_sha_after = git.get_branch_head(repo, "child_a").decode()
+    assert child_a_sha_after == child_a_sha_before
+    # New branch must be deleted (created in Phase 3b before failure)
+    assert not git.branch_exists(repo, "feat-extract-hello-phase5b")
+
+
+def test_split_hunks_before_phase6a_failure_deletes_new_branch(
+    repo_for_split: Repo, tmp_path: Path
+) -> None:
+    """Phase 6a failure deletes the created new branch during rollback."""
+    repo = repo_for_split
+    repo_path = Path(repo.path)
+
+    # Use child_b (no children) so Phase 2a has empty plan → _rebase_branch
+    # is only called in Phase 6a, after the new branch has been created.
+    switch_branch(repo, "child_b")
+    full_patch = _git_diff_patch(repo_path, "child_a", "child_b")
+    file_patch = _get_file_patch(full_patch, "utils.py")
+    child_b_sha_before = git.get_branch_head(repo, "child_b").decode()
+
+    hunks = [HunkSelection(file_path="utils.py", file_patch=file_patch, hunk_index=0)]
+
+    failing_result = MagicMock()
+    failing_result.success = False
+    failing_result.error_output = "simulated conflict"
+
+    with (
+        patch(
+            "shortcake.commands.move_lines._rebase_branch",
+            return_value=failing_result,
+        ),
+        pytest.raises(MoveError, match="Restack failed"),
+    ):
+        _split_hunks(
+            repo,
+            source_branch="child_b",
+            commit_message="feat: extract util",
+            placement="before",
+            hunks=hunks,
+            no_verify=True,
+        )
+
+    # Rollback must have deleted the created new branch
+    assert not git.branch_exists(repo, "feat-extract-util")
+    # Rollback must restore child_b's ref
+    child_b_sha_after = git.get_branch_head(repo, "child_b").decode()
+    assert child_b_sha_after == child_b_sha_before
 
 
 # === Split lines batch tests ===
@@ -1331,7 +1537,7 @@ def test_split_lines_branch_not_tracked_error(temp_repo: Repo, tmp_path: Path) -
 def test_split_lines_rollback_on_failure(
     repo_for_split_lines: Repo, tmp_path: Path
 ) -> None:
-    """If an error occurs during chunk creation, refs are restored and branches deleted."""
+    """Refs are restored and created branches deleted if chunk creation fails."""
     repo = repo_for_split_lines
     repo_path = Path(repo.path)
 
@@ -1467,3 +1673,170 @@ def test_split_lines_duplicate_branch_name_error(
 
     with pytest.raises(MoveError, match="Duplicate branch name"):
         _split_lines_batch(repo, "work", chunks, no_verify=True)
+
+
+def test_split_lines_invalid_patch_error(repo_for_split_lines: Repo) -> None:
+    """EmptyPatchError from extract_sub_patch is converted to MoveError."""
+    repo = repo_for_split_lines
+    chunks = [
+        SplitChunk(
+            commit_message="feat: chunk",
+            selections=[
+                LineSelection(
+                    file_path="app.py",
+                    # Patch with no hunks triggers EmptyPatchError
+                    file_patch="--- a/app.py\n+++ b/app.py\n",
+                    start_line=1,
+                    end_line=2,
+                    side="additions",
+                )
+            ],
+        )
+    ]
+    with pytest.raises(MoveError, match="No hunks found"):
+        _split_lines_batch(repo, "work", chunks, no_verify=True)
+
+
+def test_split_lines_rebase_in_progress_error(repo_for_split_lines: Repo) -> None:
+    """Error when rebase is in progress."""
+    repo = repo_for_split_lines
+    rebase_dir = Path(repo.controldir()) / "rebase-merge"
+    rebase_dir.mkdir(exist_ok=True)
+
+    chunks = [
+        SplitChunk(
+            commit_message="feat: chunk",
+            selections=[
+                LineSelection(
+                    file_path="app.py",
+                    file_patch="fake",
+                    start_line=1,
+                    end_line=2,
+                    side="additions",
+                )
+            ],
+        )
+    ]
+    try:
+        with pytest.raises(MoveError, match="rebase in progress"):
+            _split_lines_batch(repo, "work", chunks, no_verify=True)
+    finally:
+        rebase_dir.rmdir()
+
+
+def test_split_lines_nonexistent_branch_error(temp_repo: Repo) -> None:
+    """Error when source branch does not exist."""
+    chunks = [
+        SplitChunk(
+            commit_message="feat: chunk",
+            selections=[
+                LineSelection(
+                    file_path="app.py",
+                    file_patch="fake",
+                    start_line=1,
+                    end_line=2,
+                    side="additions",
+                )
+            ],
+        )
+    ]
+    with pytest.raises(MoveError, match="does not exist"):
+        _split_lines_batch(temp_repo, "nonexistent-branch", chunks, no_verify=True)
+
+
+def test_split_lines_all_lines_selected_empty_commit(
+    repo_for_split_lines: Repo, tmp_path: Path
+) -> None:
+    """When all added lines are selected, source gets an empty commit."""
+    repo = repo_for_split_lines
+    repo_path = Path(repo.path)
+
+    full_patch = _git_diff_patch(repo_path, "main", "work")
+    file_patch = _get_file_patch(full_patch, "app.py")
+
+    # Select all 6 lines — nothing left for source branch
+    chunks = [
+        SplitChunk(
+            commit_message="feat: extract all",
+            selections=[
+                LineSelection(
+                    file_path="app.py",
+                    file_patch=file_patch,
+                    start_line=1,
+                    end_line=6,
+                    side="additions",
+                )
+            ],
+        )
+    ]
+
+    result = _split_lines_batch(repo, "work", chunks, no_verify=True)
+
+    assert result.new_branches == ["feat-extract-all"]
+    assert git.branch_exists(repo, "work")
+
+    # New branch should have all content
+    switch_branch(repo, "feat-extract-all")
+    content = (tmp_path / "app.py").read_text()
+    assert "def foo()" in content
+    assert "def baz()" in content
+
+
+def test_split_lines_restack_failure_triggers_rollback(
+    repo_for_split_lines: Repo, tmp_path: Path
+) -> None:
+    """If Phase 3 restack fails, rollback deletes created branches."""
+    repo = repo_for_split_lines
+    repo_path = Path(repo.path)
+
+    # Add a child of work so Phase 3 has a branch to restack
+    work_sha = repo.refs[b"refs/heads/work"]
+    repo.refs[b"refs/heads/work-child"] = work_sha
+    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/work-child")
+    extra = tmp_path / "extra.py"
+    extra.write_text("x = 1\n")
+    porcelain.add(repo, paths=[str(extra)])
+    trailers_child = Trailers(parent_branch="work")
+    porcelain.commit(
+        repo, message=trailers_child.apply_to("feat: extra").encode()
+    )
+    switch_branch(repo, "work")
+
+    full_patch = _git_diff_patch(repo_path, "main", "work")
+    file_patch = _get_file_patch(full_patch, "app.py")
+
+    work_sha_before = git.get_branch_head(repo, "work").decode()
+
+    chunks = [
+        SplitChunk(
+            commit_message="feat: extract foo",
+            selections=[
+                LineSelection(
+                    file_path="app.py",
+                    file_patch=file_patch,
+                    start_line=1,
+                    end_line=2,
+                    side="additions",
+                )
+            ],
+        )
+    ]
+
+    failing_result = MagicMock()
+    failing_result.success = False
+    failing_result.error_output = "simulated conflict"
+
+    with (
+        patch(
+            "shortcake.commands.move_lines._rebase_branch",
+            return_value=failing_result,
+        ),
+        pytest.raises(MoveError, match="Restack failed"),
+    ):
+        _split_lines_batch(repo, "work", chunks, no_verify=True)
+
+    # Rollback must delete the created chunk branch
+    assert not git.branch_exists(repo, "feat-extract-foo")
+    # Rollback must restore work's ref
+    work_sha_after = git.get_branch_head(repo, "work").decode()
+    assert work_sha_after == work_sha_before
