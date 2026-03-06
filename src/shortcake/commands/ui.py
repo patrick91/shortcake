@@ -625,7 +625,7 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
                         )
                         return
                     if "commitMessage" not in c or "selections" not in c:
-                        msg = "Each chunk must have" " 'commitMessage' and 'selections'"
+                        msg = "Each chunk must have 'commitMessage' and 'selections'"
                         _write_json(self, 400, {"error": msg})
                         return
                     raw_sels = c["selections"]

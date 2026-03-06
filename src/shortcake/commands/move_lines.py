@@ -887,7 +887,7 @@ def _check_no_overlapping_selections(chunks: list[SplitChunk]) -> None:
             curr_start = intervals[i][0]
             if curr_start <= prev_end:
                 file_path, side = key
-                prev_range = f"[{intervals[i-1][0]}, {prev_end}]"
+                prev_range = f"[{intervals[i - 1][0]}, {prev_end}]"
                 curr_range = f"[{curr_start}, {intervals[i][1]}]"
                 raise MoveError(
                     f"Overlapping line ranges in '{file_path}' ({side}): "

@@ -1351,9 +1351,7 @@ def repo_for_split_lines(temp_repo: Repo, tmp_path: Path) -> Repo:
     return temp_repo
 
 
-def test_split_lines_single_chunk(
-    repo_for_split_lines: Repo, tmp_path: Path
-) -> None:
+def test_split_lines_single_chunk(repo_for_split_lines: Repo, tmp_path: Path) -> None:
     """Single-chunk split: lines 1-2 into new branch."""
     repo = repo_for_split_lines
     repo_path = Path(repo.path)
@@ -1392,9 +1390,7 @@ def test_split_lines_single_chunk(
     assert git.get_branch_parent(repo, "work", all_branches) == "feat-extract-foo"
 
 
-def test_split_lines_multi_chunk(
-    repo_for_split_lines: Repo, tmp_path: Path
-) -> None:
+def test_split_lines_multi_chunk(repo_for_split_lines: Repo, tmp_path: Path) -> None:
     """Multi-chunk split: 2 chunks → 2 new branches, verify chain."""
     repo = repo_for_split_lines
     repo_path = Path(repo.path)
@@ -1441,9 +1437,7 @@ def test_split_lines_multi_chunk(
         git.get_branch_parent(repo, "feat-extract-bar", all_branches)
         == "feat-extract-foo"
     )
-    assert (
-        git.get_branch_parent(repo, "work", all_branches) == "feat-extract-bar"
-    )
+    assert git.get_branch_parent(repo, "work", all_branches) == "feat-extract-bar"
 
     # Verify each branch has the right content
     switch_branch(repo, "feat-extract-foo")
@@ -1819,9 +1813,7 @@ def test_split_lines_restack_failure_triggers_rollback(
     extra.write_text("x = 1\n")
     porcelain.add(repo, paths=[str(extra)])
     trailers_child = Trailers(parent_branch="work")
-    porcelain.commit(
-        repo, message=trailers_child.apply_to("feat: extra").encode()
-    )
+    porcelain.commit(repo, message=trailers_child.apply_to("feat: extra").encode())
     switch_branch(repo, "work")
 
     full_patch = _git_diff_patch(repo_path, "main", "work")
