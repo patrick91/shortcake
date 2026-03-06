@@ -21,6 +21,8 @@ from shortcake.commands.restack import RestackResult
 from shortcake.commands.sync import (
     SyncError,
     SyncResult,
+    _detect_github_stale_branches,
+    _GitHubBranchStatus,
     _reparent_branch,
     _sync,
     _topological_sort_for_deletion,
@@ -983,3 +985,335 @@ def test_reparent_branch_same_commit(temp_repo: Repo, tmp_path: Path) -> None:
     # Now try to reparent child to main - there are no commits between
     # child and feature (they're the same), so this should return early
     _reparent_branch(temp_repo, "child", "main")
+
+
+# Tests for _detect_github_stale_branches
+
+
+def test_detect_github_stale_branches_no_token(temp_repo: Repo) -> None:
+    """Test returns empty when no GitHub token available."""
+    with patch("shortcake.commands.sync.get_github_token", return_value=None):
+        result = _detect_github_stale_branches(temp_repo, ["feature"], [])
+
+    assert result.merged == []
+    assert result.closed == []
+
+
+def test_detect_github_stale_branches_no_repo_info(temp_repo: Repo) -> None:
+    """Test returns empty when repo info not available."""
+    with (
+        patch("shortcake.commands.sync.get_github_token", return_value="tok"),
+        patch("shortcake.commands.sync.get_repo_info", return_value=None),
+    ):
+        result = _detect_github_stale_branches(temp_repo, ["feature"], [])
+
+    assert result.merged == []
+    assert result.closed == []
+
+
+def test_detect_github_stale_branches_finds_merged(temp_repo: Repo) -> None:
+    """Test detects branches with merged PRs on GitHub."""
+    mock_gh = _make_mock_github_client(
+        open_prs={},
+        closed_prs={"feature": (123, True)},
+    )
+    with _patch_github_for_sync(mock_gh):
+        result = _detect_github_stale_branches(temp_repo, ["feature"], [])
+
+    assert result.merged == ["feature"]
+    assert result.closed == []
+
+
+def test_detect_github_stale_branches_finds_closed(temp_repo: Repo) -> None:
+    """Test detects branches with closed (not merged) PRs on GitHub."""
+    mock_gh = _make_mock_github_client(
+        open_prs={},
+        closed_prs={"feature": (456, False)},
+    )
+    with _patch_github_for_sync(mock_gh):
+        result = _detect_github_stale_branches(temp_repo, ["feature"], [])
+
+    assert result.merged == []
+    assert result.closed == ["feature"]
+
+
+def test_detect_github_stale_branches_skips_excluded(temp_repo: Repo) -> None:
+    """Test skips branches in the exclude list."""
+    mock_gh = _make_mock_github_client(
+        open_prs={},
+        closed_prs={"feature": (123, True)},
+    )
+    with _patch_github_for_sync(mock_gh):
+        result = _detect_github_stale_branches(temp_repo, ["feature"], ["feature"])
+
+    assert result.merged == []
+    assert result.closed == []
+
+
+def test_detect_github_stale_branches_skips_open_prs(temp_repo: Repo) -> None:
+    """Test skips branches with open PRs."""
+    mock_gh = _make_mock_github_client(
+        open_prs={"feature": 789},
+        closed_prs={},
+    )
+    with _patch_github_for_sync(mock_gh):
+        result = _detect_github_stale_branches(temp_repo, ["feature"], [])
+
+    assert result.merged == []
+    assert result.closed == []
+
+
+def test_detect_github_stale_branches_skips_no_pr(temp_repo: Repo) -> None:
+    """Test skips branches with no PR at all."""
+    mock_gh = _make_mock_github_client(open_prs={}, closed_prs={})
+    with _patch_github_for_sync(mock_gh):
+        result = _detect_github_stale_branches(temp_repo, ["feature"], [])
+
+    assert result.merged == []
+    assert result.closed == []
+
+
+def test_detect_github_stale_branches_handles_exception(
+    temp_repo: Repo,
+) -> None:
+    """Test handles GitHub client exceptions gracefully."""
+    with (
+        patch("shortcake.commands.sync.get_github_token", return_value="tok"),
+        patch(
+            "shortcake.commands.sync.get_repo_info",
+            return_value=("owner", "repo"),
+        ),
+        patch(
+            "shortcake.commands.sync.GitHubClient",
+            side_effect=Exception("network error"),
+        ),
+    ):
+        result = _detect_github_stale_branches(temp_repo, ["feature"], [])
+
+    assert result.merged == []
+    assert result.closed == []
+
+
+def test_detect_github_stale_branches_handles_per_branch_exception(
+    temp_repo: Repo,
+) -> None:
+    """Test handles exceptions on individual branch checks."""
+    from unittest.mock import MagicMock
+
+    client = MagicMock()
+    client.get_pr_for_branch.side_effect = Exception("API error")
+    client.__enter__ = lambda self: client
+    client.__exit__ = lambda self, *a: None
+
+    with (
+        patch("shortcake.commands.sync.get_github_token", return_value="tok"),
+        patch(
+            "shortcake.commands.sync.get_repo_info",
+            return_value=("owner", "repo"),
+        ),
+        patch(
+            "shortcake.commands.sync.GitHubClient",
+            return_value=client,
+        ),
+    ):
+        result = _detect_github_stale_branches(temp_repo, ["feature"], [])
+
+    assert result.merged == []
+    assert result.closed == []
+
+
+# Tests for sync with GitHub-detected branches
+
+
+def test_sync_deletes_github_merged_branch(
+    repo_with_stack: Repo, tmp_path: Path
+) -> None:
+    """Test sync deletes branches detected as merged via GitHub API."""
+    git.switch_branch(repo_with_stack, "main")
+
+    github_status = _GitHubBranchStatus(merged=["branch_a"], closed=[])
+    with patch(
+        "shortcake.commands.sync._detect_github_stale_branches",
+        return_value=github_status,
+    ):
+        result = _sync(repo_with_stack, force=True)
+
+    assert "branch_a" in result.deleted_branches
+
+
+def test_sync_deletes_github_closed_branch(
+    repo_with_stack: Repo, tmp_path: Path
+) -> None:
+    """Test sync deletes branches detected as closed via GitHub API."""
+    git.switch_branch(repo_with_stack, "main")
+
+    github_status = _GitHubBranchStatus(merged=[], closed=["branch_a"])
+    with patch(
+        "shortcake.commands.sync._detect_github_stale_branches",
+        return_value=github_status,
+    ):
+        result = _sync(repo_with_stack, force=True)
+
+    assert "branch_a" in result.closed_branches
+
+
+def test_sync_dry_run_github_merged(repo_with_stack: Repo, tmp_path: Path) -> None:
+    """Test sync dry run with GitHub-detected merged branches."""
+    github_status = _GitHubBranchStatus(merged=["branch_a"], closed=[])
+    with patch(
+        "shortcake.commands.sync._detect_github_stale_branches",
+        return_value=github_status,
+    ):
+        result = _sync(repo_with_stack, dry_run=True)
+
+    assert result.deleted_branches == []
+    assert git.branch_exists(repo_with_stack, "branch_a")
+
+
+def test_sync_dry_run_github_closed(repo_with_stack: Repo, tmp_path: Path) -> None:
+    """Test sync dry run with GitHub-detected closed branches."""
+    github_status = _GitHubBranchStatus(merged=[], closed=["branch_a"])
+    with patch(
+        "shortcake.commands.sync._detect_github_stale_branches",
+        return_value=github_status,
+    ):
+        result = _sync(repo_with_stack, dry_run=True)
+
+    assert result.closed_branches == []
+    assert git.branch_exists(repo_with_stack, "branch_a")
+
+
+def test_sync_prompt_fn_github_merged(repo_with_stack: Repo, tmp_path: Path) -> None:
+    """Test sync respects prompt_fn for GitHub-detected merged branches."""
+    git.switch_branch(repo_with_stack, "main")
+
+    github_status = _GitHubBranchStatus(merged=["branch_a"], closed=[])
+    with patch(
+        "shortcake.commands.sync._detect_github_stale_branches",
+        return_value=github_status,
+    ):
+        result = _sync(
+            repo_with_stack,
+            prompt_fn=lambda branch, trunk: True,
+        )
+
+    assert "branch_a" in result.deleted_branches
+
+
+def test_sync_prompt_fn_github_closed(repo_with_stack: Repo, tmp_path: Path) -> None:
+    """Test sync respects prompt_fn for GitHub-detected closed branches."""
+    git.switch_branch(repo_with_stack, "main")
+
+    github_status = _GitHubBranchStatus(merged=[], closed=["branch_a"])
+    with patch(
+        "shortcake.commands.sync._detect_github_stale_branches",
+        return_value=github_status,
+    ):
+        result = _sync(
+            repo_with_stack,
+            prompt_fn=lambda branch, reason: True,
+        )
+
+    assert "branch_a" in result.closed_branches
+
+
+def test_cli_sync_github_merged_user_accepts(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI sync prompts user for GitHub-detected merged branches."""
+    monkeypatch.chdir(tmp_path)
+    git.switch_branch(repo_with_stack, "main")
+
+    github_status = _GitHubBranchStatus(merged=["branch_a"], closed=[])
+    with patch(
+        "shortcake.commands.sync._detect_github_stale_branches",
+        return_value=github_status,
+    ):
+        result = runner.invoke(app, ["sync"], input="y\n")
+
+    assert result.exit_code == 0
+    assert "Deleted branch branch_a" in result.output
+
+
+def test_cli_sync_github_closed_user_accepts(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI sync prompts user for GitHub-detected closed branches."""
+    monkeypatch.chdir(tmp_path)
+    git.switch_branch(repo_with_stack, "main")
+
+    github_status = _GitHubBranchStatus(merged=[], closed=["branch_a"])
+    with patch(
+        "shortcake.commands.sync._detect_github_stale_branches",
+        return_value=github_status,
+    ):
+        result = runner.invoke(app, ["sync"], input="y\n")
+
+    assert result.exit_code == 0
+    assert "Deleted branch branch_a" in result.output
+
+
+# Helpers for GitHub mocking
+
+
+def _make_mock_github_client(
+    open_prs: dict[str, int],
+    closed_prs: dict[str, tuple[int, bool]],
+):
+    """Create a mock GitHubClient for testing.
+
+    Args:
+        open_prs: Map of branch name to PR number for open PRs.
+        closed_prs: Map of branch name to (number, is_merged) for closed PRs.
+    """
+    from unittest.mock import MagicMock
+
+    from shortcake._github import PRInfo
+
+    client = MagicMock()
+
+    def get_pr_for_branch(branch):
+        if branch in open_prs:
+            return PRInfo(
+                number=open_prs[branch],
+                url=f"https://github.com/owner/repo/pull/{open_prs[branch]}",
+                base="main",
+                title="",
+                body="",
+                state="open",
+                is_draft=False,
+            )
+        return None
+
+    def get_closed_pr_info(branch):
+        if branch in closed_prs:
+            return closed_prs[branch]
+        return None, False
+
+    client.get_pr_for_branch = get_pr_for_branch
+    client.get_closed_pr_info = get_closed_pr_info
+    client.__enter__ = lambda self: client
+    client.__exit__ = lambda self, *a: None
+    return client
+
+
+def _patch_github_for_sync(mock_client):
+    """Context manager to patch GitHub dependencies for sync tests."""
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _ctx():
+        with (
+            patch("shortcake.commands.sync.get_github_token", return_value="tok"),
+            patch(
+                "shortcake.commands.sync.get_repo_info",
+                return_value=("owner", "repo"),
+            ),
+            patch(
+                "shortcake.commands.sync.GitHubClient",
+                return_value=mock_client,
+            ),
+        ):
+            yield
+
+    return _ctx()

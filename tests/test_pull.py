@@ -15,6 +15,7 @@ from shortcake.commands.pull import (
     PullError,
     _ensure_stack_branches_local,
     _fetch,
+    _find_trailer_parent,
     _pull,
     _pull_single_after_fetch,
     _pull_stack,
@@ -1297,3 +1298,132 @@ def test_pull_cli_creates_missing_branches(temp_repo: Repo, tmp_path: Path) -> N
 
     assert result.exit_code == 0
     assert "Created 'branch_b' from origin/branch_b" in result.output
+
+
+# Tests for _find_trailer_parent
+
+
+def test_find_trailer_parent_single_commit(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test finding trailer in a single-commit branch (trailer is in HEAD)."""
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    switch_branch(temp_repo, "feature")
+
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers = Trailers(parent_branch="main")
+    porcelain.commit(temp_repo, message=trailers.apply_to("feat: feature").encode())
+
+    head_sha = temp_repo.refs[b"refs/heads/feature"]
+    result = _find_trailer_parent(temp_repo, head_sha, set())
+
+    assert result == "main"
+
+
+def test_find_trailer_parent_multi_commit(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test finding trailer in a multi-commit branch (trailer is in base)."""
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    switch_branch(temp_repo, "feature")
+
+    # First commit has trailer
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers = Trailers(parent_branch="main")
+    porcelain.commit(temp_repo, message=trailers.apply_to("feat: first").encode())
+
+    # Second commit has no trailer
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b content")
+    porcelain.add(temp_repo, paths=[str(file_b)])
+    porcelain.commit(temp_repo, message=b"feat: second commit")
+
+    # Third commit (HEAD) has no trailer
+    file_c = tmp_path / "c.txt"
+    file_c.write_text("c content")
+    porcelain.add(temp_repo, paths=[str(file_c)])
+    porcelain.commit(temp_repo, message=b"feat: third commit")
+
+    head_sha = temp_repo.refs[b"refs/heads/feature"]
+    result = _find_trailer_parent(temp_repo, head_sha, set())
+
+    assert result == "main"
+
+
+def test_find_trailer_parent_stops_at_known_head(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test walk stops at known branch heads."""
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    switch_branch(temp_repo, "feature")
+
+    # Commit with no trailer
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    porcelain.commit(temp_repo, message=b"feat: no trailer")
+
+    head_sha = temp_repo.refs[b"refs/heads/feature"]
+    # main_sha is a known head — walker should stop there, not walk further
+    result = _find_trailer_parent(temp_repo, head_sha, {main_sha})
+
+    assert result is None
+
+
+def test_find_trailer_parent_no_trailer(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test returns None when no trailer found in any commit."""
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+
+    # main has no trailer and no parents (initial commit)
+    result = _find_trailer_parent(temp_repo, main_sha, set())
+
+    assert result is None
+
+
+# Tests for _ensure_children_from_remote with multi-commit branches
+
+
+def test_ensure_children_discovers_multi_commit_remote_branch(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test _ensure_children_from_remote finds branches with trailer in base commit."""
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+
+    # Create branch_a locally with trailer pointing to main
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    switch_branch(temp_repo, "branch_a")
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers_a = Trailers(parent_branch="main")
+    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a").encode())
+    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # Create branch_b with trailer pointing to branch_a, then add more commits
+    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    switch_branch(temp_repo, "branch_b")
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b content")
+    porcelain.add(temp_repo, paths=[str(file_b)])
+    trailers_b = Trailers(parent_branch="branch_a")
+    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: branch b").encode())
+
+    # Add a second commit to branch_b (HEAD won't have trailer)
+    file_c = tmp_path / "c.txt"
+    file_c.write_text("c content")
+    porcelain.add(temp_repo, paths=[str(file_c)])
+    porcelain.commit(temp_repo, message=b"feat: second commit on b")
+    branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
+
+    # Set up remote ref for branch_b and delete it locally
+    temp_repo.refs[b"refs/remotes/origin/branch_b"] = branch_b_sha
+    switch_branch(temp_repo, "branch_a")
+    del temp_repo.refs[b"refs/heads/branch_b"]
+
+    # _ensure_stack_branches_local should discover branch_b
+    created = _ensure_stack_branches_local(temp_repo, "branch_a")
+    assert "branch_b" in created
+    assert b"refs/heads/branch_b" in temp_repo.refs
