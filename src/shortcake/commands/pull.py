@@ -1,5 +1,6 @@
 """Pull command - update current branch from remote."""
 
+import contextlib
 import subprocess
 from dataclasses import dataclass, field
 from typing import Annotated
@@ -234,11 +235,59 @@ def _ensure_stack_branches_local(repo: Repo, start: str) -> list[str]:
 
         current = parent_name
 
+    # Expand visited to include all local descendants so that
+    # _ensure_children_from_remote can discover remote-only grandchildren.
+    # Without this, only branches whose parent is in the upward-walk path
+    # would be found — local intermediate branches would be skipped but
+    # their remote children wouldn't be discovered.
+    queue = list(visited)
+    while queue:
+        branch = queue.pop()
+        for child in git.get_branch_children(repo, branch):
+            if child in all_local and child not in visited:
+                visited.add(child)
+                queue.append(child)
+
     # Walk down from the stack root via children to find descendant branches.
     # Only scan for children of tracked stack branches (not the trunk).
     _ensure_children_from_remote(repo, all_local, visited, created)
 
     return created
+
+
+def _find_trailer_parent(
+    repo: Repo, head_sha: bytes, stop_shas: set[bytes]
+) -> str | None:
+    """Walk commits from head_sha to find the Shortcake-Parent trailer.
+
+    The trailer is in the first (base) commit of a branch, not the HEAD.
+    Walk backwards through parents until we find it, stopping at known
+    branch heads or after a reasonable depth.
+    """
+    from shortcake._trailers import Trailers
+
+    current = head_sha
+    visited: set[bytes] = set()
+
+    while current and current not in visited:
+        visited.add(current)
+        message = git.get_commit_message(repo, current)
+        trailers = Trailers.from_message(message)
+
+        if trailers.parent_branch is not None:
+            return trailers.parent_branch
+
+        # Stop if we've reached a known branch head (not the starting point)
+        if current != head_sha and current in stop_shas:
+            break
+
+        # Walk to parent
+        commit = repo[current]
+        if not commit.parents:
+            break
+        current = commit.parents[0]
+
+    return None
 
 
 def _ensure_children_from_remote(
@@ -252,7 +301,11 @@ def _ensure_children_from_remote(
     Scans remote refs for branches whose Shortcake-Parent trailer points to
     a branch in stack_branches, and creates them locally.
     """
-    from shortcake._trailers import Trailers
+    # Collect known branch head SHAs to know where to stop walking
+    known_heads: set[bytes] = set()
+    for b in all_local:
+        with contextlib.suppress(KeyError):
+            known_heads.add(git.get_branch_head(repo, b))
 
     # Iterate until no more children are found
     changed = True
@@ -267,18 +320,15 @@ def _ensure_children_from_remote(
             if branch_name in all_local or branch_name == "HEAD":
                 continue
 
-            # Read the first commit to check for trailer
+            # Walk commits from HEAD to find the trailer
             remote_sha = repo.refs[ref]
-            message = git.get_commit_message(repo, remote_sha)
-            trailers = Trailers.from_message(message)
+            parent_branch = _find_trailer_parent(repo, remote_sha, known_heads)
 
-            if (
-                trailers.parent_branch is not None
-                and trailers.parent_branch in stack_branches
-            ):
+            if parent_branch is not None and parent_branch in stack_branches:
                 git.create_branch(repo, branch_name, remote_sha)
                 all_local.add(branch_name)
                 stack_branches.add(branch_name)
+                known_heads.add(remote_sha)
                 created.append(branch_name)
                 changed = True
 

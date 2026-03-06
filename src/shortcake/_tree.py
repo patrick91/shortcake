@@ -22,6 +22,7 @@ class BranchNode:
     pr_number: int | None = None
     pr_is_draft: bool = False
     pr_is_merged: bool = False
+    pr_is_closed: bool = False
     pr_url: str | None = None
 
 
@@ -167,6 +168,8 @@ class StackTree:
                 pr_suffix = f" {pr_text}"
                 if node.pr_is_merged:
                     pr_suffix += " [dim]merged[/]"
+                elif node.pr_is_closed:
+                    pr_suffix += " [dim]closed[/]"
                 elif node.pr_is_draft:
                     pr_suffix += " [dim]draft[/]"
 
@@ -225,6 +228,8 @@ class StackTree:
                 pr_suffix = f" {pr_text}"
                 if node.pr_is_merged:
                     pr_suffix += " [dim]merged[/]"
+                elif node.pr_is_closed:
+                    pr_suffix += " [dim]closed[/]"
                 elif node.pr_is_draft:
                     pr_suffix += " [dim]draft[/]"
 

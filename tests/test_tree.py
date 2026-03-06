@@ -737,6 +737,37 @@ def test_render_parent_with_multiple_children_and_pr() -> None:
     assert "main" in output
 
 
+def test_render_pr_closed() -> None:
+    """Test rendering branch with closed PR."""
+    child = BranchNode(
+        name="feature", is_current=False, pr_number=321, pr_is_closed=True
+    )
+    root = BranchNode(name="main", is_current=True, children=[child])
+
+    tree = StackTree(roots=[root])
+    output = tree.render()
+
+    assert "◯ feature #321 [dim]closed[/]" in output
+
+
+def test_render_parent_with_multiple_children_pr_closed() -> None:
+    """Test parent with multiple children shows closed status."""
+    child_a = BranchNode(name="feature-a")
+    child_b = BranchNode(name="feature-b")
+    root = BranchNode(
+        name="main",
+        children=[child_a, child_b],
+        pr_number=200,
+        pr_is_closed=True,
+    )
+
+    tree = StackTree(roots=[root])
+    output = tree.render()
+
+    assert "#200" in output
+    assert "[dim]closed[/]" in output
+
+
 def test_render_parent_with_multiple_children_pr_merged() -> None:
     """Test parent with multiple children shows merged status."""
     child_a = BranchNode(name="feature-a")

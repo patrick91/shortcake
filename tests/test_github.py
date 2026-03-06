@@ -689,6 +689,62 @@ def test_github_client_get_merged_pr_number_returns_none() -> None:
     assert result is None
 
 
+# Tests for get_closed_pr_info
+
+
+@respx.mock
+def test_github_client_get_closed_pr_info_closed_not_merged() -> None:
+    """Test get_closed_pr_info returns closed (not merged) PR."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"number": 456, "merged_at": None},
+            ],
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        number, is_merged = client.get_closed_pr_info("feature")
+
+    assert number == 456
+    assert is_merged is False
+
+
+@respx.mock
+def test_github_client_get_closed_pr_info_prefers_merged() -> None:
+    """Test get_closed_pr_info prefers merged PR over closed."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"number": 456, "merged_at": None},
+                {"number": 123, "merged_at": "2024-01-01T00:00:00Z"},
+            ],
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        number, is_merged = client.get_closed_pr_info("feature")
+
+    assert number == 123
+    assert is_merged is True
+
+
+@respx.mock
+def test_github_client_get_closed_pr_info_no_prs() -> None:
+    """Test get_closed_pr_info returns None when no closed PRs."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        number, is_merged = client.get_closed_pr_info("feature")
+
+    assert number is None
+    assert is_merged is False
+
+
 # Tests for get_pr_by_number
 
 

@@ -14,6 +14,7 @@ class CachedPRInfo:
     number: int
     is_draft: bool = False
     is_merged: bool = False
+    is_closed: bool = False
     url: str | None = None
 
 
@@ -68,6 +69,7 @@ def update_pr_cache(
     pr_number: int,
     is_draft: bool = False,
     is_merged: bool = False,
+    is_closed: bool = False,
     url: str | None = None,
 ) -> None:
     """Update cache for a single branch.
@@ -85,6 +87,7 @@ def update_pr_cache(
         number=pr_number,
         is_draft=is_draft,
         is_merged=is_merged,
+        is_closed=is_closed,
         url=url,
     )
     save_pr_cache(repo, cache)
