@@ -235,6 +235,19 @@ def _ensure_stack_branches_local(repo: Repo, start: str) -> list[str]:
 
         current = parent_name
 
+    # Expand visited to include all local descendants so that
+    # _ensure_children_from_remote can discover remote-only grandchildren.
+    # Without this, only branches whose parent is in the upward-walk path
+    # would be found — local intermediate branches would be skipped but
+    # their remote children wouldn't be discovered.
+    queue = list(visited)
+    while queue:
+        branch = queue.pop()
+        for child in git.get_branch_children(repo, branch):
+            if child in all_local and child not in visited:
+                visited.add(child)
+                queue.append(child)
+
     # Walk down from the stack root via children to find descendant branches.
     # Only scan for children of tracked stack branches (not the trunk).
     _ensure_children_from_remote(repo, all_local, visited, created)
