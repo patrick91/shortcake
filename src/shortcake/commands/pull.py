@@ -38,6 +38,7 @@ class BranchPullResult:
     already_up_to_date: bool = False
     updated: bool = False
     skipped_no_remote: bool = False
+    created_from_remote: bool = False
     new_sha: str | None = None
 
 
@@ -182,6 +183,106 @@ def _pull(
         )
 
 
+def _ensure_stack_branches_local(repo: Repo, start: str) -> list[str]:
+    """Create local branches from remote for any missing stack branches.
+
+    Walks up from start via Shortcake-Parent trailers, then down via children,
+    creating local branches from origin/<branch> when a branch exists on remote
+    but not locally. This allows pulling an entire stack even when some branches
+    haven't been checked out yet.
+
+    Returns list of branch names that were created locally from remote.
+    """
+
+    created: list[str] = []
+    all_local = set(git.get_all_local_branches(repo))
+
+    # Walk up from start via trailers to find ancestor branches
+    visited: set[str] = set()
+    current = start
+
+    while current and current not in visited:
+        visited.add(current)
+
+        # If branch doesn't exist locally, create from remote
+        if current not in all_local:
+            remote_sha = git.get_remote_ref(repo, f"origin/{current}")
+            if remote_sha is None:
+                break
+            # Create local branch from remote
+            git.create_branch(repo, current, remote_sha)
+            all_local.add(current)
+            created.append(current)
+
+        # Read the trailer from the first commit to find parent
+        branch_heads = {b: git.get_branch_head(repo, b) for b in all_local}
+        parent_info = git.get_branch_parent_info(repo, current, all_local, branch_heads)
+        if parent_info is None:
+            # current is the trunk — don't include it when scanning for children,
+            # otherwise we'd pull in ALL stacks in the repo
+            visited.discard(current)
+            break
+        parent_name = parent_info[0]
+
+        # If parent doesn't exist locally, check remote
+        if parent_name not in all_local:
+            remote_sha = git.get_remote_ref(repo, f"origin/{parent_name}")
+            if remote_sha is not None:
+                git.create_branch(repo, parent_name, remote_sha)
+                all_local.add(parent_name)
+                created.append(parent_name)
+
+        current = parent_name
+
+    # Walk down from the stack root via children to find descendant branches.
+    # Only scan for children of tracked stack branches (not the trunk).
+    _ensure_children_from_remote(repo, all_local, visited, created)
+
+    return created
+
+
+def _ensure_children_from_remote(
+    repo: Repo,
+    all_local: set[str],
+    stack_branches: set[str],
+    created: list[str],
+) -> None:
+    """Create local branches for remote-only children of stack branches.
+
+    Scans remote refs for branches whose Shortcake-Parent trailer points to
+    a branch in stack_branches, and creates them locally.
+    """
+    from shortcake._trailers import Trailers
+
+    # Iterate until no more children are found
+    changed = True
+    while changed:
+        changed = False
+        # Get all remote refs that don't have a local branch
+        for ref in list(repo.refs.keys()):
+            ref_str = ref.decode() if isinstance(ref, bytes) else ref
+            if not ref_str.startswith("refs/remotes/origin/"):
+                continue
+            branch_name = ref_str[len("refs/remotes/origin/") :]
+            if branch_name in all_local or branch_name == "HEAD":
+                continue
+
+            # Read the first commit to check for trailer
+            remote_sha = repo.refs[ref]
+            message = git.get_commit_message(repo, remote_sha)
+            trailers = Trailers.from_message(message)
+
+            if (
+                trailers.parent_branch is not None
+                and trailers.parent_branch in stack_branches
+            ):
+                git.create_branch(repo, branch_name, remote_sha)
+                all_local.add(branch_name)
+                stack_branches.add(branch_name)
+                created.append(branch_name)
+                changed = True
+
+
 def _update_branch_from_remote(repo: Repo, branch: str) -> BranchPullResult:
     """Update a single branch ref to match its remote tracking ref.
 
@@ -234,6 +335,9 @@ def _pull_stack(repo: Repo) -> PullStackResult:
     if not _fetch(repo):
         raise PullError("Failed to fetch from origin.")
 
+    # Create local branches from remote for any missing stack branches
+    created_branches = _ensure_stack_branches_local(repo, current_branch)
+
     # Get stack
     stack = _get_stack_in_order(repo, current_branch)
 
@@ -252,10 +356,18 @@ def _pull_stack(repo: Repo) -> PullStackResult:
         return result
 
     # Update each branch in the stack
+    created_set = set(created_branches)
     branch_results = []
     for branch in stack:
-        br_result = _update_branch_from_remote(repo, branch)
-        branch_results.append(br_result)
+        if branch in created_set:
+            # Just created from remote — already at remote ref
+            sha = git.get_branch_head(repo, branch)[:7].decode()
+            branch_results.append(
+                BranchPullResult(branch=branch, created_from_remote=True, new_sha=sha)
+            )
+        else:
+            br_result = _update_branch_from_remote(repo, branch)
+            branch_results.append(br_result)
 
     # Update working tree for current branch
     git.switch_branch(repo, current_branch, force=True)
@@ -345,7 +457,10 @@ def pull(
     # Format output
     any_updated = False
     for br in stack_result.branch_results:
-        if br.updated:
+        if br.created_from_remote:
+            typer.echo(f"Created '{br.branch}' from origin/{br.branch} ({br.new_sha})")
+            any_updated = True
+        elif br.updated:
             typer.echo(f"Updated '{br.branch}' to origin/{br.branch} ({br.new_sha})")
             any_updated = True
         elif br.skipped_no_remote:

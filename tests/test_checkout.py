@@ -548,3 +548,29 @@ def test_checkout_pull_with_restack(repo_with_stack: Repo, tmp_path: Path) -> No
     assert result.exit_code == 0
     assert "Updated 'branch_a'" in result.output
     assert "Restacked" in result.output
+
+
+def test_checkout_pull_creates_from_remote(
+    repo_with_stack: Repo, tmp_path: Path
+) -> None:
+    """Test checkout shows 'Created' for branches created from remote."""
+    config = repo_with_stack.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Set up remote refs for both branches
+    branch_a_sha = repo_with_stack.refs[b"refs/heads/branch_a"]
+    branch_b_sha = repo_with_stack.refs[b"refs/heads/branch_b"]
+    repo_with_stack.refs[b"refs/remotes/origin/branch_a"] = branch_a_sha
+    repo_with_stack.refs[b"refs/remotes/origin/branch_b"] = branch_b_sha
+
+    # Delete branch_b locally (keep branch_a since we'll checkout it)
+    switch_branch(repo_with_stack, "branch_a")
+    del repo_with_stack.refs[b"refs/heads/branch_b"]
+
+    os.chdir(tmp_path)
+    with patch("shortcake.commands.pull._fetch", return_value=True):
+        result = runner.invoke(app, ["checkout", "branch_a"])
+
+    assert result.exit_code == 0
+    assert "Created 'branch_b' from origin/branch_b" in result.output

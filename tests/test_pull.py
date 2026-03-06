@@ -13,6 +13,7 @@ from shortcake._trailers import Trailers
 from shortcake.cli import app
 from shortcake.commands.pull import (
     PullError,
+    _ensure_stack_branches_local,
     _fetch,
     _pull,
     _pull_single_after_fetch,
@@ -1018,3 +1019,281 @@ def test_pull_cli_stack_with_restack(repo_with_stack: Repo, tmp_path: Path) -> N
     assert result.exit_code == 0
     assert "Updated 'branch_a'" in result.output
     assert "Restacked" in result.output
+
+
+# Tests for _ensure_stack_branches_local
+
+
+def test_ensure_stack_all_local(repo_with_stack: Repo) -> None:
+    """Test _ensure_stack_branches_local when all branches exist locally."""
+    created = _ensure_stack_branches_local(repo_with_stack, "branch_b")
+    assert created == []
+
+
+def test_ensure_stack_creates_parent_from_remote(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test creating a missing parent branch from remote."""
+    # Create branch_a locally with trailer pointing to main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    switch_branch(temp_repo, "branch_a")
+
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: branch a")
+    porcelain.commit(temp_repo, message=msg_a.encode())
+    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # Create branch_b locally with trailer pointing to branch_a
+    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    switch_branch(temp_repo, "branch_b")
+
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b content")
+    porcelain.add(temp_repo, paths=[str(file_b)])
+    trailers_b = Trailers(parent_branch="branch_a")
+    msg_b = trailers_b.apply_to("feat: branch b")
+    porcelain.commit(temp_repo, message=msg_b.encode())
+
+    # Now delete branch_a locally but keep it as remote ref
+    temp_repo.refs[b"refs/remotes/origin/branch_a"] = branch_a_sha
+    del temp_repo.refs[b"refs/heads/branch_a"]
+
+    # Verify branch_a doesn't exist locally
+    assert b"refs/heads/branch_a" not in temp_repo.refs
+
+    # _ensure_stack_branches_local should create it
+    created = _ensure_stack_branches_local(temp_repo, "branch_b")
+    assert "branch_a" in created
+    assert b"refs/heads/branch_a" in temp_repo.refs
+
+
+def test_ensure_stack_creates_child_from_remote(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test creating a missing child branch from remote."""
+    # Create branch_a locally
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    switch_branch(temp_repo, "branch_a")
+
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: branch a")
+    porcelain.commit(temp_repo, message=msg_a.encode())
+    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # Create branch_b commit (will only exist on remote)
+    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    switch_branch(temp_repo, "branch_b")
+
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b content")
+    porcelain.add(temp_repo, paths=[str(file_b)])
+    trailers_b = Trailers(parent_branch="branch_a")
+    msg_b = trailers_b.apply_to("feat: branch b")
+    porcelain.commit(temp_repo, message=msg_b.encode())
+    branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
+
+    # Move branch_b to remote only
+    temp_repo.refs[b"refs/remotes/origin/branch_b"] = branch_b_sha
+    switch_branch(temp_repo, "branch_a")
+    del temp_repo.refs[b"refs/heads/branch_b"]
+
+    # Verify branch_b doesn't exist locally
+    assert b"refs/heads/branch_b" not in temp_repo.refs
+
+    # _ensure_stack_branches_local should create it (found via remote children)
+    created = _ensure_stack_branches_local(temp_repo, "branch_a")
+    assert "branch_b" in created
+    assert b"refs/heads/branch_b" in temp_repo.refs
+
+
+def test_ensure_stack_start_not_local(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test _ensure_stack_branches_local when start branch doesn't exist locally."""
+    # Create branch_a locally with trailer pointing to main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    switch_branch(temp_repo, "branch_a")
+
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: branch a")
+    porcelain.commit(temp_repo, message=msg_a.encode())
+    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # Delete branch_a locally but keep it as remote ref
+    switch_branch(temp_repo, "main")
+    temp_repo.refs[b"refs/remotes/origin/branch_a"] = branch_a_sha
+    del temp_repo.refs[b"refs/heads/branch_a"]
+
+    # Verify branch_a doesn't exist locally
+    assert b"refs/heads/branch_a" not in temp_repo.refs
+
+    # Call with start=branch_a which doesn't exist locally
+    created = _ensure_stack_branches_local(temp_repo, "branch_a")
+    assert "branch_a" in created
+    assert b"refs/heads/branch_a" in temp_repo.refs
+
+
+def test_ensure_stack_no_remote(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test _ensure_stack_branches_local when parent has no remote."""
+    # Create branch_a with trailer pointing to nonexistent parent
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    switch_branch(temp_repo, "branch_a")
+
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers_a = Trailers(parent_branch="nonexistent")
+    msg_a = trailers_a.apply_to("feat: branch a")
+    porcelain.commit(temp_repo, message=msg_a.encode())
+
+    # No remote ref for nonexistent — should not crash
+    created = _ensure_stack_branches_local(temp_repo, "branch_a")
+    assert created == []
+
+
+def test_ensure_stack_does_not_pull_sibling_stacks(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Ensure branches from sibling stacks are not pulled in.
+
+    When walking up to trunk (main), we should NOT pull in children
+    of main that belong to different stacks.
+    """
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+
+    # Create stack 1: main → branch_a
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    switch_branch(temp_repo, "branch_a")
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: branch a")
+    porcelain.commit(temp_repo, message=msg_a.encode())
+
+    # Create stack 2 (only on remote): main → other_branch
+    temp_repo.refs[b"refs/heads/other_branch"] = main_sha
+    switch_branch(temp_repo, "other_branch")
+    file_other = tmp_path / "other.txt"
+    file_other.write_text("other content")
+    porcelain.add(temp_repo, paths=[str(file_other)])
+    trailers_other = Trailers(parent_branch="main")
+    msg_other = trailers_other.apply_to("feat: other branch")
+    porcelain.commit(temp_repo, message=msg_other.encode())
+    other_sha = temp_repo.refs[b"refs/heads/other_branch"]
+
+    # Move other_branch to remote only
+    temp_repo.refs[b"refs/remotes/origin/other_branch"] = other_sha
+    switch_branch(temp_repo, "branch_a")
+    del temp_repo.refs[b"refs/heads/other_branch"]
+
+    # Ensure stack from branch_a should NOT create other_branch
+    created = _ensure_stack_branches_local(temp_repo, "branch_a")
+    assert "other_branch" not in created
+    assert b"refs/heads/other_branch" not in temp_repo.refs
+
+
+def test_pull_stack_creates_missing_branches(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test _pull_stack creates missing stack branches from remote."""
+    config = temp_repo.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Create branch_a locally with trailer
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    switch_branch(temp_repo, "branch_a")
+
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: branch a")
+    porcelain.commit(temp_repo, message=msg_a.encode())
+    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # Create branch_b commit (will be remote only)
+    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    switch_branch(temp_repo, "branch_b")
+
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b content")
+    porcelain.add(temp_repo, paths=[str(file_b)])
+    trailers_b = Trailers(parent_branch="branch_a")
+    msg_b = trailers_b.apply_to("feat: branch b")
+    porcelain.commit(temp_repo, message=msg_b.encode())
+    branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
+
+    # Set up remote refs
+    temp_repo.refs[b"refs/remotes/origin/branch_a"] = branch_a_sha
+    temp_repo.refs[b"refs/remotes/origin/branch_b"] = branch_b_sha
+
+    # Delete branch_b locally
+    switch_branch(temp_repo, "branch_a")
+    del temp_repo.refs[b"refs/heads/branch_b"]
+
+    with patch("shortcake.commands.pull._fetch", return_value=True):
+        result = _pull_stack(temp_repo)
+
+    assert result.is_stack is True
+    # branch_b should have been created from remote
+    assert any(br.created_from_remote for br in result.branch_results)
+    assert b"refs/heads/branch_b" in temp_repo.refs
+
+
+def test_pull_cli_creates_missing_branches(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test CLI pull creates missing stack branches from remote."""
+    config = temp_repo.get_config()
+    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
+    config.write_to_path()
+
+    # Create branch_a locally with trailer
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    switch_branch(temp_repo, "branch_a")
+
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a content")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers_a = Trailers(parent_branch="main")
+    msg_a = trailers_a.apply_to("feat: branch a")
+    porcelain.commit(temp_repo, message=msg_a.encode())
+    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # Create branch_b commit (will be remote only)
+    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    switch_branch(temp_repo, "branch_b")
+
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b content")
+    porcelain.add(temp_repo, paths=[str(file_b)])
+    trailers_b = Trailers(parent_branch="branch_a")
+    msg_b = trailers_b.apply_to("feat: branch b")
+    porcelain.commit(temp_repo, message=msg_b.encode())
+    branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
+
+    # Set up remote refs
+    temp_repo.refs[b"refs/remotes/origin/branch_a"] = branch_a_sha
+    temp_repo.refs[b"refs/remotes/origin/branch_b"] = branch_b_sha
+
+    # Delete branch_b locally, stay on branch_a
+    switch_branch(temp_repo, "branch_a")
+    del temp_repo.refs[b"refs/heads/branch_b"]
+
+    os.chdir(tmp_path)
+    with patch("shortcake.commands.pull._fetch", return_value=True):
+        result = runner.invoke(app, ["pull"])
+
+    assert result.exit_code == 0
+    assert "Created 'branch_b' from origin/branch_b" in result.output

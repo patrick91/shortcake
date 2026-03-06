@@ -196,7 +196,10 @@ def checkout(
 
     any_updated = False
     for br in stack_result.branch_results:
-        if br.updated:
+        if br.created_from_remote:
+            typer.echo(f"Created '{br.branch}' from origin/{br.branch} ({br.new_sha})")
+            any_updated = True
+        elif br.updated:
             typer.echo(f"Updated '{br.branch}' to origin/{br.branch} ({br.new_sha})")
             any_updated = True
         elif br.skipped_no_remote:
