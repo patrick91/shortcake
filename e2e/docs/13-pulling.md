@@ -61,7 +61,7 @@ $ sc create -m "Feature B"
 Created branch 'feature-b' from 'feature-a'
 $ git push -u origin feature-b > /dev/null 2>&1
 $ sc pull
-Already up to date.
+Checked 2 branches in stack. Already up to date.
 ```
 
 After someone force-pushes to a branch in the stack:

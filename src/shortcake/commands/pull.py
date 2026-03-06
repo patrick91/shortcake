@@ -1,12 +1,10 @@
 """Pull command - update current branch from remote."""
 
-import os
 import subprocess
 from dataclasses import dataclass, field
 from typing import Annotated
 
 import typer
-from dulwich import porcelain
 from dulwich.repo import Repo
 
 from shortcake import _git as git
@@ -54,19 +52,20 @@ class PullStackResult:
 
 
 def _fetch(repo: Repo) -> bool:
-    """Fetch from origin.
+    """Fetch from origin using git CLI.
 
     Returns True if fetch succeeded, False otherwise.
     """
     if not git.has_remote(repo, "origin"):
         return False
 
-    try:
-        with open(os.devnull, "wb") as devnull:
-            porcelain.fetch(repo, "origin", quiet=True, errstream=devnull)
-        return True
-    except git.DULWICH_IO_ERRORS:
-        return False
+    result = subprocess.run(
+        ["git", "fetch", "origin"],
+        cwd=repo.path,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
 
 
 def _reset_to_remote(repo: Repo, branch: str) -> None:
@@ -351,11 +350,13 @@ def pull(
             any_updated = True
         elif br.skipped_no_remote:
             typer.echo(f"Skipped '{br.branch}' (no remote tracking branch)")
-        elif br.already_up_to_date:
-            pass  # Don't print anything for up-to-date branches
 
     if not any_updated:
-        typer.echo("Already up to date.")
+        n = len(stack_result.branch_results)
+        if stack_result.is_stack and n > 1:
+            typer.echo(f"Checked {n} branches in stack. Already up to date.")
+        else:
+            typer.echo("Already up to date.")
         return
 
     # Restack after printing updates (only for tracked stacks)

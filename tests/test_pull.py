@@ -322,11 +322,13 @@ def test_fetch_success(repo_with_feature: Repo) -> None:
     config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
     config.write_to_path()
 
-    with patch("shortcake.commands.pull.porcelain.fetch") as mock_fetch:
-        mock_fetch.return_value = {}
+    with patch("shortcake.commands.pull.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 0
         result = _fetch(repo_with_feature)
 
     assert result is True
+    mock_run.assert_called_once()
+    assert mock_run.call_args[0][0] == ["git", "fetch", "origin"]
 
 
 def test_fetch_failure(repo_with_feature: Repo) -> None:
@@ -336,10 +338,8 @@ def test_fetch_failure(repo_with_feature: Repo) -> None:
     config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
     config.write_to_path()
 
-    with patch(
-        "shortcake.commands.pull.porcelain.fetch",
-        side_effect=OSError("Connection failed"),
-    ):
+    with patch("shortcake.commands.pull.subprocess.run") as mock_run:
+        mock_run.return_value.returncode = 1
         result = _fetch(repo_with_feature)
 
     assert result is False
@@ -931,6 +931,7 @@ def test_pull_cli_stack_all_up_to_date(repo_with_stack: Repo, tmp_path: Path) ->
         result = runner.invoke(app, ["pull"])
 
     assert result.exit_code == 0
+    assert "Checked 2 branches in stack" in result.output
     assert "Already up to date" in result.output
 
 
