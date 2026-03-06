@@ -1287,3 +1287,271 @@ def test_handler_github_info_error(repo_with_stack: Repo) -> None:
         fake = _make_handler(repo_with_stack, "/api/github-info")
     assert fake._status == 500
     assert "error" in fake.response_json()
+
+
+# --- /api/split-hunks POST handler tests ---
+
+
+def test_post_split_hunks_invalid_json(temp_repo: Repo) -> None:
+    """POST /api/split-hunks with invalid JSON returns 400."""
+    fake = _make_post_handler(temp_repo, "/api/split-hunks", "not json")
+    assert fake._status == 400
+    assert "Invalid JSON" in fake.response_json()["error"]
+
+
+def test_post_split_hunks_missing_fields(temp_repo: Repo) -> None:
+    """POST /api/split-hunks with missing required fields returns 400."""
+    fake = _make_post_handler(temp_repo, "/api/split-hunks", {"sourceBranch": "a"})
+    assert fake._status == 400
+    assert "Missing required fields" in fake.response_json()["error"]
+
+
+def test_post_split_hunks_invalid_placement(temp_repo: Repo) -> None:
+    """POST /api/split-hunks with invalid placement returns 400."""
+    body = {
+        "sourceBranch": "a",
+        "commitMessage": "msg",
+        "placement": "invalid",
+        "hunks": [{"filePath": "f.py", "filePatch": "p", "hunkIndex": 0}],
+    }
+    fake = _make_post_handler(temp_repo, "/api/split-hunks", body)
+    assert fake._status == 400
+    assert "placement" in fake.response_json()["error"]
+
+
+def test_post_split_hunks_empty_hunks(temp_repo: Repo) -> None:
+    """POST /api/split-hunks with empty hunks array returns 400."""
+    body = {
+        "sourceBranch": "a",
+        "commitMessage": "msg",
+        "placement": "before",
+        "hunks": [],
+    }
+    fake = _make_post_handler(temp_repo, "/api/split-hunks", body)
+    assert fake._status == 400
+    assert "non-empty" in fake.response_json()["error"]
+
+
+def test_post_split_hunks_non_dict_hunk(temp_repo: Repo) -> None:
+    """POST /api/split-hunks with non-dict hunk element returns 400."""
+    body = {
+        "sourceBranch": "a",
+        "commitMessage": "msg",
+        "placement": "before",
+        "hunks": [42],
+    }
+    fake = _make_post_handler(temp_repo, "/api/split-hunks", body)
+    assert fake._status == 400
+    assert "Each hunk must be an object" in fake.response_json()["error"]
+
+
+def test_post_split_hunks_missing_hunk_fields(temp_repo: Repo) -> None:
+    """POST /api/split-hunks with hunk missing fields returns 400."""
+    body = {
+        "sourceBranch": "a",
+        "commitMessage": "msg",
+        "placement": "before",
+        "hunks": [{"filePath": "f.py"}],
+    }
+    fake = _make_post_handler(temp_repo, "/api/split-hunks", body)
+    assert fake._status == 400
+    assert "Hunk missing fields" in fake.response_json()["error"]
+
+
+def test_post_split_hunks_success(repo_with_stack: Repo) -> None:
+    """POST /api/split-hunks success returns 200 with result."""
+    mock_result = MagicMock()
+    mock_result.source_branch = "branch_a"
+    mock_result.new_branch = "new-branch"
+    mock_result.placement = "before"
+    mock_result.file_paths = ["test.txt"]
+    mock_result.restacked_branches = []
+
+    body = {
+        "sourceBranch": "branch_a",
+        "commitMessage": "feat: split",
+        "placement": "before",
+        "hunks": [{"filePath": "test.txt", "filePatch": "patch", "hunkIndex": 0}],
+    }
+    with patch("shortcake.commands.ui._split_hunks", return_value=mock_result):
+        fake = _make_post_handler(repo_with_stack, "/api/split-hunks", body)
+    assert fake._status == 200
+    data = fake.response_json()
+    assert data["sourceBranch"] == "branch_a"
+    assert data["newBranch"] == "new-branch"
+    assert data["placement"] == "before"
+
+
+def test_post_split_hunks_move_error(repo_with_stack: Repo) -> None:
+    """POST /api/split-hunks MoveError returns 400."""
+    from shortcake.commands.move_lines import MoveError
+
+    body = {
+        "sourceBranch": "branch_a",
+        "commitMessage": "feat: split",
+        "placement": "before",
+        "hunks": [{"filePath": "test.txt", "filePatch": "patch", "hunkIndex": 0}],
+    }
+    with patch(
+        "shortcake.commands.ui._split_hunks",
+        side_effect=MoveError("split failed"),
+    ):
+        fake = _make_post_handler(repo_with_stack, "/api/split-hunks", body)
+    assert fake._status == 400
+    assert "split failed" in fake.response_json()["error"]
+
+
+def test_post_split_hunks_unexpected_error(repo_with_stack: Repo) -> None:
+    """POST /api/split-hunks unexpected error returns 500."""
+    body = {
+        "sourceBranch": "branch_a",
+        "commitMessage": "feat: split",
+        "placement": "before",
+        "hunks": [{"filePath": "test.txt", "filePatch": "patch", "hunkIndex": 0}],
+    }
+    with patch(
+        "shortcake.commands.ui._split_hunks",
+        side_effect=RuntimeError("boom"),
+    ):
+        fake = _make_post_handler(repo_with_stack, "/api/split-hunks", body)
+    assert fake._status == 500
+    assert "boom" in fake.response_json()["error"]
+
+
+# --- /api/split-lines POST handler tests ---
+
+_VALID_SELECTION = {
+    "filePath": "app.py",
+    "filePatch": "fake-patch",
+    "startLine": 1,
+    "endLine": 2,
+    "side": "additions",
+}
+
+_VALID_CHUNK = {
+    "commitMessage": "feat: chunk",
+    "selections": [_VALID_SELECTION],
+}
+
+
+def test_post_split_lines_invalid_json(temp_repo: Repo) -> None:
+    """POST /api/split-lines with invalid JSON returns 400."""
+    fake = _make_post_handler(temp_repo, "/api/split-lines", "not json")
+    assert fake._status == 400
+    assert "Invalid JSON" in fake.response_json()["error"]
+
+
+def test_post_split_lines_missing_fields(temp_repo: Repo) -> None:
+    """POST /api/split-lines with missing required fields returns 400."""
+    fake = _make_post_handler(temp_repo, "/api/split-lines", {"sourceBranch": "a"})
+    assert fake._status == 400
+    assert "Missing required fields" in fake.response_json()["error"]
+
+
+def test_post_split_lines_empty_chunks(temp_repo: Repo) -> None:
+    """POST /api/split-lines with empty chunks array returns 400."""
+    fake = _make_post_handler(
+        temp_repo, "/api/split-lines", {"sourceBranch": "a", "chunks": []}
+    )
+    assert fake._status == 400
+    assert "non-empty" in fake.response_json()["error"]
+
+
+def test_post_split_lines_non_dict_chunk(temp_repo: Repo) -> None:
+    """POST /api/split-lines with non-dict chunk returns 400."""
+    fake = _make_post_handler(
+        temp_repo, "/api/split-lines", {"sourceBranch": "a", "chunks": [42]}
+    )
+    assert fake._status == 400
+    assert "Each chunk must be an object" in fake.response_json()["error"]
+
+
+def test_post_split_lines_chunk_missing_fields(temp_repo: Repo) -> None:
+    """POST /api/split-lines with chunk missing required fields returns 400."""
+    fake = _make_post_handler(
+        temp_repo,
+        "/api/split-lines",
+        {"sourceBranch": "a", "chunks": [{"commitMessage": "x"}]},
+    )
+    assert fake._status == 400
+    assert "commitMessage" in fake.response_json()["error"]
+
+
+def test_post_split_lines_empty_selections(temp_repo: Repo) -> None:
+    """POST /api/split-lines with empty selections list returns 400."""
+    body = {
+        "sourceBranch": "a",
+        "chunks": [{"commitMessage": "feat: x", "selections": []}],
+    }
+    fake = _make_post_handler(temp_repo, "/api/split-lines", body)
+    assert fake._status == 400
+    assert "non-empty" in fake.response_json()["error"]
+
+
+def test_post_split_lines_non_dict_selection(temp_repo: Repo) -> None:
+    """POST /api/split-lines with non-dict selection returns 400."""
+    body = {
+        "sourceBranch": "a",
+        "chunks": [{"commitMessage": "feat: x", "selections": [99]}],
+    }
+    fake = _make_post_handler(temp_repo, "/api/split-lines", body)
+    assert fake._status == 400
+    assert "Each selection must be an object" in fake.response_json()["error"]
+
+
+def test_post_split_lines_selection_missing_fields(temp_repo: Repo) -> None:
+    """POST /api/split-lines with selection missing fields returns 400."""
+    body = {
+        "sourceBranch": "a",
+        "chunks": [
+            {
+                "commitMessage": "feat: x",
+                "selections": [{"filePath": "app.py"}],
+            }
+        ],
+    }
+    fake = _make_post_handler(temp_repo, "/api/split-lines", body)
+    assert fake._status == 400
+    assert "Selection missing fields" in fake.response_json()["error"]
+
+
+def test_post_split_lines_success(repo_with_stack: Repo) -> None:
+    """POST /api/split-lines success returns 200 with result."""
+    mock_result = MagicMock()
+    mock_result.source_branch = "branch_a"
+    mock_result.new_branches = ["chunk-one"]
+    mock_result.restacked_branches = []
+
+    body = {"sourceBranch": "branch_a", "chunks": [_VALID_CHUNK]}
+    with patch("shortcake.commands.ui._split_lines_batch", return_value=mock_result):
+        fake = _make_post_handler(repo_with_stack, "/api/split-lines", body)
+    assert fake._status == 200
+    data = fake.response_json()
+    assert data["sourceBranch"] == "branch_a"
+    assert data["newBranches"] == ["chunk-one"]
+
+
+def test_post_split_lines_move_error(repo_with_stack: Repo) -> None:
+    """POST /api/split-lines MoveError returns 400."""
+    from shortcake.commands.move_lines import MoveError
+
+    body = {"sourceBranch": "branch_a", "chunks": [_VALID_CHUNK]}
+    with patch(
+        "shortcake.commands.ui._split_lines_batch",
+        side_effect=MoveError("lines failed"),
+    ):
+        fake = _make_post_handler(repo_with_stack, "/api/split-lines", body)
+    assert fake._status == 400
+    assert "lines failed" in fake.response_json()["error"]
+
+
+def test_post_split_lines_unexpected_error(repo_with_stack: Repo) -> None:
+    """POST /api/split-lines unexpected error returns 500."""
+    body = {"sourceBranch": "branch_a", "chunks": [_VALID_CHUNK]}
+    with patch(
+        "shortcake.commands.ui._split_lines_batch",
+        side_effect=RuntimeError("oops"),
+    ):
+        fake = _make_post_handler(repo_with_stack, "/api/split-lines", body)
+    assert fake._status == 500
+    assert "oops" in fake.response_json()["error"]

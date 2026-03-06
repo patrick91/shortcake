@@ -1484,6 +1484,28 @@ export function mockApi(): Plugin {
           return;
         }
 
+        if (req.method === 'POST' && url.pathname === '/api/split-hunks') {
+          let body = '';
+          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+          req.on('end', () => {
+            try {
+              const data = JSON.parse(body);
+              const filePaths = [...new Set((data.hunks ?? []).map((h: { filePath: string }) => h.filePath))];
+              const slug = (data.commitMessage ?? 'new-branch').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50);
+              return json(res, 200, {
+                sourceBranch: data.sourceBranch,
+                newBranch: slug,
+                placement: data.placement ?? 'before',
+                filePaths,
+                restackedBranches: [],
+              });
+            } catch {
+              return json(res, 400, { error: 'Invalid JSON body' });
+            }
+          });
+          return;
+        }
+
         if (req.method === 'OPTIONS') {
           res.writeHead(200, {
             'Access-Control-Allow-Origin': '*',
