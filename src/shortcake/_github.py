@@ -278,6 +278,17 @@ class GitHubClient:
 
         Returns the PR number if a merged PR exists, None otherwise.
         """
+        number, is_merged = self.get_closed_pr_info(branch)
+        if is_merged:
+            return number
+        return None
+
+    def get_closed_pr_info(self, branch: str) -> tuple[int | None, bool]:
+        """Get PR info for a closed PR on this branch.
+
+        Returns (pr_number, is_merged). Prefers merged PRs over closed ones.
+        Returns (None, False) if no closed PR exists.
+        """
         response = self.client.get(
             f"/repos/{self.owner}/{self.repo}/pulls",
             params={"head": f"{self.owner}:{branch}", "state": "closed"},
@@ -285,10 +296,16 @@ class GitHubClient:
         response.raise_for_status()
 
         prs = response.json()
+        if not prs:
+            return None, False
+
+        # Prefer merged over just closed
         for pr in prs:
             if pr.get("merged_at") is not None:
-                return pr["number"]
-        return None
+                return pr["number"], True
+
+        # Return first closed (not merged) PR
+        return prs[0]["number"], False
 
     def create_pr(
         self, head: str, base: str, title: str, body: str, draft: bool = False

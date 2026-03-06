@@ -101,18 +101,19 @@ def _fetch_pr_info(repo: Repo, tree: StackTree, tracked_branches: set[str]) -> N
                                 url=pr.url,
                             )
                         else:
-                            merged_num = gh.get_merged_pr_number(node.name)
-                            if merged_num:
-                                node.pr_number = merged_num
-                                node.pr_is_merged = True
-                                # Construct URL for merged PR
-                                pr_url = f"https://github.com/{owner}/{repo_name}/pull/{merged_num}"
+                            closed_num, is_merged = gh.get_closed_pr_info(node.name)
+                            if closed_num:
+                                pr_url = f"https://github.com/{owner}/{repo_name}/pull/{closed_num}"
+                                node.pr_number = closed_num
                                 node.pr_url = pr_url
+                                node.pr_is_merged = is_merged
+                                node.pr_is_closed = not is_merged
                                 update_pr_cache(
                                     repo,
                                     node.name,
-                                    merged_num,
-                                    is_merged=True,
+                                    closed_num,
+                                    is_merged=is_merged,
+                                    is_closed=not is_merged,
                                     url=pr_url,
                                 )
                         live.update(tree.render())
@@ -151,6 +152,7 @@ def ls(
                 node.pr_number = cached.number
                 node.pr_is_draft = cached.is_draft
                 node.pr_is_merged = cached.is_merged
+                node.pr_is_closed = cached.is_closed
                 node.pr_url = cached.url
 
         console.print(tree.render())
