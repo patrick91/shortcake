@@ -1467,7 +1467,7 @@ def test_post_split_lines_non_dict_chunk(temp_repo: Repo) -> None:
 
 
 def test_post_split_lines_chunk_missing_fields(temp_repo: Repo) -> None:
-    """POST /api/split-lines with chunk missing commitMessage or selections returns 400."""
+    """POST /api/split-lines with chunk missing required fields returns 400."""
     fake = _make_post_handler(
         temp_repo,
         "/api/split-lines",
