@@ -1298,6 +1298,34 @@ def test_split_hunks_before_phase6a_failure_deletes_new_branch(
     assert child_b_sha_after == child_b_sha_before
 
 
+def test_split_hunks_invalid_placement_error(repo_for_split: Repo) -> None:
+    """Error when placement is not 'before' or 'after'."""
+    hunks = [HunkSelection(file_path="app.py", file_patch="x", hunk_index=0)]
+    with pytest.raises(MoveError, match="Invalid placement"):
+        _split_hunks(
+            repo_for_split,
+            source_branch="child_a",
+            commit_message="feat: extract",
+            placement="sideways",
+            hunks=hunks,
+        )
+
+
+def test_split_hunks_source_not_tracked_error(temp_repo: Repo) -> None:
+    """Error when source branch exists but is not tracked by Shortcake."""
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/untracked"] = main_sha
+    hunks = [HunkSelection(file_path="app.py", file_patch="x", hunk_index=0)]
+    with pytest.raises(MoveError, match="not tracked"):
+        _split_hunks(
+            temp_repo,
+            source_branch="untracked",
+            commit_message="feat: extract",
+            placement="before",
+            hunks=hunks,
+        )
+
+
 # === Split lines batch tests ===
 
 
