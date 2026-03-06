@@ -48,14 +48,17 @@ def _get_stack_in_order(repo: Repo, start: str) -> list[str]:
     """
     all_branches = set(git.get_all_local_branches(repo))
 
+    # Precompute branch heads for efficient parent lookups
+    branch_heads = {b: git.get_branch_head(repo, b) for b in all_branches}
+
     # Check if start itself is untracked (trunk)
-    if git.get_branch_parent(repo, start, all_branches) is None:
+    if git.get_branch_parent(repo, start, all_branches, branch_heads) is None:
         return []
 
     # Walk up to find stack root (first tracked branch whose parent is untracked)
     stack_root = start
     while True:
-        parent = git.get_branch_parent(repo, stack_root, all_branches)
+        parent = git.get_branch_parent(repo, stack_root, all_branches, branch_heads)
         if parent is None:  # pragma: no cover
             # stack_root's parent has no trailer - stack_root is the stack root
             # Note: This is defensive code. If we reach here, it means the
@@ -66,7 +69,7 @@ def _get_stack_in_order(repo: Repo, start: str) -> list[str]:
             # stack_root is the root of our stack
             break
         # Check if parent is the trunk (has no parent trailer itself)
-        parent_parent = git.get_branch_parent(repo, parent, all_branches)
+        parent_parent = git.get_branch_parent(repo, parent, all_branches, branch_heads)
         if parent_parent is None:
             # parent is trunk, so stack_root is the stack root
             break

@@ -1,6 +1,6 @@
 # Pulling Changes from Remote
 
-The `sc pull` command updates the current branch from its remote tracking branch.
+The `sc pull` command updates the current branch and its entire stack from remote.
 
 This is useful when:
 - You've pushed changes from one machine and want to get them on another
@@ -34,7 +34,7 @@ automatically resets to match the remote:
 ```console
 $ # remote: force-push add-feature
 $ sc pull
-Reset 'add-feature' to origin/add-feature (<HASH>)
+Updated 'add-feature' to origin/add-feature (<HASH>)
 ```
 
 This is equivalent to:
@@ -43,6 +43,36 @@ This is equivalent to:
 
 This is the expected behavior for stacked PR workflows where the remote is the
 source of truth after force-pushing amended commits.
+
+## Pull Entire Stack
+
+When you have a stack of branches and some have been updated on remote,
+`sc pull` fetches once and updates all branches in the stack, then restacks:
+
+```console
+$ # setup: with-remote
+$ # reset-to-main
+$ echo "feature a" > a.py && git add a.py
+$ sc create -m "Feature A"
+Created branch 'feature-a' from 'main'
+$ git push -u origin feature-a > /dev/null 2>&1
+$ echo "feature b" > b.py && git add b.py
+$ sc create -m "Feature B"
+Created branch 'feature-b' from 'feature-a'
+$ git push -u origin feature-b > /dev/null 2>&1
+$ sc pull
+Checked 2 branches in stack. Already up to date.
+```
+
+After someone force-pushes to a branch in the stack:
+
+```console
+$ # remote: force-push feature-a
+$ sc pull
+Updated 'feature-a' to origin/feature-a (<HASH>)
+Rebasing 'feature-b' onto 'feature-a'...
+Restacked 1 branch(es).
+```
 
 ## Error Cases
 
@@ -58,7 +88,7 @@ Error: No remote 'origin' configured.
 
 | Option | Description |
 |--------|-------------|
-| `--rebase`, `-r` | Rebase local commits onto remote instead of resetting |
+| `--rebase`, `-r` | Rebase local commits onto remote instead of resetting (single-branch mode) |
 
 ## Common Scenarios
 

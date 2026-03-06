@@ -11,6 +11,7 @@ from dulwich.repo import Repo
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
 from shortcake._github import GitHubClient, get_github_token, get_repo_info
+from shortcake.commands.pull import PullError, _pull_stack
 
 
 class CheckoutError(ShortcakeError):
@@ -185,6 +186,33 @@ def checkout(
         typer.echo(f"Checked out '{result.branch}' from remote")
     else:
         typer.echo(f"Switched to '{result.branch}'")
+
+    # Pull the stack after switching (if possible)
+    try:
+        stack_result = _pull_stack(repo)
+    except PullError:
+        # Pull is best-effort after checkout — don't fail the command
+        return
+
+    any_updated = False
+    for br in stack_result.branch_results:
+        if br.created_from_remote:
+            typer.echo(f"Created '{br.branch}' from origin/{br.branch} ({br.new_sha})")
+            any_updated = True
+        elif br.updated:
+            typer.echo(f"Updated '{br.branch}' to origin/{br.branch} ({br.new_sha})")
+            any_updated = True
+        elif br.skipped_no_remote:
+            typer.echo(f"Skipped '{br.branch}' (no remote tracking branch)")
+
+    if any_updated and stack_result.is_stack:
+        from shortcake.commands.restack import _restack
+
+        restack_result = _restack(repo)
+        if restack_result.restacked_branches:
+            typer.echo(
+                f"Restacked {len(restack_result.restacked_branches)} branch(es)."
+            )
 
 
 # Alias
