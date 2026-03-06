@@ -7,7 +7,9 @@ from dulwich.objects import Commit
 from dulwich.repo import Repo
 
 from shortcake import _git as git
+from shortcake._cache import update_pr_cache
 from shortcake._exceptions import ShortcakeError
+from shortcake._github import GitHubClient, get_github_token, get_repo_info
 from shortcake._trailers import Trailers
 from shortcake.commands.restack import RestackResult, _restack
 
@@ -25,6 +27,7 @@ class SyncResult:
     trunk_updated: bool
     trunk_new_sha: str | None = None
     deleted_branches: list[str] = field(default_factory=list)
+    closed_branches: list[str] = field(default_factory=list)
     reparented_branches: dict[str, str] = field(default_factory=dict)
     restack_result: RestackResult | None = None
 
@@ -167,6 +170,81 @@ def _reparent_branch(repo: Repo, child: str, new_parent: str) -> None:
     git.update_branch(repo, child, new_head.decode())
 
 
+def _delete_and_reparent(
+    repo: Repo,
+    branch: str,
+    trunk: str,
+    current_branch: str | None,
+    skip_branches: set[str],
+    result: SyncResult,
+) -> str | None:
+    """Delete a branch and reparent its children.
+
+    Returns the (possibly updated) current branch name.
+    """
+    children = git.get_branch_children(repo, branch)
+    all_branches = set(git.get_all_local_branches(repo))
+    branch_parent = git.get_branch_parent(repo, branch, all_branches)
+    grandparent = branch_parent if branch_parent else trunk
+
+    if branch == current_branch:
+        git.switch_branch(repo, trunk)
+        current_branch = trunk
+
+    for child in children:
+        if child not in skip_branches:
+            _reparent_branch(repo, child, grandparent)
+            result.reparented_branches[child] = grandparent
+            typer.echo(f"Reparented {child} to {grandparent}")
+
+    git.delete_branch(repo, branch)
+    return current_branch
+
+
+def _detect_closed_pr_branches(
+    repo: Repo, tracked_branches: list[str], exclude: list[str]
+) -> list[str]:
+    """Detect tracked branches with closed (not merged) PRs on GitHub.
+
+    Returns list of branch names with closed PRs, excluding already-detected
+    merged branches.
+    """
+    token = get_github_token()
+    repo_info = get_repo_info(repo)
+
+    if not token or not repo_info:
+        return []
+
+    owner, repo_name = repo_info
+    exclude_set = set(exclude)
+    closed: list[str] = []
+
+    try:
+        with GitHubClient(token, owner, repo_name) as gh:
+            for branch in tracked_branches:
+                if branch in exclude_set:
+                    continue
+                try:
+                    pr = gh.get_pr_for_branch(branch)
+                    if pr:
+                        continue  # Open PR, skip
+                    closed_num, is_merged = gh.get_closed_pr_info(branch)
+                    if closed_num and not is_merged:
+                        closed.append(branch)
+                        pr_url = (
+                            f"https://github.com/{owner}/{repo_name}/pull/{closed_num}"
+                        )
+                        update_pr_cache(
+                            repo, branch, closed_num, is_closed=True, url=pr_url
+                        )
+                except Exception:
+                    continue
+    except Exception:
+        pass
+
+    return closed
+
+
 def _sync(
     repo: Repo,
     force: bool = False,
@@ -216,6 +294,9 @@ def _sync(
     tracked_branches = git.get_tracked_branches(repo)
     merged_branches = git.get_merged_branches(repo, tracked_branches, trunk)
 
+    # All branches to skip reparenting into (merged + closed)
+    all_removing: set[str] = set(merged_branches)
+
     if merged_branches:
         # Sort for deletion (leaves first)
         sorted_merged = _topological_sort_for_deletion(repo, merged_branches)
@@ -237,28 +318,41 @@ def _sync(
                 should_delete = response.lower() in ("y", "yes")
 
             if should_delete:
-                # Get children before deleting
-                children = git.get_branch_children(repo, branch)
-                # Get this branch's parent for reparenting children
-                all_branches = set(git.get_all_local_branches(repo))
-                branch_parent = git.get_branch_parent(repo, branch, all_branches)
-                grandparent = branch_parent if branch_parent else trunk
-
-                # If current branch is being deleted, switch to trunk first
-                if branch == current_branch:
-                    git.switch_branch(repo, trunk)
-                    current_branch = trunk
-
-                # Reparent children
-                for child in children:
-                    if child not in merged_branches:  # Don't reparent if also merged
-                        _reparent_branch(repo, child, grandparent)
-                        result.reparented_branches[child] = grandparent
-                        typer.echo(f"Reparented {child} to {grandparent}")
-
-                # Delete the branch
-                git.delete_branch(repo, branch)
+                current_branch = _delete_and_reparent(
+                    repo, branch, trunk, current_branch, all_removing, result
+                )
                 result.deleted_branches.append(branch)
+                typer.echo(f"Deleted branch {branch}")
+
+    # 3b. Detect branches with closed (not merged) PRs on GitHub
+    closed_branches = _detect_closed_pr_branches(
+        repo, tracked_branches, merged_branches
+    )
+    all_removing.update(closed_branches)
+
+    if closed_branches:
+        sorted_closed = _topological_sort_for_deletion(repo, closed_branches)
+
+        for branch in sorted_closed:
+            if dry_run:
+                typer.echo(f"Would delete closed branch '{branch}'")
+                continue
+
+            should_delete = force
+            if not force and prompt_fn:
+                should_delete = prompt_fn(branch, "closed")
+            elif not force:
+                response = typer.prompt(
+                    f"'{branch}' has a closed PR. Delete it? [y/n]",
+                    default="n",
+                )
+                should_delete = response.lower() in ("y", "yes")
+
+            if should_delete:
+                current_branch = _delete_and_reparent(
+                    repo, branch, trunk, current_branch, all_removing, result
+                )
+                result.closed_branches.append(branch)
                 typer.echo(f"Deleted branch {branch}")
 
     # 4. Restack remaining branches if current is tracked
