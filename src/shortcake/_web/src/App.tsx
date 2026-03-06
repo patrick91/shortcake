@@ -1928,6 +1928,37 @@ export default function App() {
     setSplitLineSelections((prev) => prev.filter((s) => s.id !== id));
   }, []);
 
+  const [, startHunkTransition] = useTransition();
+
+  const handleHunkToggle = useCallback((key: HunkKey) => {
+    startHunkTransition(() => {
+      setSelectedHunks((prev) => {
+        const next = new Set(prev);
+        if (next.has(key)) next.delete(key);
+        else next.add(key);
+        return next;
+      });
+    });
+  }, [startHunkTransition]);
+
+  const refreshData = useCallback(async () => {
+    try {
+      const stackData = await fetchJSON<StackResponse>('/api/stack');
+      setStack(stackData);
+      if (selection?.type === 'branch') {
+        const diffData = await fetchJSON<DiffResponse>(
+          `/api/diff?branch=${encodeURIComponent(selection.name)}`,
+        );
+        setDiff(diffData);
+      } else if (selection?.type === 'working') {
+        const data = await fetchJSON<WorkingDiffResponse>('/api/diff/working');
+        setWorkingPatch(data.patch);
+      }
+    } catch {
+      // Silently fail refresh — data may be stale but still usable
+    }
+  }, [selection]);
+
   const handleSplitLinesSubmit = useCallback(
     async (commitMessage: string) => {
       if (splitLineSelections.length === 0 || selection?.type !== 'branch') return;
@@ -1971,37 +2002,6 @@ export default function App() {
     setShowSplitLinesDialog(false);
     setSplitLinesError(null);
   }, []);
-
-  const [, startHunkTransition] = useTransition();
-
-  const handleHunkToggle = useCallback((key: HunkKey) => {
-    startHunkTransition(() => {
-      setSelectedHunks((prev) => {
-        const next = new Set(prev);
-        if (next.has(key)) next.delete(key);
-        else next.add(key);
-        return next;
-      });
-    });
-  }, [startHunkTransition]);
-
-  const refreshData = useCallback(async () => {
-    try {
-      const stackData = await fetchJSON<StackResponse>('/api/stack');
-      setStack(stackData);
-      if (selection?.type === 'branch') {
-        const diffData = await fetchJSON<DiffResponse>(
-          `/api/diff?branch=${encodeURIComponent(selection.name)}`,
-        );
-        setDiff(diffData);
-      } else if (selection?.type === 'working') {
-        const data = await fetchJSON<WorkingDiffResponse>('/api/diff/working');
-        setWorkingPatch(data.patch);
-      }
-    } catch {
-      // Silently fail refresh — data may be stale but still usable
-    }
-  }, [selection]);
 
   // Poll for external changes every 3 seconds
   const lastStackKeyRef = useRef<string>('');
