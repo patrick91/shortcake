@@ -625,10 +625,7 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
                         )
                         return
                     if "commitMessage" not in c or "selections" not in c:
-                        msg = (
-                            "Each chunk must have"
-                            " 'commitMessage' and 'selections'"
-                        )
+                        msg = "Each chunk must have" " 'commitMessage' and 'selections'"
                         _write_json(self, 400, {"error": msg})
                         return
                     raw_sels = c["selections"]
@@ -657,9 +654,7 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
                         ]
                         sel_missing = [f for f in sel_required if f not in s]
                         if sel_missing:
-                            msg = (
-                                f"Selection missing fields: {', '.join(sel_missing)}"
-                            )
+                            msg = f"Selection missing fields: {', '.join(sel_missing)}"
                             _write_json(self, 400, {"error": msg})
                             return
                         selections.append(

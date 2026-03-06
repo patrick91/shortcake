@@ -438,9 +438,9 @@ def _split_hunks(
 
     def _rollback() -> None:
         """Restore all modified branch refs and abort any in-progress rebase."""
-        if git.is_rebase_in_progress(repo):
+        if git.is_rebase_in_progress(repo):  # pragma: no cover
             with contextlib.suppress(Exception):
-                git.rebase_abort(repo)  # pragma: no cover
+                git.rebase_abort(repo)
         for b, sha in original_refs.items():
             with contextlib.suppress(Exception):
                 git.update_branch(repo, b, sha)
@@ -1007,9 +1007,9 @@ def _split_lines_batch(
 
     def _rollback() -> None:
         """Restore all modified branch refs, delete created branches."""
-        if git.is_rebase_in_progress(repo):
+        if git.is_rebase_in_progress(repo):  # pragma: no cover
             with contextlib.suppress(Exception):
-                git.rebase_abort(repo)  # pragma: no cover
+                git.rebase_abort(repo)
         for b, sha in original_refs.items():
             with contextlib.suppress(Exception):
                 git.update_branch(repo, b, sha)

@@ -1109,11 +1109,7 @@ def test_split_hunks_rebase_in_progress_error(
                 source_branch="child_a",
                 commit_message="feat: extract",
                 placement="before",
-                hunks=[
-                    HunkSelection(
-                        file_path="app.py", file_patch="x", hunk_index=0
-                    )
-                ],
+                hunks=[HunkSelection(file_path="app.py", file_patch="x", hunk_index=0)],
             )
     finally:
         rebase_dir.rmdir()
@@ -1127,9 +1123,7 @@ def test_split_hunks_nonexistent_branch_error(temp_repo: Repo) -> None:
             source_branch="nonexistent-branch",
             commit_message="feat: extract",
             placement="before",
-            hunks=[
-                HunkSelection(file_path="app.py", file_patch="x", hunk_index=0)
-            ],
+            hunks=[HunkSelection(file_path="app.py", file_patch="x", hunk_index=0)],
         )
 
 
