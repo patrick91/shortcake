@@ -201,23 +201,35 @@ def _delete_and_reparent(
     return current_branch
 
 
-def _detect_closed_pr_branches(
-    repo: Repo, tracked_branches: list[str], exclude: list[str]
-) -> list[str]:
-    """Detect tracked branches with closed (not merged) PRs on GitHub.
+@dataclass
+class _GitHubBranchStatus:
+    """Branches detected via GitHub API as needing cleanup."""
 
-    Returns list of branch names with closed PRs, excluding already-detected
-    merged branches.
+    merged: list[str] = field(default_factory=list)
+    closed: list[str] = field(default_factory=list)
+
+
+def _detect_github_stale_branches(
+    repo: Repo, tracked_branches: list[str], exclude: list[str]
+) -> _GitHubBranchStatus:
+    """Detect tracked branches with merged or closed PRs on GitHub.
+
+    Checks the GitHub API for branches that have no open PR and have
+    either a merged or closed PR. This catches squash-merges and other
+    cases that local git detection misses.
+
+    Returns branches grouped by merged vs closed status, excluding
+    branches in the exclude list.
     """
     token = get_github_token()
     repo_info = get_repo_info(repo)
 
     if not token or not repo_info:
-        return []
+        return _GitHubBranchStatus()
 
     owner, repo_name = repo_info
     exclude_set = set(exclude)
-    closed: list[str] = []
+    result = _GitHubBranchStatus()
 
     try:
         with GitHubClient(token, owner, repo_name) as gh:
@@ -229,11 +241,16 @@ def _detect_closed_pr_branches(
                     if pr:
                         continue  # Open PR, skip
                     closed_num, is_merged = gh.get_closed_pr_info(branch)
-                    if closed_num and not is_merged:
-                        closed.append(branch)
-                        pr_url = (
-                            f"https://github.com/{owner}/{repo_name}/pull/{closed_num}"
+                    if not closed_num:
+                        continue
+                    pr_url = f"https://github.com/{owner}/{repo_name}/pull/{closed_num}"
+                    if is_merged:
+                        result.merged.append(branch)
+                        update_pr_cache(
+                            repo, branch, closed_num, is_merged=True, url=pr_url
                         )
+                    else:
+                        result.closed.append(branch)
                         update_pr_cache(
                             repo, branch, closed_num, is_closed=True, url=pr_url
                         )
@@ -242,7 +259,7 @@ def _detect_closed_pr_branches(
     except Exception:
         pass
 
-    return closed
+    return result
 
 
 def _sync(
@@ -324,15 +341,41 @@ def _sync(
                 result.deleted_branches.append(branch)
                 typer.echo(f"Deleted branch {branch}")
 
-    # 3b. Detect branches with closed (not merged) PRs on GitHub
-    closed_branches = _detect_closed_pr_branches(
+    # 3b. Check GitHub API for merged/closed PRs that local git missed
+    github_status = _detect_github_stale_branches(
         repo, tracked_branches, merged_branches
     )
-    all_removing.update(closed_branches)
+    all_removing.update(github_status.merged)
+    all_removing.update(github_status.closed)
 
-    if closed_branches:
-        sorted_closed = _topological_sort_for_deletion(repo, closed_branches)
+    # Handle GitHub-detected merged branches (e.g. squash merges)
+    if github_status.merged:
+        sorted_gh_merged = _topological_sort_for_deletion(repo, github_status.merged)
+        for branch in sorted_gh_merged:
+            if dry_run:
+                typer.echo(f"Would delete merged branch '{branch}'")
+                continue
 
+            should_delete = force
+            if not force and prompt_fn:
+                should_delete = prompt_fn(branch, trunk)
+            elif not force:
+                response = typer.prompt(
+                    f"'{branch}' is merged into {trunk}. Delete it? [y/n]",
+                    default="n",
+                )
+                should_delete = response.lower() in ("y", "yes")
+
+            if should_delete:
+                current_branch = _delete_and_reparent(
+                    repo, branch, trunk, current_branch, all_removing, result
+                )
+                result.deleted_branches.append(branch)
+                typer.echo(f"Deleted branch {branch}")
+
+    # Handle closed (not merged) PR branches
+    if github_status.closed:
+        sorted_closed = _topological_sort_for_deletion(repo, github_status.closed)
         for branch in sorted_closed:
             if dry_run:
                 typer.echo(f"Would delete closed branch '{branch}'")
@@ -396,7 +439,11 @@ def sync(
         raise typer.Exit(1)
 
     # Summary
-    no_deletions = not result.deleted_branches and not result.trunk_updated
+    no_deletions = (
+        not result.deleted_branches
+        and not result.closed_branches
+        and not result.trunk_updated
+    )
     no_restacks = (
         not result.restack_result or not result.restack_result.restacked_branches
     )
