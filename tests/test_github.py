@@ -642,6 +642,65 @@ def test_github_client_has_merged_pr_false_closed_not_merged() -> None:
 
 
 @respx.mock
+def test_github_client_get_merged_pr_base_returns_base() -> None:
+    """Test get_merged_pr_base returns the base branch of a merged PR."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 123,
+                    "state": "closed",
+                    "merged_at": "2024-01-15T10:30:00Z",
+                    "base": {"ref": "main"},
+                }
+            ],
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        result = client.get_merged_pr_base("feature")
+
+    assert result == "main"
+
+
+@respx.mock
+def test_github_client_get_merged_pr_base_returns_none_no_merged() -> None:
+    """Test get_merged_pr_base returns None when no merged PR exists."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 123,
+                    "state": "closed",
+                    "merged_at": None,
+                    "base": {"ref": "main"},
+                }
+            ],
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        result = client.get_merged_pr_base("feature")
+
+    assert result is None
+
+
+@respx.mock
+def test_github_client_get_merged_pr_base_returns_none_empty() -> None:
+    """Test get_merged_pr_base returns None when no PRs exist."""
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        result = client.get_merged_pr_base("feature")
+
+    assert result is None
+
+
+@respx.mock
 def test_github_client_has_merged_pr_queries_closed() -> None:
     """Test has_merged_pr queries closed PRs."""
     route = respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
