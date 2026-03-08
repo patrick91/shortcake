@@ -76,6 +76,74 @@ def test_adopt_force_reparent(repo_with_feature: Repo, tmp_path: Path) -> None:
     assert parent == "develop"
 
 
+def test_adopt_force_reparent_diverged_lineage(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test --force when new parent diverges earlier in history.
+
+    Reproduces a bug where re-parenting to a branch with a different
+    lineage caused adopt to amend the wrong commit (an ancestor's
+    trailer instead of the branch's own trailer).
+    """
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+
+    # Create parent-a from main
+    temp_repo.refs[b"refs/heads/parent-a"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/parent-a")
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("a")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers_a = Trailers(parent_branch="main")
+    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: parent a").encode())
+    parent_a_sha = temp_repo.refs[b"refs/heads/parent-a"]
+
+    # Create child branch (3 commits on top of parent-a)
+    temp_repo.refs[b"refs/heads/child"] = parent_a_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/child")
+    file_c1 = tmp_path / "c1.txt"
+    file_c1.write_text("c1")
+    porcelain.add(temp_repo, paths=[str(file_c1)])
+    trailers_c = Trailers(parent_branch="parent-a")
+    porcelain.commit(temp_repo, message=trailers_c.apply_to("feat: child").encode())
+    file_c2 = tmp_path / "c2.txt"
+    file_c2.write_text("c2")
+    porcelain.add(temp_repo, paths=[str(file_c2)])
+    porcelain.commit(temp_repo, message=b"style: format")
+
+    # Create parent-b from main (diverged lineage, not from parent-a)
+    temp_repo.refs[b"refs/heads/parent-b"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/parent-b")
+    porcelain.reset(temp_repo, "hard")
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("b")
+    porcelain.add(temp_repo, paths=[str(file_b)])
+    trailers_b = Trailers(parent_branch="main")
+    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: parent b").encode())
+
+    # Delete parent-a (simulates the old parent being gone)
+    del temp_repo.refs[b"refs/heads/parent-a"]
+
+    # Re-parent child to parent-b
+    result = _adopt(temp_repo, branch="child", parent="parent-b", force=True)
+    assert result.parent == "parent-b"
+
+    # Verify child's first commit trailer was updated (not parent-a's)
+    child_head = git.get_branch_head(temp_repo, "child")
+    parent_b_head = git.get_branch_head(temp_repo, "parent-b")
+    commits = git.get_commits_between(temp_repo, child_head, parent_b_head)
+
+    # Check each commit — only the child's first commit should reference parent-b
+    found_child_trailer = False
+    for c in commits:
+        msg = git.get_commit_message(temp_repo, c)
+        t = Trailers.from_message(msg)
+        if "feat: child" in msg:
+            assert t.parent_branch == "parent-b"
+            found_child_trailer = True
+        elif "feat: parent a" in msg:
+            # Ancestor commit should keep its original trailer
+            assert t.parent_branch == "main"
+    assert found_child_trailer
+
+
 def test_adopt_default_branch(temp_repo: Repo) -> None:
     """Test error when trying to adopt default branch."""
     with pytest.raises(AdoptError, match="Cannot adopt default branch"):
