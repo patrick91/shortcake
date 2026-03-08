@@ -24,6 +24,7 @@ from shortcake.commands.sync import (
     _detect_github_stale_branches,
     _GitHubBranchStatus,
     _reparent_branch,
+    _resolve_deleted_parent,
     _sync,
     _topological_sort_for_deletion,
 )
@@ -1317,3 +1318,140 @@ def _patch_github_for_sync(mock_client):
             yield
 
     return _ctx()
+
+
+# Tests for orphaned parent reparenting
+
+
+def test_sync_reparents_branch_with_deleted_parent(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test sync reparents a branch whose parent was deleted locally."""
+    # Create a branch with trailer pointing to non-existent parent
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    test_file = tmp_path / "feature.txt"
+    test_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(test_file)])
+    trailers = Trailers(parent_branch="deleted-parent")
+    message = trailers.apply_to("feat: add feature")
+    porcelain.commit(temp_repo, message=message.encode())
+
+    git.switch_branch(temp_repo, "main")
+
+    # Mock _resolve_deleted_parent to return "main"
+    with patch(
+        "shortcake.commands.sync._resolve_deleted_parent",
+        return_value="main",
+    ):
+        result = _sync(temp_repo, force=True)
+
+    assert result.reparented_branches == {"feature": "main"}
+    # Verify the trailer was updated
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    new_parent = git.get_branch_parent(temp_repo, "feature", all_branches)
+    assert new_parent == "main"
+
+
+def test_sync_reparents_branch_dry_run(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test sync dry run shows reparent without executing."""
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    test_file = tmp_path / "feature.txt"
+    test_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(test_file)])
+    trailers = Trailers(parent_branch="deleted-parent")
+    message = trailers.apply_to("feat: add feature")
+    porcelain.commit(temp_repo, message=message.encode())
+
+    git.switch_branch(temp_repo, "main")
+
+    with patch(
+        "shortcake.commands.sync._resolve_deleted_parent",
+        return_value="main",
+    ):
+        result = _sync(temp_repo, dry_run=True)
+
+    # Dry run should NOT reparent
+    assert result.reparented_branches == {}
+    # Trailer should still point to deleted-parent
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    parent = git.get_branch_parent(temp_repo, "feature", all_branches)
+    assert parent == "deleted-parent"
+
+
+def test_sync_skips_reparent_when_resolve_returns_none(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test sync skips reparent when parent can't be resolved."""
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    test_file = tmp_path / "feature.txt"
+    test_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(test_file)])
+    trailers = Trailers(parent_branch="deleted-parent")
+    message = trailers.apply_to("feat: add feature")
+    porcelain.commit(temp_repo, message=message.encode())
+
+    git.switch_branch(temp_repo, "main")
+
+    with patch(
+        "shortcake.commands.sync._resolve_deleted_parent",
+        return_value=None,
+    ):
+        result = _sync(temp_repo, force=True)
+
+    assert result.reparented_branches == {}
+
+
+def test_resolve_deleted_parent_returns_merged_base(
+    temp_repo: Repo,
+) -> None:
+    """Test _resolve_deleted_parent returns merged PR base."""
+    from unittest.mock import MagicMock
+
+    client = MagicMock()
+    client.get_merged_pr_base.return_value = "main"
+    client.__enter__ = lambda self: client
+    client.__exit__ = lambda self, *a: None
+
+    with _patch_github_for_sync(client):
+        result = _resolve_deleted_parent(temp_repo, "deleted-branch")
+
+    assert result == "main"
+
+
+def test_resolve_deleted_parent_returns_none_no_token(
+    temp_repo: Repo,
+) -> None:
+    """Test _resolve_deleted_parent returns None when no token."""
+    with patch("shortcake.commands.sync.get_github_token", return_value=None):
+        result = _resolve_deleted_parent(temp_repo, "deleted-branch")
+
+    assert result is None
+
+
+def test_resolve_deleted_parent_handles_api_error(
+    temp_repo: Repo,
+) -> None:
+    """Test _resolve_deleted_parent handles API errors gracefully."""
+    with (
+        patch("shortcake.commands.sync.get_github_token", return_value="tok"),
+        patch(
+            "shortcake.commands.sync.get_repo_info",
+            return_value=("owner", "repo"),
+        ),
+        patch(
+            "shortcake.commands.sync.GitHubClient",
+            side_effect=Exception("network error"),
+        ),
+    ):
+        result = _resolve_deleted_parent(temp_repo, "deleted-branch")
+
+    assert result is None

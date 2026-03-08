@@ -2,6 +2,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Annotated
 
+import httpx
 import typer
 from dulwich.objects import Commit
 from dulwich.repo import Repo
@@ -262,6 +263,24 @@ def _detect_github_stale_branches(
     return result
 
 
+def _resolve_deleted_parent(repo: Repo, parent: str) -> str | None:
+    """Check if a deleted parent branch was merged on GitHub.
+
+    Returns the branch it was merged into, or None if not found/not merged.
+    """
+    token = get_github_token()
+    repo_info = get_repo_info(repo)
+    if not token or not repo_info:
+        return None
+
+    owner, repo_name = repo_info
+    try:
+        with GitHubClient(token, owner, repo_name) as gh:
+            return gh.get_merged_pr_base(parent)
+    except (httpx.HTTPStatusError, httpx.RequestError, Exception):
+        return None
+
+
 def _sync(
     repo: Repo,
     force: bool = False,
@@ -397,6 +416,29 @@ def _sync(
                 )
                 result.closed_branches.append(branch)
                 typer.echo(f"Deleted branch {branch}")
+
+    # 3c. Reparent branches whose parent was deleted (merged elsewhere)
+    # Re-fetch tracked branches since some may have been deleted above
+    remaining_tracked = git.get_tracked_branches(repo)
+    all_local = set(git.get_all_local_branches(repo))
+    for branch in remaining_tracked:
+        parent = git.get_branch_parent(repo, branch, all_local)
+        if parent and parent not in all_local:
+            # Parent doesn't exist locally - check if it was merged on GitHub
+            merged_target = _resolve_deleted_parent(repo, parent)
+            if merged_target:
+                if dry_run:
+                    typer.echo(
+                        f"Would reparent '{branch}' from "
+                        f"'{parent}' to '{merged_target}'"
+                    )
+                else:
+                    _reparent_branch(repo, branch, merged_target)
+                    result.reparented_branches[branch] = merged_target
+                    typer.echo(
+                        f"Reparented '{branch}' to '{merged_target}' "
+                        f"('{parent}' was merged)"
+                    )
 
     # 4. Restack remaining branches if current is tracked
     current_branch = git.get_current_branch(repo)
