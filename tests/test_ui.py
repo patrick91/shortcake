@@ -324,7 +324,7 @@ class FakeHandler:
 
 def _make_handler(repo: Repo, path: str) -> FakeHandler:
     """Create a handler class from repo and invoke do_GET with the given path."""
-    handler_cls = _build_request_handler(repo)
+    handler_cls = _build_request_handler(Path(repo.path))
     fake = FakeHandler(path)
     # Bind the do_GET method to our fake handler
     handler_cls.do_GET(fake)  # type: ignore[arg-type]
@@ -412,7 +412,7 @@ def test_handler_404(temp_repo: Repo) -> None:
 
 def test_handler_log_message_suppressed(temp_repo: Repo) -> None:
     """log_message is overridden to suppress output."""
-    handler_cls = _build_request_handler(temp_repo)
+    handler_cls = _build_request_handler(Path(temp_repo.path))
     fake = FakeHandler("/api/health")
     # Calling log_message should not raise
     handler_cls.log_message(fake, "test %s", "arg")  # type: ignore[arg-type]
@@ -425,7 +425,7 @@ def _make_post_handler(
     repo: Repo, path: str, body: dict | str | None = None
 ) -> FakeHandler:
     """Create a handler class and invoke do_POST with given path+body."""
-    handler_cls = _build_request_handler(repo)
+    handler_cls = _build_request_handler(Path(repo.path))
     fake = FakeHandler(path)
     if body is not None:
         raw = json.dumps(body) if isinstance(body, dict) else body
@@ -440,7 +440,7 @@ def _make_post_handler(
 
 def test_post_move_hunks_invalid_json(temp_repo: Repo) -> None:
     """POST /api/move-hunks with invalid JSON returns 400."""
-    handler_cls = _build_request_handler(temp_repo)
+    handler_cls = _build_request_handler(Path(temp_repo.path))
     fake = FakeHandler("/api/move-hunks")
     fake.rfile = io.BytesIO(b"not json")
     fake.headers = {"Content-Length": "8"}
@@ -544,7 +544,7 @@ def test_post_move_hunks_unexpected_error(repo_with_stack: Repo) -> None:
 
 def test_post_accept_hunks_invalid_json(temp_repo: Repo) -> None:
     """POST /api/accept-working-hunks with invalid JSON returns 400."""
-    handler_cls = _build_request_handler(temp_repo)
+    handler_cls = _build_request_handler(Path(temp_repo.path))
     fake = FakeHandler("/api/accept-working-hunks")
     fake.rfile = io.BytesIO(b"bad json")
     fake.headers = {"Content-Length": "8"}
@@ -681,7 +681,7 @@ def test_post_404(temp_repo: Repo) -> None:
 
 def test_options_handler(temp_repo: Repo) -> None:
     """OPTIONS returns 200 with CORS headers."""
-    handler_cls = _build_request_handler(temp_repo)
+    handler_cls = _build_request_handler(Path(temp_repo.path))
     fake = FakeHandler("/api/move-hunks")
     handler_cls.do_OPTIONS(fake)  # type: ignore[arg-type]
     assert fake._status == 200
@@ -698,7 +698,7 @@ def test_start_api_server(temp_repo: Repo) -> None:
     """_start_api_server starts a server that responds to health checks."""
     import urllib.request
 
-    server = _start_api_server(temp_repo, "127.0.0.1", 0)
+    server = _start_api_server(Path(temp_repo.path), "127.0.0.1", 0)
     try:
         port = server.server_address[1]
         resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health")
