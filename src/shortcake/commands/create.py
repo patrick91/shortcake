@@ -60,8 +60,8 @@ def _slugify(message: str) -> str:
     slug = re.sub(r"[^a-z0-9]+", "-", slug)
     # Strip leading/trailing hyphens
     slug = slug.strip("-")
-    # Max 50 characters
-    return slug[:50]
+    # Max 50 characters, strip trailing hyphen from truncation
+    return slug[:50].rstrip("-")
 
 
 def _validate_branch_name(repo: Repo, branch: str) -> None:
