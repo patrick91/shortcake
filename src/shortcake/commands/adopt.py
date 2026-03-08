@@ -87,7 +87,7 @@ def _adopt(
     if not git.branch_exists(repo, parent):
         raise AdoptError(f"Parent branch '{parent}' not found")
 
-    # Find first commit on branch
+    # Find commits on branch relative to new parent
     branch_head = git.get_branch_head(repo, branch)
     parent_head = git.get_branch_head(repo, parent)
     commits = git.get_commits_between(repo, branch_head, parent_head)
@@ -95,8 +95,24 @@ def _adopt(
     if not commits:
         raise AdoptError(f"No commits on '{branch}' relative to '{parent}'")
 
-    # First commit is last in list (walker returns newest first)
+    # When re-parenting with --force, the commit with the Shortcake-Parent
+    # trailer may not be commits[-1] (the oldest). This happens when the new
+    # parent diverges earlier in history, causing commits from other branches
+    # to appear in the diff. Scan all commits to find the right one.
     first_commit = commits[-1]
+    trailer_commit_idx = len(commits) - 1  # index of commit with trailer
+
+    if force:
+        # Scan from newest to oldest — the branch's own trailer is always
+        # the first one we hit going backwards from HEAD, since any deeper
+        # trailers belong to ancestor branches that ended up in the range.
+        for i in range(len(commits)):
+            msg = git.get_commit_message(repo, commits[i])
+            t = Trailers.from_message(msg)
+            if t.parent_branch is not None:
+                first_commit = commits[i]
+                trailer_commit_idx = i
+                break
 
     # Check if already tracked
     message = git.get_commit_message(repo, first_commit)
@@ -115,10 +131,10 @@ def _adopt(
     new_message = new_trailers.apply_to(message)
     new_sha = git.amend_commit_message(repo, first_commit, new_message)
 
-    # Rewrite history: need to rebase all commits on top of new first commit
-    if len(commits) > 1:
-        # We need to replay commits on top of the amended first commit
-        new_sha = _replay_commits(repo, commits[:-1], new_sha)
+    # Rewrite history: replay commits after the amended one
+    commits_to_replay = commits[:trailer_commit_idx]
+    if commits_to_replay:
+        new_sha = _replay_commits(repo, commits_to_replay, new_sha)
 
     # Update branch ref
     git.update_branch(repo, branch, new_sha.decode())
