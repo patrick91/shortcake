@@ -171,6 +171,70 @@ def _reparent_branch(repo: Repo, child: str, new_parent: str) -> None:
     git.update_branch(repo, child, new_head.decode())
 
 
+def _update_parent_trailer(repo: Repo, child: str, new_parent: str) -> None:
+    """Rewrite only the Shortcake-Parent trailer without changing tree or parents.
+
+    Unlike _reparent_branch which also grafts the commit onto the new parent's
+    head (preserving the old tree), this only updates the trailer message. This
+    is used when the old parent was deleted and a proper rebase is needed after.
+    """
+    all_branches = set(git.get_all_local_branches(repo))
+    parent_info = git.get_branch_parent_info(repo, child, all_branches)
+    if parent_info is None:
+        return
+
+    _, merge_base = parent_info
+    if merge_base is None:
+        return
+
+    child_head = git.get_branch_head(repo, child)
+    commits = git.get_commits_between(repo, child_head, merge_base)
+
+    if not commits:  # pragma: no cover
+        return
+
+    first_commit_sha = commits[-1]
+    message = git.get_commit_message(repo, first_commit_sha)
+
+    lines = message.rstrip().split("\n")
+    body_lines = []
+    for line in lines:
+        if line.startswith("Shortcake-Parent: "):
+            continue
+        body_lines.append(line)
+
+    while body_lines and not body_lines[-1].strip():
+        body_lines.pop()
+
+    new_message = "\n".join(body_lines)
+    new_trailers = Trailers(parent_branch=new_parent)
+    new_message = new_trailers.apply_to(new_message)
+
+    # Rewrite first commit with new message but SAME parent and tree
+    old_first = repo[first_commit_sha]
+    fixed_first = Commit()
+    fixed_first.tree = old_first.tree
+    fixed_first.parents = list(old_first.parents)  # Keep original parents
+    fixed_first.author = old_first.author
+    fixed_first.committer = old_first.committer
+    fixed_first.author_time = old_first.author_time
+    fixed_first.author_timezone = old_first.author_timezone
+    fixed_first.commit_time = old_first.commit_time
+    fixed_first.commit_timezone = old_first.commit_timezone
+    fixed_first.encoding = old_first.encoding
+    fixed_first.message = new_message.encode()
+
+    repo.object_store.add_object(fixed_first)
+
+    # Replay remaining commits on top
+    if len(commits) > 1:
+        new_head = _replay_commits(repo, commits[:-1], fixed_first.id)
+    else:
+        new_head = fixed_first.id
+
+    git.update_branch(repo, child, new_head.decode())
+
+
 def _delete_and_reparent(
     repo: Repo,
     branch: str,
@@ -433,7 +497,9 @@ def _sync(
                         f"'{parent}' to '{merged_target}'"
                     )
                 else:
-                    _reparent_branch(repo, branch, merged_target)
+                    # Only update the trailer - don't graft the tree.
+                    # The subsequent restack step will do a proper rebase.
+                    _update_parent_trailer(repo, branch, merged_target)
                     result.reparented_branches[branch] = merged_target
                     typer.echo(
                         f"Reparented '{branch}' to '{merged_target}' "

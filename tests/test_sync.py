@@ -27,6 +27,7 @@ from shortcake.commands.sync import (
     _resolve_deleted_parent,
     _sync,
     _topological_sort_for_deletion,
+    _update_parent_trailer,
 )
 
 runner = CliRunner()
@@ -1339,8 +1340,7 @@ def test_sync_reparents_branch_with_deleted_parent(
     message = trailers.apply_to("feat: add feature")
     porcelain.commit(temp_repo, message=message.encode())
 
-    git.switch_branch(temp_repo, "main")
-
+    # Stay on feature so restack triggers for this stack
     # Mock _resolve_deleted_parent to return "main"
     with patch(
         "shortcake.commands.sync._resolve_deleted_parent",
@@ -1455,3 +1455,36 @@ def test_resolve_deleted_parent_handles_api_error(
         result = _resolve_deleted_parent(temp_repo, "deleted-branch")
 
     assert result is None
+
+
+def test_update_parent_trailer_only_changes_message(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test _update_parent_trailer changes trailer but keeps original parents."""
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    test_file = tmp_path / "feature.txt"
+    test_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(test_file)])
+    trailers = Trailers(parent_branch="old-parent")
+    message = trailers.apply_to("feat: add feature")
+    porcelain.commit(temp_repo, message=message.encode())
+
+    # Record original commit's parent
+    old_head = git.get_branch_head(temp_repo, "feature")
+    old_commit = temp_repo[old_head]
+    original_parents = list(old_commit.parents)
+
+    _update_parent_trailer(temp_repo, "feature", "new-parent")
+
+    # Trailer should be updated
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    new_parent = git.get_branch_parent(temp_repo, "feature", all_branches)
+    assert new_parent == "new-parent"
+
+    # Git parent should still be the same (not grafted)
+    new_head = git.get_branch_head(temp_repo, "feature")
+    new_commit = temp_repo[new_head]
+    assert list(new_commit.parents) == original_parents
