@@ -1830,3 +1830,228 @@ def test_submit_skips_restack_on_dry_run(
         _submit(repo_with_tracked_feature, dry_run=True)
 
     restack_mock.assert_not_called()
+
+
+def test_submit_resolves_merged_parent_for_existing_pr(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit resolves parent to merged target when parent was deleted."""
+    from shortcake._trailers import Trailers
+
+    # Create branch with trailer pointing to a non-existent parent
+    # (simulating a parent that was merged and deleted locally)
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    test_file = tmp_path / "feature.txt"
+    test_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(test_file)])
+    trailers = Trailers(parent_branch="deleted-parent")
+    message = trailers.apply_to("feat: add feature")
+    porcelain.commit(temp_repo, message=message.encode())
+
+    # "deleted-parent" does NOT exist as a local branch
+    setup_origin_remote(temp_repo)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    # PR already exists with base "main" (GitHub auto-retargeted)
+    mock_pr = PRInfo(
+        number=42,
+        url="https://github.com/owner/repo/pull/42",
+        base="main",
+        title="feat: add feature",
+        body="",
+        state="open",
+        is_draft=False,
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = mock_pr
+    mock_client.get_merged_pr_base.return_value = "main"
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = _submit(temp_repo)
+
+    # Parent resolved to "main", which matches existing PR base
+    # so update_pr should NOT be called with base= (no base change needed)
+    base_update_calls = [
+        c for c in mock_client.update_pr.call_args_list if c[1].get("base")
+    ]
+    assert len(base_update_calls) == 0
+    assert len(result.branch_results) == 1
+    assert result.branch_results[0].action == PRAction.UPDATED
+
+
+def test_submit_resolves_merged_parent_for_new_pr(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit creates PR with resolved base when parent was merged."""
+    from shortcake._trailers import Trailers
+
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    test_file = tmp_path / "feature.txt"
+    test_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(test_file)])
+    trailers = Trailers(parent_branch="deleted-parent")
+    message = trailers.apply_to("feat: add feature")
+    porcelain.commit(temp_repo, message=message.encode())
+
+    setup_origin_remote(temp_repo)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    new_pr = PRInfo(
+        number=99,
+        url="https://github.com/owner/repo/pull/99",
+        base="main",
+        title="feat: add feature",
+        body="",
+        state="open",
+        is_draft=False,
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.get_merged_pr_base.return_value = "main"
+    mock_client.create_pr.return_value = new_pr
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = _submit(temp_repo)
+
+    # PR should be created with base="main" (resolved from merged parent)
+    mock_client.create_pr.assert_called_once()
+    call_kwargs = mock_client.create_pr.call_args[1]
+    assert call_kwargs["base"] == "main"
+    assert result.branch_results[0].action == PRAction.CREATED
+
+
+def test_submit_merged_parent_resolution_skipped_when_parent_exists(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that parent resolution is NOT triggered when parent exists locally."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    new_pr = PRInfo(
+        number=1,
+        url="https://github.com/owner/repo/pull/1",
+        base="main",
+        title="feat",
+        body="",
+        state="open",
+        is_draft=False,
+    )
+    mock_client.create_pr.return_value = new_pr
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        _submit(repo_with_tracked_feature)
+
+    # get_merged_pr_base should NOT be called since "main" exists locally
+    mock_client.get_merged_pr_base.assert_not_called()
+
+
+def test_submit_merged_parent_resolution_api_error_ignored(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test that API errors during parent resolution are handled gracefully."""
+    from shortcake._trailers import Trailers
+
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    test_file = tmp_path / "feature.txt"
+    test_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(test_file)])
+    trailers = Trailers(parent_branch="deleted-parent")
+    message = trailers.apply_to("feat: add feature")
+    porcelain.commit(temp_repo, message=message.encode())
+
+    setup_origin_remote(temp_repo)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    # API error when trying to resolve merged parent
+    mock_client.get_merged_pr_base.side_effect = httpx.ConnectError("timeout")
+    new_pr = PRInfo(
+        number=1,
+        url="https://github.com/owner/repo/pull/1",
+        base="deleted-parent",
+        title="feat",
+        body="",
+        state="open",
+        is_draft=False,
+    )
+    mock_client.create_pr.return_value = new_pr
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        # Should not raise - falls back to original parent
+        _submit(temp_repo)
+
+    # create_pr was called with original parent (fallback)
+    mock_client.create_pr.assert_called_once()
+    call_kwargs = mock_client.create_pr.call_args[1]
+    assert call_kwargs["base"] == "deleted-parent"
+
+
+def test_submit_422_base_not_found_error_message(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test 422 error about missing base gives helpful error message."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_response = MagicMock()
+    mock_response.status_code = 422
+    mock_response.text = (
+        '{"message":"Validation Failed","errors":'
+        '[{"message":"Proposed base branch \'main\' was not found"}]}'
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.create_pr.side_effect = httpx.HTTPStatusError(
+        "422", request=MagicMock(), response=mock_response
+    )
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = _submit(repo_with_tracked_feature)
+
+    assert result.branch_results[0].error is not None
+    assert "not found on GitHub" in result.branch_results[0].error
+    assert "sc sync" in result.branch_results[0].error
