@@ -299,7 +299,10 @@ def _write_json(
     handler.wfile.write(body)
 
 
-def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
+def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
+    def _open_repo() -> Repo:
+        return Repo(str(repo_path))
+
     class StackUIRequestHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
@@ -310,6 +313,7 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
 
             if parsed.path == "/api/stack":
                 try:
+                    repo = _open_repo()
                     _write_json(self, 200, _build_stack_payload(repo))
                 except Exception as exc:
                     _write_json(self, 500, {"error": str(exc)})
@@ -317,6 +321,7 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
 
             if parsed.path == "/api/github-info":
                 try:
+                    repo = _open_repo()
                     tracked = _tracked_branch_parents(repo)
                     branch_names = list(tracked.keys())
                     _write_json(
@@ -337,6 +342,7 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
                     return
 
                 try:
+                    repo = _open_repo()
                     _write_json(self, 200, _build_diff_payload(repo, branch))
                 except ValueError as exc:
                     _write_json(self, 400, {"error": str(exc)})
@@ -346,6 +352,7 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
 
             if parsed.path == "/api/diff/working":
                 try:
+                    repo = _open_repo()
                     _write_json(self, 200, _build_working_diff_payload(repo))
                 except Exception as exc:
                     _write_json(self, 500, {"error": str(exc)})
@@ -363,6 +370,7 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
                     return
                 source = qs.get("source", [None])[0]
                 try:
+                    repo = _open_repo()
                     _write_json(
                         self,
                         200,
@@ -424,6 +432,7 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
 
                 with _move_lock:
                     try:
+                        repo = _open_repo()
                         result = _move_hunks(
                             repo,
                             source_branch=body["sourceBranch"],
@@ -492,6 +501,7 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
 
                 with _move_lock:
                     try:
+                        repo = _open_repo()
                         result = _accept_working_hunks(
                             repo,
                             target_branch=body["targetBranch"],
@@ -566,6 +576,7 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
 
                 with _move_lock:
                     try:
+                        repo = _open_repo()
                         result = _split_hunks(
                             repo,
                             source_branch=body["sourceBranch"],
@@ -675,6 +686,7 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
 
                 with _move_lock:
                     try:
+                        repo = _open_repo()
                         result = _split_lines_batch(
                             repo,
                             source_branch=body["sourceBranch"],
@@ -713,11 +725,11 @@ def _build_request_handler(repo: Repo) -> type[BaseHTTPRequestHandler]:
 
 
 def _start_api_server(
-    repo: Repo,
+    repo_path: Path,
     host: str,
     port: int,
 ) -> ThreadingHTTPServer:
-    handler = _build_request_handler(repo)
+    handler = _build_request_handler(repo_path)
     server = ThreadingHTTPServer((host, port), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -881,6 +893,7 @@ def ui(
     """Launch stack diff UI (React + Vite) with a local API server."""
     repo = git.open_repo()
     repo_path = Path(repo.path)
+    repo.close()
     frontend_dir = _resolve_frontend_dir(repo_path)
 
     if frontend_dir is None:
@@ -903,7 +916,7 @@ def ui(
     selected_api_port = _find_open_port(host, api_port)
     selected_web_port = _find_open_port(host, web_port)
     api_origin = f"http://{host}:{selected_api_port}"
-    server = _start_api_server(repo, host, selected_api_port)
+    server = _start_api_server(repo_path, host, selected_api_port)
 
     if selected_api_port != api_port:
         typer.echo(f"Port {api_port} is in use, using {selected_api_port} for API.")
@@ -937,4 +950,3 @@ def ui(
     finally:
         server.shutdown()
         server.server_close()
-        repo.close()

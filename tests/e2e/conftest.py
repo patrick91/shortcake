@@ -114,7 +114,7 @@ def ui_url(e2e_repo, _vite_runtime):
     host = "127.0.0.1"
 
     # API server on OS-picked port
-    server = _start_api_server(e2e_repo, host, 0)
+    server = _start_api_server(Path(e2e_repo.path), host, 0)
     api_port = server.server_address[1]
     api_origin = f"http://{host}:{api_port}"
 
