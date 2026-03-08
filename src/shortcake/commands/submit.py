@@ -320,10 +320,30 @@ def _submit(
     # Phase 1: Build plan - check GitHub for existing PRs
     plans: list[BranchPlan] = []
     pr_numbers: dict[str, int] = {}
+    stack_branches_set = set(stack_branches)
 
     with GitHubClient(token, owner, repo_name) as gh:
         for branch in stack_branches:
             parent = git.get_branch_parent(repo, branch, all_branches)
+
+            # If parent was deleted locally (merged + cleaned up), resolve
+            # to the branch it was merged into so we don't try to set the
+            # PR base to a non-existent remote branch.
+            if (
+                parent
+                and parent not in all_branches
+                and parent not in stack_branches_set
+            ):
+                try:
+                    merged_base = gh.get_merged_pr_base(parent)
+                    if merged_base:
+                        typer.echo(
+                            f"Parent '{parent}' was merged into "
+                            f"'{merged_base}', using as base."
+                        )
+                        parent = merged_base
+                except (httpx.HTTPStatusError, httpx.RequestError):
+                    pass
 
             try:
                 existing_pr = gh.get_pr_for_branch(branch)
@@ -535,8 +555,14 @@ def _submit(
                         f"GitHub API forbidden: {e.response.text}"
                     ) from None
                 elif e.response.status_code == 422:
-                    # PR may already exist or validation error
-                    branch_result.error = f"GitHub API error: {e.response.text}"
+                    error_text = e.response.text
+                    if "was not found" in error_text and plan.parent:
+                        branch_result.error = (
+                            f"Base branch '{plan.parent}' not found on GitHub. "
+                            f"Run 'sc sync' to clean up merged branches."
+                        )
+                    else:
+                        branch_result.error = f"GitHub API error: {error_text}"
                 else:
                     branch_result.error = f"GitHub API error: {e.response.status_code}"
             except httpx.RequestError as e:

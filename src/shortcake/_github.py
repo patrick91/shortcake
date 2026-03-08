@@ -283,6 +283,24 @@ class GitHubClient:
             return number
         return None
 
+    def get_merged_pr_base(self, branch: str) -> str | None:
+        """Get the base (target) branch of a merged PR for the given head branch.
+
+        Returns the base branch name if a merged PR exists, None otherwise.
+        Useful for resolving the effective parent when a branch was merged and deleted.
+        """
+        response = self.client.get(
+            f"/repos/{self.owner}/{self.repo}/pulls",
+            params={"head": f"{self.owner}:{branch}", "state": "closed"},
+        )
+        response.raise_for_status()
+
+        prs = response.json()
+        for pr in prs:
+            if pr.get("merged_at") is not None:
+                return pr["base"]["ref"]
+        return None
+
     def get_closed_pr_info(self, branch: str) -> tuple[int | None, bool]:
         """Get PR info for a closed PR on this branch.
 
