@@ -67,6 +67,14 @@ def test_slugify_strips_leading_trailing_hyphens() -> None:
     assert _slugify("---test---") == "test"
 
 
+def test_slugify_truncation_strips_trailing_hyphen() -> None:
+    """Test that truncation doesn't leave a trailing hyphen."""
+    # This message produces a slug longer than 50 chars with a hyphen at position 50
+    result = _slugify("Add GitHub accounts endpoint and base integration infra")
+    assert not result.endswith("-")
+    assert result == "add-github-accounts-endpoint-and-base-integration"
+
+
 def test_slugify_gitmoji() -> None:
     """Test handling emoji prefix."""
     assert _slugify("✨ add new feature") == "add-new-feature"
