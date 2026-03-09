@@ -78,6 +78,13 @@ def get_branch_parent_info(
         or None if the commit has no parents (orphan commit).
     """
 
+    # Trunk should never be considered tracked — after ff-merging tracked
+    # branches, trunk's history contains stale trailers. This check protects
+    # all callers (ls, sync, submit, restack) without requiring each to pass
+    # trunk_head.
+    if branch == get_default_branch(repo):
+        return None
+
     # Use precomputed head if available, otherwise fetch it
     if branch_heads is not None:
         branch_head = branch_heads[branch]
@@ -115,7 +122,7 @@ def get_branch_parent_info(
     while to_visit and len(seen) < max_depth:
         commit_sha = to_visit.pop(0)
 
-        if commit_sha in seen:
+        if commit_sha in seen:  # pragma: no cover
             continue
         seen.add(commit_sha)
 
@@ -138,7 +145,7 @@ def get_branch_parent_info(
                 and not is_ancestor(repo, branch_head, trunk_head)
             ):
                 # Stale trailer from shared history — skip it
-                continue
+                continue  # pragma: no cover
 
             # Found the first commit with trailer - return its parent as merge base
             commit = repo[commit_sha]

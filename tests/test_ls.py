@@ -436,7 +436,7 @@ def test_untracked_branches_not_tracked_after_ff_merge(
     # Now delete the merged feature branch (as sync would)
     del temp_repo.refs[b"refs/heads/feature"]
 
-    tree, tracked = _build_tree(temp_repo)
+    _tree, tracked = _build_tree(temp_repo)
 
     # The untracked branch must NOT appear in tracked set
     assert "dependabot/foo" not in tracked
