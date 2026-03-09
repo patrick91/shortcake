@@ -63,3 +63,21 @@ $ sc log
 ```
 
 The log only shows commits between the current branch and its parent, not the entire stack.
+
+## Log on Untracked Branch
+
+When on an untracked branch, log shows commits relative to the default branch:
+
+```console
+$ git checkout main
+$ git checkout -b untracked-feature
+$ echo "untracked code" > untracked.py && git add untracked.py
+$ git commit -m "Untracked commit"
+[untracked-feature <HASH>] Untracked commit
+ 1 file changed, 1 insertion(+)
+ create mode 100644 untracked.py
+$ sc log
+◉ untracked-feature
+│
+● <HASH> Untracked commit
+```

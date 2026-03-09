@@ -74,3 +74,37 @@ $ sc log
 │
 ◯ main
 ```
+
+## Error Cases
+
+Cannot amend without staged changes:
+
+```console
+$ sc modify
+Error: No staged changes to amend
+```
+
+Cannot create commit without staged changes:
+
+```console
+$ sc modify -m "Should fail"
+Error: No staged changes to commit
+```
+
+Cannot use both -m and -e:
+
+```console
+$ echo "change" >> app.py && git add app.py
+$ sc modify -m "message" -e
+Error: Cannot use both -m and -e
+$ git checkout -- app.py
+```
+
+Cannot use both -t and -m:
+
+```console
+$ echo "change" >> app.py && git add app.py
+$ sc modify -t main -m "message"
+Error: Cannot use both -t and -m
+$ git checkout -- app.py
+```

@@ -84,6 +84,21 @@ $ sc pull
 Error: No remote 'origin' configured.
 ```
 
+Cannot pull with uncommitted changes:
+
+```console
+$ # setup: with-remote
+$ # reset-to-main
+$ echo "feature" > feat.py && git add feat.py
+$ sc create -m "Feature"
+Created branch 'feature' from 'main'
+$ git push -u origin feature > /dev/null 2>&1
+$ echo "dirty change" >> feat.py
+$ sc pull
+Error: You have uncommitted changes. Commit or stash them first.
+$ git checkout -- feat.py
+```
+
 ## Options
 
 | Option | Description |
