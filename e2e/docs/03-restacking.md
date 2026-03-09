@@ -91,3 +91,13 @@ $ sc restack
 Current branch is not tracked (no Shortcake-Parent trailer). Nothing to restack.
 $ git checkout add-repository-layer
 ```
+
+## Detached HEAD
+
+Cannot restack in detached HEAD state:
+
+```console
+$ git checkout --detach
+$ sc restack
+Error: Cannot restack in detached HEAD state
+```
