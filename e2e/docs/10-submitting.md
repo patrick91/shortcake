@@ -267,6 +267,34 @@ Pushing 'force-feature'...
 Created 1 PR(s)
 ```
 
+## Submitting After Parent Branch Merged and Deleted
+
+When a parent branch's PR was merged and the branch was deleted locally, submit resolves the parent to the merge target:
+
+```console
+$ # reset-to-main
+$ # github: reset-state
+$ echo "feature a" > a.py && git add a.py
+$ sc create -m "Feature A"
+Created branch 'feature-a' from 'main'
+$ echo "feature b" > b.py && git add b.py
+$ sc create -m "Feature B"
+Created branch 'feature-b' from 'feature-a'
+$ # github: add-pr feature-a 1 main
+$ # github: add-pr feature-b 2 feature-a
+$ # github: merge-pr 1
+$ git checkout main > /dev/null 2>&1
+$ git merge feature-a --ff-only > /dev/null
+$ git branch -D feature-a > /dev/null 2>&1
+$ git checkout feature-b > /dev/null 2>&1
+$ sc submit
+Parent 'feature-a' was merged into 'main', using as base.
+Pushing 'feature-b'...
+  Updating PR #2 base: feature-a -> main
+
+Updated 1 PR(s)
+```
+
 ## Error Handling
 
 ### Auth Failure

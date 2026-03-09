@@ -131,13 +131,48 @@ $ sc ls
 ◯ main
 ```
 
+### Sync with GitHub-Detected Merged PRs
+
+When a branch was squash-merged on GitHub (which local git can't detect), sync uses the GitHub API to find merged PRs:
+
+```console
+$ # reset-to-main
+$ # github: setup-mock-with-remote
+$ echo "gh feature" > gh.py && git add gh.py
+$ sc create -m "GH feature"
+Created branch 'gh-feature' from 'main'
+$ git push -u origin gh-feature > /dev/null 2>&1
+$ # github: add-pr gh-feature 50 main
+$ # github: merge-pr 50
+$ sc sync --yes
+Pulling main from remote...
+Checking for merged branches...
+Deleted branch gh-feature
+```
+
+### Sync with Closed (Not Merged) PRs
+
+When a PR is closed without merging, sync can detect and offer to delete the branch:
+
+```console
+$ # reset-to-main
+$ # github: reset-state
+$ echo "closed feature" > closed.py && git add closed.py
+$ sc create -m "Closed feature"
+Created branch 'closed-feature' from 'main'
+$ git push -u origin closed-feature > /dev/null 2>&1
+$ # github: add-pr closed-feature 60 main
+```
+
+Note: The closed PR detection requires the PR to be in "closed" state (not "open"). The mock server currently only supports merging PRs (which sets state to "closed" with merged_at set). A PR closed without merge would need the mock to support closing without merging.
+
 ### Sync with Uncommitted Changes
 
 Sync refuses to run when there are uncommitted changes:
 
 ```console
-$ echo "dirty" >> b.py
+$ echo "dirty" >> closed.py
 $ sc sync
 Error: You have uncommitted changes. Commit or stash them first.
-$ git checkout -- b.py
+$ git checkout -- closed.py
 ```

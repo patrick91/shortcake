@@ -56,3 +56,21 @@ $ git status
 On branch add-user-authentication
 nothing to commit, working tree clean
 ```
+
+## Creating an Empty Branch
+
+Use `--allow-empty` to create a branch without staged changes:
+
+```console
+$ sc create -m "Empty placeholder" --allow-empty
+Created branch 'empty-placeholder' from 'add-user-authentication'
+```
+
+## Error Cases
+
+Cannot create without staged changes:
+
+```console
+$ sc create -m "Should fail"
+Error: No staged changes. Use --allow-empty to create anyway.
+```

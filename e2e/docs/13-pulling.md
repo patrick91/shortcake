@@ -74,6 +74,23 @@ Rebasing 'feature-b' onto 'feature-a'...
 Restacked 1 branch(es).
 ```
 
+## Pull with --rebase
+
+The `--rebase` flag rebases local commits onto the remote instead of resetting. This is useful when you have local commits you want to keep on top of remote changes:
+
+```console
+$ # setup: with-remote
+$ # reset-to-main
+$ echo "base feature" > rebase.py && git add rebase.py
+$ sc create -m "Rebase feature"
+Created branch 'rebase-feature' from 'main'
+$ git push -u origin rebase-feature > /dev/null 2>&1
+$ echo "local change" >> rebase.py && git add rebase.py && git commit -m "local work" > /dev/null 2>&1
+$ # remote: force-push rebase-feature
+$ sc pull --rebase
+Rebased 'rebase-feature' onto origin/rebase-feature (<HASH>)
+```
+
 ## Error Cases
 
 Cannot pull without a remote:
