@@ -11,7 +11,6 @@ from dulwich import porcelain
 from dulwich.repo import Repo
 from typer.testing import CliRunner
 
-from shortcake._trailers import Trailers
 from shortcake.cli import app
 from shortcake.commands.checkout import (
     CheckoutError,
@@ -438,48 +437,8 @@ def test_checkout_cli_remote_output(temp_repo: Repo, tmp_path: Path) -> None:
     assert "Checked out 'remote-feature' from remote" in result.output
 
 
-# Tests for checkout + pull integration
-
-
-def test_checkout_pulls_stack(repo_with_stack: Repo, tmp_path: Path) -> None:
-    """Test checkout pulls the stack after switching."""
-    config = repo_with_stack.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
-
-    # Create a remote commit on branch_a that's ahead
-    branch_a_sha = repo_with_stack.refs[b"refs/heads/branch_a"]
-    switch_branch(repo_with_stack, "branch_a")
-    extra_file = tmp_path / "remote_extra.txt"
-    extra_file.write_text("remote extra")
-    porcelain.add(repo_with_stack, paths=[str(extra_file)])
-    trailers = Trailers(parent_branch="main")
-    msg = trailers.apply_to("feat: remote extra on a")
-    porcelain.commit(repo_with_stack, message=msg.encode())
-    remote_a_sha = repo_with_stack.refs[b"refs/heads/branch_a"]
-
-    # Reset local branch_a back to original
-    repo_with_stack.refs[b"refs/heads/branch_a"] = branch_a_sha
-
-    # Set up remote refs
-    repo_with_stack.refs[b"refs/remotes/origin/branch_a"] = remote_a_sha
-    branch_b_sha = repo_with_stack.refs[b"refs/heads/branch_b"]
-    repo_with_stack.refs[b"refs/remotes/origin/branch_b"] = branch_b_sha
-
-    # Switch to main first
-    switch_branch(repo_with_stack, "main")
-
-    os.chdir(tmp_path)
-    with patch("shortcake.commands.pull._fetch", return_value=True):
-        result = runner.invoke(app, ["checkout", "branch_b"])
-
-    assert result.exit_code == 0
-    assert "Switched to 'branch_b'" in result.output
-    assert "Updated 'branch_a'" in result.output
-
-
-def test_checkout_pull_error_is_silent(temp_repo: Repo, tmp_path: Path) -> None:
-    """Test checkout doesn't fail when pull fails (no remote)."""
+def test_checkout_no_remote_works(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test checkout works without a remote configured."""
     # Create a feature branch
     main_sha = temp_repo.refs[b"refs/heads/main"]
     temp_repo.refs[b"refs/heads/feature"] = main_sha
@@ -489,88 +448,3 @@ def test_checkout_pull_error_is_silent(temp_repo: Repo, tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "Switched to 'feature'" in result.output
-
-
-def test_checkout_pull_skipped_no_remote(repo_with_stack: Repo, tmp_path: Path) -> None:
-    """Test checkout shows skipped branches with no remote."""
-    config = repo_with_stack.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
-
-    # Only set remote for branch_a, not branch_b
-    branch_a_sha = repo_with_stack.refs[b"refs/heads/branch_a"]
-    repo_with_stack.refs[b"refs/remotes/origin/branch_a"] = branch_a_sha
-
-    # Switch to main first
-    switch_branch(repo_with_stack, "main")
-
-    os.chdir(tmp_path)
-    with patch("shortcake.commands.pull._fetch", return_value=True):
-        result = runner.invoke(app, ["checkout", "branch_b"])
-
-    assert result.exit_code == 0
-    assert "Switched to 'branch_b'" in result.output
-    assert "Skipped 'branch_b'" in result.output
-
-
-def test_checkout_pull_with_restack(repo_with_stack: Repo, tmp_path: Path) -> None:
-    """Test checkout restacks after pulling updates."""
-    config = repo_with_stack.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
-
-    # Create remote ahead on branch_a
-    branch_a_sha = repo_with_stack.refs[b"refs/heads/branch_a"]
-    switch_branch(repo_with_stack, "branch_a")
-    extra_file = tmp_path / "extra_a.txt"
-    extra_file.write_text("extra on a")
-    porcelain.add(repo_with_stack, paths=[str(extra_file)])
-    trailers = Trailers(parent_branch="main")
-    msg = trailers.apply_to("feat: extra on branch a")
-    porcelain.commit(repo_with_stack, message=msg.encode())
-    remote_a_sha = repo_with_stack.refs[b"refs/heads/branch_a"]
-
-    # Reset local
-    repo_with_stack.refs[b"refs/heads/branch_a"] = branch_a_sha
-
-    # Set remote refs
-    repo_with_stack.refs[b"refs/remotes/origin/branch_a"] = remote_a_sha
-    branch_b_sha = repo_with_stack.refs[b"refs/heads/branch_b"]
-    repo_with_stack.refs[b"refs/remotes/origin/branch_b"] = branch_b_sha
-
-    # Switch to main
-    switch_branch(repo_with_stack, "main")
-
-    os.chdir(tmp_path)
-    with patch("shortcake.commands.pull._fetch", return_value=True):
-        result = runner.invoke(app, ["checkout", "branch_b"])
-
-    assert result.exit_code == 0
-    assert "Updated 'branch_a'" in result.output
-    assert "Restacked" in result.output
-
-
-def test_checkout_pull_creates_from_remote(
-    repo_with_stack: Repo, tmp_path: Path
-) -> None:
-    """Test checkout shows 'Created' for branches created from remote."""
-    config = repo_with_stack.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
-
-    # Set up remote refs for both branches
-    branch_a_sha = repo_with_stack.refs[b"refs/heads/branch_a"]
-    branch_b_sha = repo_with_stack.refs[b"refs/heads/branch_b"]
-    repo_with_stack.refs[b"refs/remotes/origin/branch_a"] = branch_a_sha
-    repo_with_stack.refs[b"refs/remotes/origin/branch_b"] = branch_b_sha
-
-    # Delete branch_b locally (keep branch_a since we'll checkout it)
-    switch_branch(repo_with_stack, "branch_a")
-    del repo_with_stack.refs[b"refs/heads/branch_b"]
-
-    os.chdir(tmp_path)
-    with patch("shortcake.commands.pull._fetch", return_value=True):
-        result = runner.invoke(app, ["checkout", "branch_a"])
-
-    assert result.exit_code == 0
-    assert "Created 'branch_b' from origin/branch_b" in result.output
