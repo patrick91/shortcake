@@ -108,3 +108,51 @@ When already at bottom:
 $ sc bottom
 Already at bottom of stack
 ```
+
+## Navigating with Forked Stacks
+
+Create a fork where one branch has two children:
+
+```console
+$ git checkout add-base-module
+$ echo "fork a" > fork_a.py && git add fork_a.py
+$ sc create -m "Add fork A"
+Created branch 'add-fork-a' from 'add-base-module'
+$ git checkout add-base-module
+$ echo "fork b" > fork_b.py && git add fork_b.py
+$ sc create -m "Add fork B"
+Created branch 'add-fork-b' from 'add-base-module'
+```
+
+When at a branch with one child, `sc up` moves to it directly:
+
+```console
+$ git checkout main
+$ sc up
+Switched to 'add-base-module'
+```
+
+You can specify which child to navigate to:
+
+```console
+$ sc up add-fork-a
+Switched to 'add-fork-a'
+```
+
+## Error Cases
+
+Cannot navigate down from an untracked branch:
+
+```console
+$ git checkout main
+$ sc down
+Error: Branch 'main' is not tracked
+```
+
+Cannot navigate up from a leaf:
+
+```console
+$ git checkout add-fork-a
+$ sc up
+Already at top of stack (no children)
+```

@@ -62,3 +62,32 @@ $ cat schema.sql
 CREATE TABLE users;
 CREATE TABLE posts;
 ```
+
+## Already Up to Date
+
+When nothing needs restacking:
+
+```console
+$ sc restack
+Everything up to date.
+```
+
+## Error Cases
+
+Cannot restack with uncommitted changes:
+
+```console
+$ echo "dirty" >> schema.sql
+$ sc restack
+Error: You have uncommitted changes. Commit or stash them first.
+$ git checkout -- schema.sql
+```
+
+Untracked branches cannot be restacked:
+
+```console
+$ git checkout main
+$ sc restack
+Current branch is not tracked (no Shortcake-Parent trailer). Nothing to restack.
+$ git checkout add-repository-layer
+```

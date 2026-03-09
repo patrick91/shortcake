@@ -85,3 +85,48 @@ $ git checkout main
 $ sc adopt feature-utils
 Adopted 'feature-utils' with parent 'main'
 ```
+
+## Re-parenting with --force
+
+When a branch is already tracked, `--force` lets you change its parent:
+
+```console
+$ git checkout feature-login
+$ sc adopt --force --parent feature-utils
+Re-parented 'feature-login' to 'feature-utils'
+$ git log -1 --format=%B | grep Shortcake-Parent
+Shortcake-Parent: feature-utils
+$ sc ls
+◯ feature-api
+│
+◉ feature-login (current)
+│
+◯ feature-utils
+│
+◯ main
+```
+
+## Error Cases
+
+Cannot adopt the default branch:
+
+```console
+$ git checkout main
+$ sc adopt
+Error: Cannot adopt default branch 'main'
+```
+
+Parent branch doesn't exist:
+
+```console
+$ git checkout feature-login
+$ sc adopt --parent nonexistent
+Error: Parent branch 'nonexistent' not found
+```
+
+Already tracked without --force:
+
+```console
+$ sc adopt
+Error: Branch 'feature-login' is already tracked by 'feature-utils'. Use --force to re-parent.
+```

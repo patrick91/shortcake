@@ -248,6 +248,25 @@ Pushing 'feature-b'...
 Created 2 PR(s)
 ```
 
+## Force Push
+
+Use `--force` to push without `--force-with-lease` (bypasses remote safety checks):
+
+```console
+$ # reset-to-main
+$ # github: reset-state
+$ # github: setup-mock-with-remote
+$ echo "force feature" > force.py && git add force.py
+$ sc create -m "Force feature"
+Created branch 'force-feature' from 'main'
+$ sc submit --force
+Pushing 'force-feature'...
+  Creating PR for 'force-feature'...
+  Created PR #1: https://github.com/<OWNER>/<REPO>/pull/1
+
+Created 1 PR(s)
+```
+
 ## Error Handling
 
 ### Auth Failure

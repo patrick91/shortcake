@@ -99,3 +99,45 @@ Pulling main from remote...
 Checking for merged branches...
 Everything up to date.
 ```
+
+### Sync with Stacked Branches and Reparenting
+
+When a branch in the middle of a stack is merged, sync deletes it and reparents its children:
+
+```console
+$ # reset-to-main
+$ echo "feature a" > a.py && git add a.py
+$ sc create -m "Feature A"
+Created branch 'feature-a' from 'main'
+$ echo "feature b" > b.py && git add b.py
+$ sc create -m "Feature B"
+Created branch 'feature-b' from 'feature-a'
+$ git checkout main && git merge feature-a --ff-only > /dev/null
+$ echo "after merge" > post.txt && git add post.txt && git commit -m "After merge" > /dev/null
+$ git checkout feature-b
+$ sc sync --yes
+Pulling main from remote...
+Checking for merged branches...
+Reparented feature-b to main
+Deleted branch feature-a
+```
+
+After reparenting, the stack shows feature-b directly above main:
+
+```console
+$ sc ls
+◉ feature-b (current)
+│
+◯ main
+```
+
+### Sync with Uncommitted Changes
+
+Sync refuses to run when there are uncommitted changes:
+
+```console
+$ echo "dirty" >> b.py
+$ sc sync
+Error: You have uncommitted changes. Commit or stash them first.
+$ git checkout -- b.py
+```
