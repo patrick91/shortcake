@@ -25,6 +25,8 @@ def _build_tree(repo: Repo) -> tuple[StackTree, set[str]]:
     default_branch = git.get_default_branch(repo)
     branch_heads = {b: git.get_branch_head(repo, b) for b in all_branches}
 
+    trunk_head = branch_heads.get(default_branch)
+
     branches: dict[str, str | None] = {}
     for branch in all_branches:
         # Skip trunk — after ff-merging tracked branches, trunk's commit
@@ -32,7 +34,9 @@ def _build_tree(repo: Repo) -> tuple[StackTree, set[str]]:
         # which would incorrectly make trunk appear "tracked".
         if branch == default_branch:
             continue
-        parent = git.get_branch_parent(repo, branch, all_branches, branch_heads)
+        parent = git.get_branch_parent(
+            repo, branch, all_branches, branch_heads, trunk_head
+        )
         if parent is not None:
             branches[branch] = parent
 
