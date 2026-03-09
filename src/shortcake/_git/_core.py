@@ -191,12 +191,18 @@ def has_staged_changes(repo: Repo) -> bool:
 
 
 def get_staged_files(repo: Repo) -> list[str]:
-    """Get list of staged file paths."""
+    """Get staged file paths for add/modify entries."""
     status = porcelain.status(repo)
     files = []
     files.extend(p.decode() for p in status.staged["add"])
     files.extend(p.decode() for p in status.staged["modify"])
     return files
+
+
+def get_staged_deleted_files(repo: Repo) -> list[str]:
+    """Get staged file paths for delete entries."""
+    status = porcelain.status(repo)
+    return [p.decode() for p in status.staged["delete"]]
 
 
 def has_precommit_hook(repo: Repo) -> bool:

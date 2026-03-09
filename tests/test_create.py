@@ -495,6 +495,34 @@ def test_create_insert_before_staged_changes_on_shared_file(
     assert b"b.txt" in [entry.path for entry in tree.items()]
 
 
+def test_create_insert_before_with_staged_deletion_on_shared_file(
+    repo_with_stack: Repo, tmp_path: Path
+) -> None:
+    """Test insert-before preserves a staged deletion from a shared ancestor file."""
+    readme = tmp_path / "README.md"
+    readme.unlink()
+    porcelain.add(repo_with_stack, paths=[str(readme)])
+
+    result = _create_insert_before(
+        repo_with_stack, "fix: remove readme", "fix-remove-readme"
+    )
+
+    assert result.branch == "fix-remove-readme"
+    assert result.parent == "branch_a"
+    assert result.inserted_before == "branch_b"
+
+    head = git.get_branch_head(repo_with_stack, "fix-remove-readme")
+    commit = repo_with_stack[head]
+    tree = repo_with_stack[commit.tree]
+    assert b"README.md" not in [entry.path for entry in tree.items()]
+
+    switch_branch(repo_with_stack, "branch_b")
+    rebased_head = git.get_branch_head(repo_with_stack, "branch_b")
+    rebased_commit = repo_with_stack[rebased_head]
+    rebased_tree = repo_with_stack[rebased_commit.tree]
+    assert b"README.md" not in [entry.path for entry in rebased_tree.items()]
+
+
 def test_create_insert_before_conflict(repo_with_stack: Repo, tmp_path: Path) -> None:
     """Test insert-before returns conflict result when rebase fails."""
     from unittest.mock import patch
