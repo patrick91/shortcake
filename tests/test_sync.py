@@ -989,6 +989,55 @@ def test_reparent_branch_same_commit(temp_repo: Repo, tmp_path: Path) -> None:
     _reparent_branch(temp_repo, "child", "main")
 
 
+def test_reparent_branch_multiple_commits(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test _reparent_branch replays all commits when branch has multiple."""
+    # Create parent branch
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/parent"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/parent")
+
+    file_p = tmp_path / "parent.txt"
+    file_p.write_text("parent content")
+    porcelain.add(temp_repo, paths=[str(file_p)])
+    parent_trailers = Trailers(parent_branch="main")
+    porcelain.commit(
+        temp_repo, message=parent_trailers.apply_to("feat: parent").encode()
+    )
+    parent_sha = temp_repo.refs[b"refs/heads/parent"]
+
+    # Create child branch with TWO commits on top of parent
+    temp_repo.refs[b"refs/heads/child"] = parent_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/child")
+
+    file_c1 = tmp_path / "child1.txt"
+    file_c1.write_text("child commit 1")
+    porcelain.add(temp_repo, paths=[str(file_c1)])
+    child_trailers = Trailers(parent_branch="parent")
+    porcelain.commit(
+        temp_repo, message=child_trailers.apply_to("feat: child commit 1").encode()
+    )
+
+    file_c2 = tmp_path / "child2.txt"
+    file_c2.write_text("child commit 2")
+    porcelain.add(temp_repo, paths=[str(file_c2)])
+    porcelain.commit(temp_repo, message=b"feat: child commit 2")
+
+    # Reparent child to main (as if parent was deleted)
+    _reparent_branch(temp_repo, "child", "main")
+
+    # Verify trailer was updated
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    new_parent = git.get_branch_parent(temp_repo, "child", all_branches)
+    assert new_parent == "main"
+
+    # Verify child still has both commits (check files exist in tree)
+    child_head = temp_repo.refs[b"refs/heads/child"]
+    child_tree = temp_repo[temp_repo[child_head].tree]
+    tree_entries = {entry.path for entry in child_tree.items()}
+    assert b"child1.txt" in tree_entries
+    assert b"child2.txt" in tree_entries
+
+
 # Tests for _detect_github_stale_branches
 
 
