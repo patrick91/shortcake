@@ -138,6 +138,7 @@ def _create_insert_before(repo: Repo, message: str, branch_name: str) -> CreateR
     # exact staged file contents onto the new branch (no 3-way merge needed).
     has_staged = git.has_staged_changes(repo)
     staged_files = git.get_staged_files(repo) if has_staged else []
+    staged_deleted_files = git.get_staged_deleted_files(repo) if has_staged else []
     original_head = None
     temp_sha = None
 
@@ -161,12 +162,27 @@ def _create_insert_before(repo: Repo, message: str, branch_name: str) -> CreateR
         # Copy the exact staged file contents from the temp commit onto
         # the new branch. This avoids cherry-pick's 3-way merge which can
         # falsely conflict when files differ between parent and current.
-        subprocess.run(
-            ["git", "checkout", temp_sha.decode(), "--", *staged_files],
-            cwd=repo.path,
-            capture_output=True,
-            check=True,
-        )
+        if staged_files:
+            subprocess.run(
+                ["git", "checkout", temp_sha.decode(), "--", *staged_files],
+                cwd=repo.path,
+                capture_output=True,
+                check=True,
+            )
+        if staged_deleted_files:
+            subprocess.run(
+                [
+                    "git",
+                    "rm",
+                    "--quiet",
+                    "--ignore-unmatch",
+                    "--",
+                    *staged_deleted_files,
+                ],
+                cwd=repo.path,
+                capture_output=True,
+                check=True,
+            )
         git.create_commit(repo, full_message, no_verify=True)
     else:
         git.create_commit(repo, full_message, no_verify=True)
