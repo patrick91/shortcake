@@ -156,3 +156,11 @@ $ git checkout add-fork-a
 $ sc up
 Already at top of stack (no children)
 ```
+
+Cannot jump to bottom from an untracked branch:
+
+```console
+$ git checkout main
+$ sc bottom
+Error: Branch 'main' is not tracked
+```
