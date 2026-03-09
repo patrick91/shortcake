@@ -74,3 +74,11 @@ Cannot create without staged changes:
 $ sc create -m "Should fail"
 Error: No staged changes. Use --allow-empty to create anyway.
 ```
+
+Cannot create in detached HEAD state:
+
+```console
+$ git checkout --detach
+$ sc create -m "Should fail"
+Error: Cannot create in detached HEAD state
+```

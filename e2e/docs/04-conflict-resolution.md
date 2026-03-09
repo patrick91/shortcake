@@ -104,3 +104,21 @@ Restack aborted. Restored original branch state.
 $ git branch --show-current
 extend-data-file
 ```
+
+## Abort with No Restack in Progress
+
+Running `sc abort` when there's no active restack produces an error:
+
+```console
+$ sc abort
+Error: No restack in progress.
+```
+
+## Continue with No Restack in Progress
+
+Running `sc continue` when there's no active restack produces an error:
+
+```console
+$ sc continue
+Error: No restack in progress.
+```

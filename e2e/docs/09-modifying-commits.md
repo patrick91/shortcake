@@ -108,3 +108,35 @@ $ sc modify -t main -m "message"
 Error: Cannot use both -t and -m
 $ git checkout -- app.py
 ```
+
+## Edge Cases
+
+Target branch does not exist:
+
+```console
+$ echo "change" >> app.py && git add app.py
+$ sc modify -t nonexistent-branch
+Error: Branch 'nonexistent-branch' does not exist
+$ git checkout HEAD -- app.py
+```
+
+Target branch is not tracked by Shortcake:
+
+```console
+$ git checkout -b untracked-branch
+$ echo "untracked" > untracked.py && git add untracked.py && git commit -m "untracked" > /dev/null
+$ git checkout add-application
+$ echo "change" >> app.py && git add app.py
+$ sc modify -t untracked-branch
+Error: Branch 'untracked-branch' is not tracked by Shortcake
+$ git checkout HEAD -- app.py
+```
+
+Cannot modify in detached HEAD state:
+
+```console
+$ git checkout --detach
+$ sc modify -m "Should fail"
+Error: Cannot modify in detached HEAD state
+$ git checkout add-application
+```

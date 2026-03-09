@@ -81,3 +81,13 @@ $ sc log
 │
 ● <HASH> Untracked commit
 ```
+
+## Error Cases
+
+Cannot log in detached HEAD state:
+
+```console
+$ git checkout --detach
+$ sc log
+Error: Cannot log in detached HEAD state
+```
