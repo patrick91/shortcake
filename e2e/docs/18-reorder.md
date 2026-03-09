@@ -116,3 +116,37 @@ Wrong number of branches (missing one):
 $ sc reorder add-feature-c add-feature-a
 Error: Invalid reorder: missing: add-feature-b. Must be a permutation of the current stack.
 ```
+
+Uncommitted changes:
+
+```console
+$ echo "dirty" >> feature_a.py
+$ sc reorder add-feature-a add-feature-b add-feature-c
+Error: You have uncommitted changes. Commit or stash them first.
+$ git checkout -- feature_a.py
+```
+
+Stack with only one branch:
+
+```console
+$ git checkout main
+$ echo "solo" > solo.py && git add solo.py
+$ sc create -m "Solo branch"
+Created branch 'solo-branch' from 'main'
+$ sc reorder solo-branch
+Error: Stack has only one branch. Nothing to reorder.
+```
+
+Forked stack (multiple children):
+
+```console
+$ echo "child a" > child_a.py && git add child_a.py
+$ sc create -m "Child A"
+Created branch 'child-a' from 'solo-branch'
+$ git checkout solo-branch
+$ echo "child b" > child_b.py && git add child_b.py
+$ sc create -m "Child B"
+Created branch 'child-b' from 'solo-branch'
+$ sc reorder child-b child-a
+Error: Branch 'solo-branch' has multiple children (child-a, child-b). Reorder only works on linear stacks without forks.
+```

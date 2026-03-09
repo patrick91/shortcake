@@ -161,3 +161,14 @@ Cannot fold into self:
 $ sc fold --into add-feature-c
 Error: Cannot fold a branch into itself
 ```
+
+Cannot fold with uncommitted changes:
+
+```console
+$ sc checkout add-feature-c
+Switched to 'add-feature-c'
+$ echo "dirty" >> feature_c.py
+$ sc fold
+Error: You have uncommitted changes. Commit or stash them first.
+$ git checkout -- feature_c.py
+```
