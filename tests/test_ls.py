@@ -344,6 +344,50 @@ def test_build_tree_returns_tree_and_tracked(repo_with_feature: Repo) -> None:
     assert "main" not in tracked  # main is not tracked (no trailer)
 
 
+def test_build_tree_excludes_trunk_after_ff_merge(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test _build_tree never treats trunk as tracked.
+
+    After ff-merging a tracked branch, trunk's commit history contains
+    Shortcake-Parent trailers from the merged commits. _build_tree must
+    skip trunk so it doesn't appear as "(parent missing)".
+    """
+    from shortcake._trailers import Trailers
+
+    # Create a tracked feature branch
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    test_file = tmp_path / "feature.txt"
+    test_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(test_file)])
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: add feature")
+    porcelain.commit(temp_repo, message=message.encode())
+    feature_sha = temp_repo.refs[b"refs/heads/feature"]
+
+    # Fast-forward main to feature (simulates merge)
+    temp_repo.refs[b"refs/heads/main"] = feature_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.reset(temp_repo, "hard")
+
+    # Add a post-merge commit on main
+    post = tmp_path / "post.txt"
+    post.write_text("post merge")
+    porcelain.add(temp_repo, paths=[str(post)])
+    porcelain.commit(temp_repo, message=b"chore: post merge")
+
+    tree, tracked = _build_tree(temp_repo)
+
+    # main must NOT appear in tracked set
+    assert "main" not in tracked
+    # The rendered output should not show "(parent missing)"
+    output = tree.render()
+    assert "(parent missing)" not in output
+
+
 def test_collect_nodes_flat(repo_with_feature: Repo) -> None:
     """Test _collect_nodes returns all nodes from tree."""
     _adopt(repo_with_feature)
