@@ -6,8 +6,9 @@ from shortcake._git._core import (
     get_all_local_branches,
     get_branch_head,
     get_commit_message,
+    get_default_branch,
 )
-from shortcake._git._rebase import is_ancestor
+from shortcake._git._rebase import get_merge_base, is_ancestor
 from shortcake._trailers import Trailers
 
 
@@ -16,6 +17,7 @@ def get_branch_parent(
     branch: str,
     all_branches: set[str],
     branch_heads: dict[str, bytes] | None = None,
+    trunk_head: bytes | None = None,
 ) -> str | None:
     """
     Get parent from Shortcake-Parent trailer in first commit.
@@ -29,11 +31,16 @@ def get_branch_parent(
         all_branches: Set of all branch names for determining boundaries
         branch_heads: Optional precomputed dict of branch name -> head SHA.
                       If provided, avoids redundant get_branch_head() calls.
+        trunk_head: Optional trunk branch HEAD SHA. If provided, the walk stops
+                    at the merge base with trunk to avoid picking up stale trailers
+                    from ff-merged branches in shared history.
 
     Returns:
         Parent branch name if found, None otherwise
     """
-    result = get_branch_parent_info(repo, branch, all_branches, branch_heads)
+    result = get_branch_parent_info(
+        repo, branch, all_branches, branch_heads, trunk_head
+    )
     return result[0] if result else None
 
 
@@ -42,6 +49,7 @@ def get_branch_parent_info(
     branch: str,
     all_branches: set[str],
     branch_heads: dict[str, bytes] | None = None,
+    trunk_head: bytes | None = None,
 ) -> tuple[str, bytes | None] | None:
     """
     Get parent branch and the merge base commit for rebasing.
@@ -60,6 +68,9 @@ def get_branch_parent_info(
         all_branches: Set of all branch names for determining boundaries
         branch_heads: Optional precomputed dict of branch name -> head SHA.
                       If provided, avoids redundant get_branch_head() calls.
+        trunk_head: Optional trunk branch HEAD SHA. If provided, the walk stops
+                    at the merge base with trunk to avoid picking up stale trailers
+                    from ff-merged branches in shared history.
 
     Returns:
         Tuple of (parent_branch_name, merge_base_sha) if found, None otherwise.
@@ -91,6 +102,16 @@ def get_branch_parent_info(
     seen: set[bytes] = set()
     to_visit = [branch_head]
 
+    # If trunk_head provided, stop at the merge base with trunk to avoid
+    # walking into shared history that may contain stale Shortcake-Parent
+    # trailers from previously ff-merged branches.
+    # Skip when mb == branch_head (branch is fully merged into trunk) so
+    # we can still find the branch's own trailer for deletion detection.
+    if trunk_head is not None and trunk_head != branch_head:
+        mb = get_merge_base(repo, branch_head, trunk_head)
+        if mb is not None and mb != branch_head:
+            seen.add(mb)
+
     while to_visit and len(seen) < max_depth:
         commit_sha = to_visit.pop(0)
 
@@ -107,6 +128,18 @@ def get_branch_parent_info(
         # A branch cannot be its own parent (can happen if merged commits
         # with trailers end up in the trunk)
         if trailers.parent_branch is not None and trailers.parent_branch != branch:
+            # If trunk_head provided, check if this trailer is from shared
+            # history (stale from a previously ff-merged branch). A trailer
+            # is stale if the commit is in trunk's history but the branch
+            # itself is NOT fully merged into trunk.
+            if (
+                trunk_head is not None
+                and is_ancestor(repo, commit_sha, trunk_head)
+                and not is_ancestor(repo, branch_head, trunk_head)
+            ):
+                # Stale trailer from shared history — skip it
+                continue
+
             # Found the first commit with trailer - return its parent as merge base
             commit = repo[commit_sha]
             if commit.parents:
@@ -114,11 +147,14 @@ def get_branch_parent_info(
             # Orphan commit (no parents) - return None for merge_base
             return (trailers.parent_branch, None)
 
-        # Add parents to visit
+        # Follow first parent only to stay on the branch's own history.
+        # Following all parents of merge commits would enter trunk's history
+        # through the second parent, picking up stale trailers.
         commit = repo[commit_sha]
-        for parent_sha in commit.parents:
-            if parent_sha not in seen:
-                to_visit.append(parent_sha)
+        if commit.parents:
+            first_parent = commit.parents[0]
+            if first_parent not in seen:
+                to_visit.append(first_parent)
 
     return None
 
@@ -139,12 +175,18 @@ def get_branch_children(repo: Repo, branch: str) -> list[str]:
     # Precompute ALL branch heads once (O(n) total instead of O(n²))
     branch_heads = {b: get_branch_head(repo, b) for b in all_branches}
 
+    # Compute trunk head to filter stale trailers from shared history
+    default_branch = get_default_branch(repo)
+    trunk_head = branch_heads.get(default_branch)
+
     children = []
     for potential_child in all_branches:
         if potential_child == branch:
             continue
         # Pass precomputed heads to avoid redundant lookups
-        parent = get_branch_parent(repo, potential_child, all_branches, branch_heads)
+        parent = get_branch_parent(
+            repo, potential_child, all_branches, branch_heads, trunk_head
+        )
         if parent == branch:
             children.append(potential_child)
     return sorted(children)
@@ -157,10 +199,18 @@ def get_tracked_branches(repo: Repo) -> list[str]:
     # Precompute ALL branch heads once (O(n) total instead of O(n²))
     branch_heads = {b: get_branch_head(repo, b) for b in all_branches}
 
+    # Compute trunk head to filter stale trailers from shared history
+    default_branch = get_default_branch(repo)
+    trunk_head = branch_heads.get(default_branch)
+
     tracked = []
     for branch in all_branches:
+        # Skip trunk — it should never be tracked, and after ff-merging
+        # tracked branches its history contains stale trailers.
+        if branch == default_branch:
+            continue
         # Pass precomputed heads to avoid redundant lookups
-        parent = get_branch_parent(repo, branch, all_branches, branch_heads)
+        parent = get_branch_parent(repo, branch, all_branches, branch_heads, trunk_head)
         if parent is not None:
             tracked.append(branch)
     return sorted(tracked)

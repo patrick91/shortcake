@@ -388,6 +388,62 @@ def test_build_tree_excludes_trunk_after_ff_merge(
     assert "(parent missing)" not in output
 
 
+def test_untracked_branches_not_tracked_after_ff_merge(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Untracked branches not tracked after ff-merge.
+
+    After ff-merging a tracked branch into trunk, the Shortcake-Parent trailer
+    ends up in shared history. Untracked branches forked from trunk must NOT
+    pick up those stale trailers when walking their commit history.
+    """
+    from shortcake._trailers import Trailers
+
+    # Create a tracked feature branch with a trailer
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    feature_file = tmp_path / "feature.txt"
+    feature_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(feature_file)])
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: add feature")
+    porcelain.commit(temp_repo, message=message.encode())
+    feature_sha = temp_repo.refs[b"refs/heads/feature"]
+
+    # Fast-forward main to feature (simulates merge)
+    temp_repo.refs[b"refs/heads/main"] = feature_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    porcelain.reset(temp_repo, "hard")
+
+    # Add a post-merge commit on main so main is ahead of feature
+    post = tmp_path / "post.txt"
+    post.write_text("post merge")
+    porcelain.add(temp_repo, paths=[str(post)])
+    porcelain.commit(temp_repo, message=b"chore: post merge")
+    new_main_sha = temp_repo.refs[b"refs/heads/main"]
+
+    # Create an untracked branch (e.g. dependabot) forked from new main
+    temp_repo.refs[b"refs/heads/dependabot/foo"] = new_main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/dependabot/foo")
+
+    untracked_file = tmp_path / "untracked.txt"
+    untracked_file.write_text("untracked content")
+    porcelain.add(temp_repo, paths=[str(untracked_file)])
+    porcelain.commit(temp_repo, message=b"chore: untracked change")
+
+    # Now delete the merged feature branch (as sync would)
+    del temp_repo.refs[b"refs/heads/feature"]
+
+    tree, tracked = _build_tree(temp_repo)
+
+    # The untracked branch must NOT appear in tracked set
+    assert "dependabot/foo" not in tracked
+    # Only truly tracked branches should appear
+    assert len(tracked) == 0
+
+
 def test_collect_nodes_flat(repo_with_feature: Repo) -> None:
     """Test _collect_nodes returns all nodes from tree."""
     _adopt(repo_with_feature)

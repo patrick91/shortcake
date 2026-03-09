@@ -427,8 +427,12 @@ def _sync(
     # Re-fetch tracked branches since some may have been deleted above
     remaining_tracked = git.get_tracked_branches(repo)
     all_local = set(git.get_all_local_branches(repo))
+    branch_heads = {b: git.get_branch_head(repo, b) for b in all_local}
+    trunk_head = branch_heads.get(trunk)
     for branch in remaining_tracked:
-        parent = git.get_branch_parent(repo, branch, all_local)
+        parent = git.get_branch_parent(
+            repo, branch, all_local, branch_heads, trunk_head
+        )
         if parent and parent not in all_local:
             # Parent doesn't exist locally - check if it was merged on GitHub
             merged_target = _resolve_deleted_parent(repo, parent)
