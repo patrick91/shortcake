@@ -182,6 +182,21 @@ $ sc ls
 ◯ main
 ```
 
+## Insert After with Multiple Children
+
+When a branch has multiple children, `--after` cannot determine which child to rebase:
+
+```console
+$ sc checkout add-feature-a
+Switched to 'add-feature-a'
+$ sc create -m "Second child" --allow-empty
+Created branch 'second-child' from 'add-feature-a'
+$ sc checkout add-feature-a
+Switched to 'add-feature-a'
+$ sc create -m "Third child" --after --allow-empty
+Error: Branch 'add-feature-a' has multiple children (add-fix-after-a, second-child). Use '--before' on a specific child branch instead.
+```
+
 ## Error Cases
 
 Cannot use both `--before` and `--after`:

@@ -21,6 +21,7 @@ from shortcake.commands.restack import RestackResult
 from shortcake.commands.sync import (
     SyncError,
     SyncResult,
+    _delete_and_reparent,
     _detect_github_stale_branches,
     _GitHubBranchStatus,
     _reparent_branch,
@@ -1455,3 +1456,119 @@ def test_resolve_deleted_parent_handles_api_error(
         result = _resolve_deleted_parent(temp_repo, "deleted-branch")
 
     assert result is None
+
+
+# Tests for trunk-not-deleted and grandparent-fallback bugs
+
+
+def test_sync_never_deletes_trunk(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test that sync never offers to delete the trunk branch.
+
+    After ff-merging a tracked branch into main, the merged commit's
+    Shortcake-Parent trailer can make main appear "tracked", and
+    is_merged(main, main) is trivially true. Sync must filter trunk
+    from the merged list.
+    """
+
+    def _switch(repo, branch):
+        repo.refs.set_symbolic_ref(b"HEAD", f"refs/heads/{branch}".encode())
+        porcelain.reset(repo, "hard")
+
+    # Create a tracked feature branch
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+
+    test_file = tmp_path / "feature.txt"
+    test_file.write_text("feature content")
+    porcelain.add(temp_repo, paths=[str(test_file)])
+    trailers = Trailers(parent_branch="main")
+    message = trailers.apply_to("feat: add feature")
+    porcelain.commit(temp_repo, message=message.encode())
+    feature_sha = temp_repo.refs[b"refs/heads/feature"]
+
+    # Fast-forward main to feature (simulates merge)
+    _switch(temp_repo, "main")
+    temp_repo.refs[b"refs/heads/main"] = feature_sha
+
+    # Add a post-merge commit on main
+    _switch(temp_repo, "main")
+    post = tmp_path / "post.txt"
+    post.write_text("post merge")
+    porcelain.add(temp_repo, paths=[str(post)])
+    porcelain.commit(temp_repo, message=b"chore: post merge")
+
+    # Now main's HEAD has the feature commit with Shortcake-Parent: main
+    # in its history. get_tracked_branches may include main.
+    # Sync must NOT try to delete main even though is_merged(main, main) is true.
+    result = _sync(temp_repo, force=True)
+
+    # main must still exist
+    assert git.branch_exists(temp_repo, "main")
+    assert "main" not in result.deleted_branches
+    # feature should be detected as merged and deleted
+    assert "feature" in result.deleted_branches
+
+
+def test_delete_and_reparent_grandparent_already_deleted(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test _delete_and_reparent falls back to trunk when grandparent was deleted.
+
+    Scenario: main → A → B → C. Both A and B are merged. When deleting B,
+    its parent A was already deleted. The grandparent should fall back to trunk.
+    """
+
+    def _switch(repo, branch):
+        repo.refs.set_symbolic_ref(b"HEAD", f"refs/heads/{branch}".encode())
+        porcelain.reset(repo, "hard")
+
+    # Create branch_a from main
+    main_sha = temp_repo.refs[b"refs/heads/main"]
+    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+
+    file_a = tmp_path / "a.txt"
+    file_a.write_text("branch a")
+    porcelain.add(temp_repo, paths=[str(file_a)])
+    trailers_a = Trailers(parent_branch="main")
+    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: a").encode())
+    a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+
+    # Create branch_b from branch_a
+    temp_repo.refs[b"refs/heads/branch_b"] = a_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+
+    file_b = tmp_path / "b.txt"
+    file_b.write_text("branch b")
+    porcelain.add(temp_repo, paths=[str(file_b)])
+    trailers_b = Trailers(parent_branch="branch_a")
+    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: b").encode())
+    b_sha = temp_repo.refs[b"refs/heads/branch_b"]
+
+    # Create branch_c from branch_b (unmerged, should be reparented)
+    temp_repo.refs[b"refs/heads/branch_c"] = b_sha
+    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+
+    file_c = tmp_path / "c.txt"
+    file_c.write_text("branch c")
+    porcelain.add(temp_repo, paths=[str(file_c)])
+    trailers_c = Trailers(parent_branch="branch_b")
+    porcelain.commit(temp_repo, message=trailers_c.apply_to("feat: c").encode())
+
+    _switch(temp_repo, "main")
+
+    # Delete branch_a first (simulating earlier sync loop iteration)
+    git.delete_branch(temp_repo, "branch_a")
+
+    # Now delete branch_b — its parent (branch_a) is already gone
+    result = SyncResult(trunk_updated=False)
+    skip = {"branch_a", "branch_b"}
+    _delete_and_reparent(temp_repo, "branch_b", "main", "main", skip, result)
+
+    # branch_c should be reparented to main (fallback), not branch_a
+    assert result.reparented_branches.get("branch_c") == "main"
+    # Verify the actual trailer was updated
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    parent = git.get_branch_parent(temp_repo, "branch_c", all_branches)
+    assert parent == "main"

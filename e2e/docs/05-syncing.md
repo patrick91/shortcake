@@ -131,6 +131,31 @@ $ sc ls
 ◯ main
 ```
 
+### Sync Never Deletes Trunk
+
+After ff-merging a tracked branch, trunk may appear "tracked" due to
+the merged commit's trailer. Sync must never offer to delete the trunk:
+
+```console
+$ # reset-to-main
+$ echo "trunk safe" > safe.py && git add safe.py
+$ sc create -m "Trunk safe feature"
+Created branch 'trunk-safe-feature' from 'main'
+$ git checkout main > /dev/null 2>&1 && git merge trunk-safe-feature --ff-only > /dev/null
+$ echo "post" > post.txt && git add post.txt && git commit -m "Post merge" > /dev/null
+$ sc sync --yes
+Pulling main from remote...
+Checking for merged branches...
+Deleted branch trunk-safe-feature
+```
+
+Main still exists and is not deleted:
+
+```console
+$ git branch --list main
+* main
+```
+
 ### Sync with GitHub-Detected Merged PRs
 
 When a branch was squash-merged on GitHub (which local git can't detect), sync uses the GitHub API to find merged PRs:

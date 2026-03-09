@@ -323,6 +323,15 @@ $ sc submit
 Error: GitHub API rate limit exceeded. Please wait and try again.
 ```
 
+### Untracked Branch
+
+```console
+$ # reset-to-main
+$ # github: reset-state
+$ sc submit
+Error: Branch 'main' is not tracked by shortcake. Use 'sc adopt' to track it first.
+```
+
 ## Command Options
 
 - `--draft` / `-d`: Create draft PRs

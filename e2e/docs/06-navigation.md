@@ -164,3 +164,29 @@ $ git checkout main
 $ sc bottom
 Error: Branch 'main' is not tracked
 ```
+
+## Up with Invalid Child Argument
+
+Running `sc up <branch>` with a branch that is not a child of the current branch:
+
+```console
+$ git checkout add-base-module
+$ sc up main
+Error: 'main' is not a child of 'add-base-module'
+```
+
+## Detached HEAD Errors
+
+Navigation commands fail from detached HEAD state:
+
+```console
+$ git checkout --detach
+$ sc up
+Error: Not on a branch (detached HEAD)
+$ sc down
+Error: Not on a branch (detached HEAD)
+$ sc top
+Error: Not on a branch (detached HEAD)
+$ sc bottom
+Error: Not on a branch (detached HEAD)
+```

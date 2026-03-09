@@ -188,6 +188,10 @@ def _delete_and_reparent(
     branch_parent = git.get_branch_parent(repo, branch, all_branches)
     grandparent = branch_parent if branch_parent else trunk
 
+    # If grandparent was deleted earlier in this sync loop, fall back to trunk
+    if grandparent != trunk and not git.branch_exists(repo, grandparent):
+        grandparent = trunk
+
     if branch == current_branch:
         git.switch_branch(repo, trunk)
         current_branch = trunk
@@ -328,7 +332,9 @@ def _sync(
     # 2. Detect merged branches
     typer.echo("Checking for merged branches...")
     tracked_branches = git.get_tracked_branches(repo)
-    merged_branches = git.get_merged_branches(repo, tracked_branches, trunk)
+    merged_branches = [
+        b for b in git.get_merged_branches(repo, tracked_branches, trunk) if b != trunk
+    ]
 
     # All branches to skip reparenting into (merged + closed)
     all_removing: set[str] = set(merged_branches)
