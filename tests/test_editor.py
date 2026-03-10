@@ -60,6 +60,19 @@ def test_get_git_editor_no_repo(
     assert _get_git_editor() is None
 
 
+def test_get_git_editor_missing_config(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _get_git_editor returns None when core.editor is not configured."""
+
+    class FakeRepo:
+        config = {}
+
+    monkeypatch.chdir(temp_repo.path)
+    monkeypatch.setattr("shortcake._editor.pygit2.Repository", lambda _: FakeRepo())
+    assert _get_git_editor() is None
+
+
 # Editor interaction tests
 
 
