@@ -23,13 +23,7 @@ from shortcake.commands.move_lines import (
     _split_lines_batch,
     _stage_patch_files,
 )
-
-
-def switch_branch(repo: Repo, branch: str) -> None:
-    """Properly switch branches with index and working tree reset."""
-    ref = f"refs/heads/{branch}".encode()
-    repo.refs.set_symbolic_ref(b"HEAD", ref)
-    porcelain.reset(repo, "hard")
+from tests._git_helpers import switch_branch
 
 
 def _git_diff_patch(repo_path: Path, parent: str, branch: str) -> str:

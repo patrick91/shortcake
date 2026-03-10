@@ -16,13 +16,7 @@ from shortcake import _git as git
 from shortcake._git._rebase import RebaseResult, rebase_branch, rebase_continue
 from shortcake._trailers import Trailers
 from shortcake.commands.restack import _restack
-
-
-def switch_branch(repo: Repo, branch: str) -> None:
-    """Properly switch branches with index and working tree reset."""
-    ref = f"refs/heads/{branch}".encode()
-    repo.refs.set_symbolic_ref(b"HEAD", ref)
-    porcelain.reset(repo, "hard")
+from tests._git_helpers import switch_branch
 
 
 def test_rebase_result_dataclass() -> None:
