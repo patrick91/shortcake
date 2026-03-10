@@ -3,6 +3,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+import pygit2
+
 from shortcake import _git as git
 
 type Repo = Any
@@ -12,6 +14,12 @@ def _repo_path(repo: Repo | Path) -> Path:
     if isinstance(repo, Path):
         return repo
     return Path(repo.path)
+
+
+def _libgit_repo(repo: Repo | Path) -> pygit2.Repository:
+    repo_path = _repo_path(repo)
+    git_dir = repo_path / ".git"
+    return pygit2.Repository(git_dir if git_dir.exists() else repo_path)
 
 
 def _git_value(value: bytes | str) -> str:
@@ -58,23 +66,16 @@ def configure_git_identity(
     email: str = "test@test.com",
     name: str = "Test User",
 ) -> None:
-    """Configure git identity for tests that rely on git CLI operations."""
-    subprocess.run(
-        ["git", "config", "user.email", email],
-        cwd=repo_path,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", name],
-        cwd=repo_path,
-        check=True,
-    )
+    """Configure test commit identity in repository config."""
+    repo = _libgit_repo(repo_path)
+    repo.config["user.email"] = email
+    repo.config["user.name"] = name
 
 
 def init_repo(path: Path, *, default_branch: str = "main") -> Repo:
     """Create a repo and configure a default test identity."""
     path.mkdir(parents=True, exist_ok=True)
-    _run_git(path, "init", f"--initial-branch={default_branch}")
+    pygit2.init_repository(path, initial_head=default_branch)
     configure_git_identity(path)
     return git.open_repo(path)
 
@@ -86,7 +87,11 @@ def get_branch_head(repo: Repo, branch: str) -> bytes:
 
 def update_branch(repo: Repo, branch: str, sha: bytes) -> None:
     """Move a local branch ref to a specific commit."""
-    _run_git(repo, "update-ref", f"refs/heads/{branch}", _git_value(sha))
+    _libgit_repo(repo).create_reference(
+        f"refs/heads/{branch}",
+        pygit2.Oid(hex=_git_value(sha)),
+        force=True,
+    )
 
 
 def switch_branch(repo: Repo, branch: str) -> None:
@@ -98,16 +103,18 @@ def switch_branch(repo: Repo, branch: str) -> None:
     if git.get_current_branch(repo) == branch:
         reset_hard(repo)
         return
-    git.switch_branch(repo, branch)
+    _libgit_repo(repo).checkout(f"refs/heads/{branch}")
     reset_hard(repo)
 
 
 def reset_hard(repo: Repo, treeish: bytes | str | None = None) -> None:
     """Reset the index and working tree to the current HEAD."""
-    args = ["reset", "--hard"]
-    if treeish is not None:
-        args.append(_git_value(treeish))
-    _run_git(repo, *args)
+    libgit_repo = _libgit_repo(repo)
+    if treeish is None:
+        target = libgit_repo.head.target
+    else:
+        target = libgit_repo.revparse_single(_git_value(treeish)).id
+    libgit_repo.reset(target, pygit2.GIT_RESET_HARD)
 
 
 def create_branch(
@@ -118,27 +125,50 @@ def create_branch(
     checkout: bool = False,
 ) -> None:
     """Create a branch at a commit and optionally check it out."""
-    git.create_branch(repo, branch, start_point)
+    _libgit_repo(repo).create_reference(
+        f"refs/heads/{branch}",
+        pygit2.Oid(hex=_git_value(start_point)),
+    )
     if checkout:
         switch_branch(repo, branch)
 
 
 def add_paths(repo: Repo, *paths: Path) -> None:
     """Stage one or more paths."""
+    libgit_repo = _libgit_repo(repo)
     repo_path = _repo_path(repo)
-    _run_git(repo, "add", *[_repo_relative_path(repo_path, path) for path in paths])
+    for path in paths:
+        libgit_repo.index.add(_repo_relative_path(repo_path, path))
+    libgit_repo.index.write()
 
 
 def remove_paths(repo: Repo, *paths: Path) -> None:
     """Remove one or more tracked paths."""
+    libgit_repo = _libgit_repo(repo)
     repo_path = _repo_path(repo)
-    _run_git(repo, "rm", *[_repo_relative_path(repo_path, path) for path in paths])
+    for path in paths:
+        if path.exists():
+            path.unlink()
+        libgit_repo.index.remove(_repo_relative_path(repo_path, path))
+    libgit_repo.index.write()
 
 
 def commit(repo: Repo, message: str | bytes) -> bytes:
     """Create a commit from the current index."""
-    _run_git(repo, "commit", "--quiet", "-F", "-", input_text=_git_value(message))
-    return _run_git(repo, "rev-parse", "HEAD").stdout.strip().encode()
+    libgit_repo = _libgit_repo(repo)
+    libgit_repo.index.write()
+    tree = libgit_repo.index.write_tree()
+    signature = libgit_repo.default_signature
+    parents = [] if libgit_repo.head_is_unborn else [libgit_repo.head.target]
+    commit_oid = libgit_repo.create_commit(
+        "HEAD",
+        signature,
+        signature,
+        _git_value(message),
+        tree,
+        parents,
+    )
+    return str(commit_oid).encode()
 
 
 def commit_files(
