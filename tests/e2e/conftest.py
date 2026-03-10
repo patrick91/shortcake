@@ -7,12 +7,11 @@ from pathlib import Path
 
 import httpx
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 from playwright.sync_api import Page
 
 from shortcake._trailers import Trailers
 from shortcake.commands.ui import _start_api_server
+from tests._git_helpers import commit_files, create_branch, get_branch_head, init_repo
 
 
 def pytest_collection_modifyitems(config, items):
@@ -43,50 +42,39 @@ def browser_context_args(browser_context_args):
 def e2e_repo(tmp_path_factory):
     """Create a test repo with stack: main -> branch_a -> branch_b."""
     tmp_path = tmp_path_factory.mktemp("e2e_repo")
-    repo = Repo.init(tmp_path, default_branch=b"main")
-
-    subprocess.run(
-        ["git", "config", "user.email", "test@test.com"],
-        cwd=tmp_path,
-        check=True,
-    )
-    subprocess.run(
-        ["git", "config", "user.name", "Test User"],
-        cwd=tmp_path,
-        check=True,
-    )
+    repo = init_repo(tmp_path)
 
     # Initial commit on main
-    readme = tmp_path / "README.md"
-    readme.write_text("# E2E Test Repo")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    commit_files(repo, {tmp_path / "README.md": "# E2E Test Repo"}, "Initial commit")
 
     # branch_a from main
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
-    porcelain.reset(repo, "hard")
-
-    feature_a = tmp_path / "feature_a.py"
-    feature_a.write_text('def greet():\n    return "Hello from feature A"\n')
-    porcelain.add(repo, paths=[str(feature_a)])
+    create_branch(repo, "branch_a", get_branch_head(repo, "main"), checkout=True)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: add feature A")
-    porcelain.commit(repo, message=message_a.encode())
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    commit_files(
+        repo,
+        {
+            tmp_path / "feature_a.py": (
+                'def greet():\n    return "Hello from feature A"\n'
+            )
+        },
+        message_a,
+    )
+    branch_a_sha = get_branch_head(repo, "branch_a")
 
     # branch_b from branch_a
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
-    porcelain.reset(repo, "hard")
-
-    feature_b = tmp_path / "feature_b.py"
-    feature_b.write_text('def farewell():\n    return "Goodbye from feature B"\n')
-    porcelain.add(repo, paths=[str(feature_b)])
+    create_branch(repo, "branch_b", branch_a_sha, checkout=True)
     trailers_b = Trailers(parent_branch="branch_a")
     message_b = trailers_b.apply_to("feat: add feature B")
-    porcelain.commit(repo, message=message_b.encode())
+    commit_files(
+        repo,
+        {
+            tmp_path / "feature_b.py": (
+                'def farewell():\n    return "Goodbye from feature B"\n'
+            )
+        },
+        message_b,
+    )
 
     yield repo
     repo.close()
