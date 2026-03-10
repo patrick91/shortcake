@@ -2,6 +2,7 @@ import os
 from pathlib import Path
 from unittest.mock import patch
 
+import pygit2
 import pytest
 
 from shortcake._editor import _get_git_editor, get_editor, open_editor
@@ -70,6 +71,18 @@ def test_get_git_editor_missing_config(
 
     monkeypatch.chdir(temp_repo.path)
     monkeypatch.setattr("shortcake._editor.pygit2.Repository", lambda _: FakeRepo())
+    assert _get_git_editor() is None
+
+
+def test_get_git_editor_git_error(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test _get_git_editor returns None when pygit2 raises."""
+    monkeypatch.chdir(temp_repo.path)
+    monkeypatch.setattr(
+        "shortcake._editor.pygit2.Repository",
+        lambda _: (_ for _ in ()).throw(pygit2.GitError("broken repo")),
+    )
     assert _get_git_editor() is None
 
 
