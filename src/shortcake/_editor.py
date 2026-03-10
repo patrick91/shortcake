@@ -3,18 +3,18 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from dulwich.errors import NotGitRepository
-
-from shortcake import _git as git
+import pygit2
 
 
 def _get_git_editor() -> str | None:
     """Get editor from git config (core.editor)."""
     try:
-        repo = git.open_repo()
-        config = repo.get_config_stack()
-        return config.get((b"core",), b"editor").decode()
-    except (NotGitRepository, KeyError):
+        git_dir = pygit2.discover_repository(Path.cwd())
+        if git_dir is None:
+            return None
+        repo = pygit2.Repository(git_dir)
+        return repo.config["core.editor"]
+    except (KeyError, pygit2.GitError):
         return None
 
 

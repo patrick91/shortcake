@@ -675,6 +675,7 @@ dependencies = [
     { name = "dulwich", extra = ["merge"] },
     { name = "httpx" },
     { name = "pydantic" },
+    { name = "pygit2" },
     { name = "pyyaml" },
     { name = "rich-toolkit" },
     { name = "typer" },
@@ -689,7 +690,6 @@ dev = [
 [package.dev-dependencies]
 dev = [
     { name = "inline-snapshot" },
-    { name = "pygit2" },
     { name = "pytest-benchmark" },
     { name = "pytest-playwright" },
     { name = "respx" },
@@ -706,6 +706,7 @@ requires-dist = [
     { name = "dulwich", extras = ["merge"], specifier = ">=1.0.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "pydantic", specifier = ">=2.0.0" },
+    { name = "pygit2", specifier = ">=1.19.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
@@ -717,7 +718,6 @@ provides-extras = ["dev"]
 [package.metadata.requires-dev]
 dev = [
     { name = "inline-snapshot", specifier = ">=0.31.1" },
-    { name = "pygit2", specifier = ">=1.19.1" },
     { name = "pytest-benchmark", specifier = ">=5.2.3" },
     { name = "pytest-playwright", specifier = ">=0.6.0" },
     { name = "respx", specifier = ">=0.22.0" },
