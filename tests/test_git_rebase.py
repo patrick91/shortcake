@@ -6,6 +6,7 @@ from dulwich import porcelain
 from dulwich.repo import Repo
 
 from shortcake import _git as git
+from tests._git_helpers import switch_branch
 
 
 def test_rebase_failure_class() -> None:
@@ -45,13 +46,6 @@ def test_rebase_abort_no_rebase_in_progress(temp_repo: Repo) -> None:
 
     with pytest.raises(RebaseFailure, match="No rebase in progress"):
         git.rebase_abort(temp_repo)
-
-
-def switch_branch(repo: Repo, branch: str) -> None:
-    """Properly switch branches with index and working tree reset."""
-    ref = f"refs/heads/{branch}".encode()
-    repo.refs.set_symbolic_ref(b"HEAD", ref)
-    porcelain.reset(repo, "hard")
 
 
 def test_rebase_abort_with_cherry_pick_in_progress(

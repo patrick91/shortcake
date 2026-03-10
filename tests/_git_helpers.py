@@ -54,6 +54,11 @@ def switch_branch(repo: Repo, branch: str) -> None:
     porcelain.reset(repo, "hard")
 
 
+def reset_hard(repo: Repo) -> None:
+    """Reset the index and working tree to the current HEAD."""
+    porcelain.reset(repo, "hard")
+
+
 def create_branch(
     repo: Repo,
     branch: str,
@@ -65,6 +70,17 @@ def create_branch(
     update_branch(repo, branch, start_point)
     if checkout:
         switch_branch(repo, branch)
+
+
+def add_paths(repo: Repo, *paths: Path) -> None:
+    """Stage one or more paths."""
+    porcelain.add(repo, paths=[str(path) for path in paths])
+
+
+def commit(repo: Repo, message: str | bytes) -> bytes:
+    """Create a commit from the current index."""
+    encoded_message = message.encode() if isinstance(message, str) else message
+    return porcelain.commit(repo, message=encoded_message)
 
 
 def commit_files(
@@ -79,5 +95,4 @@ def commit_files(
         paths.append(str(path))
 
     porcelain.add(repo, paths=paths)
-    encoded_message = message.encode() if isinstance(message, str) else message
-    return porcelain.commit(repo, message=encoded_message)
+    return commit(repo, message)
