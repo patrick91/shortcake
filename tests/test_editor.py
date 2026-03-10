@@ -79,7 +79,7 @@ EOF
     )
     editor_script.chmod(0o755)
 
-    with patch.dict(os.environ, {"EDITOR": str(editor_script)}):
+    with patch.dict(os.environ, {"EDITOR": str(editor_script)}, clear=True):
         result = open_editor()
 
     # Comment lines are removed, non-comment lines are kept
@@ -100,7 +100,7 @@ EOF
     )
     editor_script.chmod(0o755)
 
-    with patch.dict(os.environ, {"EDITOR": str(editor_script)}):
+    with patch.dict(os.environ, {"EDITOR": str(editor_script)}, clear=True):
         result = open_editor()
 
     assert result is None
@@ -117,7 +117,7 @@ echo " appended" >> "$1"
     )
     editor_script.chmod(0o755)
 
-    with patch.dict(os.environ, {"EDITOR": str(editor_script)}):
+    with patch.dict(os.environ, {"EDITOR": str(editor_script)}, clear=True):
         result = open_editor("initial")
 
     assert result == "initial appended"
@@ -130,7 +130,7 @@ def test_open_editor_returns_none_on_error(tmp_path: Path) -> None:
     editor_script.write_text("#!/bin/sh\nexit 1\n")
     editor_script.chmod(0o755)
 
-    with patch.dict(os.environ, {"EDITOR": str(editor_script)}):
+    with patch.dict(os.environ, {"EDITOR": str(editor_script)}, clear=True):
         result = open_editor()
 
     assert result is None

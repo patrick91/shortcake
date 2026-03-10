@@ -269,6 +269,15 @@ def test_trailers_apply_to_preserves_existing() -> None:
     assert "Shortcake-Parent: main" in result
 
 
+def test_trailers_apply_to_replaces_existing_parent() -> None:
+    """Test apply updates an existing Shortcake trailer instead of duplicating it."""
+    message = "feat: something\n\nBody\n\nShortcake-Parent: old-parent\n"
+    trailers = Trailers(parent_branch="main")
+    result = trailers.apply_to(message)
+    assert "Shortcake-Parent: old-parent" not in result
+    assert "Shortcake-Parent: main" in result
+
+
 # CLI tests
 
 

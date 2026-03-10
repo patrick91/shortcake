@@ -1,8 +1,33 @@
 from dataclasses import dataclass
 
-from dulwich import porcelain
-
 from shortcake._constants import TRAILER_KEY
+
+
+def _is_trailer_line(line: str) -> bool:
+    if ": " not in line:
+        return False
+    key, _ = line.split(": ", 1)
+    return bool(key) and all(ch.isalnum() or ch == "-" for ch in key)
+
+
+def _split_trailer_block(message: str) -> tuple[str, list[str]]:
+    """Split a commit message into body text and trailing trailer lines."""
+    lines = message.rstrip("\n").split("\n")
+    if not lines or lines == [""]:
+        return message.rstrip("\n"), []
+
+    trailer_start = len(lines)
+    for i in range(len(lines) - 1, -1, -1):
+        line = lines[i]
+        if _is_trailer_line(line):
+            trailer_start = i
+            continue
+        if line.strip() == "" and trailer_start < len(lines):
+            body = "\n".join(lines[:i]).rstrip()
+            return body, lines[trailer_start:]
+        break
+
+    return message.rstrip("\n"), []
 
 
 @dataclass
@@ -12,24 +37,27 @@ class Trailers:
     @classmethod
     def from_message(cls, message: str) -> "Trailers":
         """Parse trailers from commit message."""
-        result = porcelain.interpret_trailers(
-            message, only_trailers=True, only_input=True
-        )
+        _, trailer_lines = _split_trailer_block(message)
         parent_branch = None
-        for line in result.decode().strip().split("\n"):
+        for line in trailer_lines:
             if line.startswith(f"{TRAILER_KEY}: "):
                 parent_branch = line[len(TRAILER_KEY) + 2 :]
         return cls(parent_branch=parent_branch)
 
     def apply_to(self, message: str) -> str:
         """Add trailers to message."""
-        trailers: list[tuple[str, str]] = []
-        if self.parent_branch is not None:
-            trailers.append((TRAILER_KEY, self.parent_branch))
-        if not trailers:
+        if self.parent_branch is None:
             return message
-        result = porcelain.interpret_trailers(message, trailers=trailers)
-        return result.decode()
+
+        body, trailer_lines = _split_trailer_block(message)
+        preserved_trailers = [
+            line for line in trailer_lines if not line.startswith(f"{TRAILER_KEY}: ")
+        ]
+        preserved_trailers.append(f"{TRAILER_KEY}: {self.parent_branch}")
+
+        if body:
+            return f"{body}\n\n" + "\n".join(preserved_trailers)
+        return "\n".join(preserved_trailers)
 
     def remove_from(self, message: str) -> str:
         """Remove Shortcake trailers from message.
