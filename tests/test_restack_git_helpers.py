@@ -3,11 +3,10 @@
 import re
 from pathlib import Path
 
-from dulwich import porcelain
-from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake import _git as git
+from tests._git_helpers import Repo, add_paths
 
 runner = CliRunner()
 
@@ -40,7 +39,7 @@ def test_has_uncommitted_changes_staged(temp_repo: Repo, tmp_path: Path) -> None
     """Test staged changes detected."""
     test_file = tmp_path / "new.txt"
     test_file.write_text("content")
-    porcelain.add(temp_repo, paths=[str(test_file)])
+    add_paths(temp_repo, test_file)
 
     assert git.has_uncommitted_changes(temp_repo)
 

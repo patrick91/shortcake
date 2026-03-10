@@ -6,11 +6,10 @@ Run with: uv run pytest tests/benchmarks/ --benchmark-only
 from pathlib import Path
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._trailers import Trailers
+from tests._git_helpers import Repo, add_paths, commit, init_repo, reset_hard
 
 
 @pytest.fixture
@@ -20,13 +19,13 @@ def repo_with_many_branches(tmp_path: Path) -> Repo:
     Structure: main → branch_0 → branch_1 → ... → branch_99
     Each branch has 1 commit with a Shortcake-Parent trailer.
     """
-    repo = Repo.init(tmp_path, default_branch=b"main")
+    repo = init_repo(tmp_path)
 
     # Create initial commit on main
     readme = tmp_path / "README.md"
     readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    add_paths(repo, readme)
+    commit(repo, b"Initial commit")
 
     # Create 100 branches in a chain
     parent_branch = "main"
@@ -39,17 +38,17 @@ def repo_with_many_branches(tmp_path: Path) -> Repo:
         # Add a file and commit with trailer
         file_path = tmp_path / f"file_{i}.txt"
         file_path.write_text(f"content {i}")
-        porcelain.add(repo, paths=[str(file_path)])
+        add_paths(repo, file_path)
 
         trailers = Trailers(parent_branch=parent_branch)
         message = trailers.apply_to(f"feat: add branch {i}")
-        porcelain.commit(repo, message=message.encode())
+        commit(repo, message)
 
         parent_branch = branch_name
 
     # Switch back to main
     repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
-    porcelain.reset(repo, "hard")
+    reset_hard(repo)
 
     return repo
 
@@ -61,13 +60,13 @@ def repo_with_wide_branches(tmp_path: Path) -> Repo:
     Structure: main → (branch_0, branch_1, ..., branch_99)
     All branches are direct children of main.
     """
-    repo = Repo.init(tmp_path, default_branch=b"main")
+    repo = init_repo(tmp_path)
 
     # Create initial commit on main
     readme = tmp_path / "README.md"
     readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    add_paths(repo, readme)
+    commit(repo, b"Initial commit")
     main_sha = repo.refs[b"refs/heads/main"]
 
     # Create 100 branches all from main
@@ -79,15 +78,15 @@ def repo_with_wide_branches(tmp_path: Path) -> Repo:
         # Add a file and commit with trailer
         file_path = tmp_path / f"file_{i}.txt"
         file_path.write_text(f"content {i}")
-        porcelain.add(repo, paths=[str(file_path)])
+        add_paths(repo, file_path)
 
         trailers = Trailers(parent_branch="main")
         message = trailers.apply_to(f"feat: add branch {i}")
-        porcelain.commit(repo, message=message.encode())
+        commit(repo, message)
 
     # Switch back to main
     repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
-    porcelain.reset(repo, "hard")
+    reset_hard(repo)
 
     return repo
 

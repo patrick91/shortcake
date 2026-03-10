@@ -3,8 +3,6 @@
 from pathlib import Path
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake.commands.bottom import (
@@ -12,6 +10,14 @@ from shortcake.commands.bottom import (
     DetachedHeadError,
     NotTrackedError,
     _bottom,
+)
+from tests._git_helpers import (
+    Repo,
+    commit_files,
+    create_branch,
+    get_branch_head,
+    init_repo,
+    switch_branch,
 )
 
 
@@ -30,7 +36,7 @@ def test_bottom_jumps_to_base(repo_with_stack: Repo) -> None:
 
 def test_bottom_already_at_bottom(repo_with_stack: Repo) -> None:
     """Test when already at bottom of stack (parent is trunk)."""
-    porcelain.switch(repo_with_stack, "branch_a")
+    switch_branch(repo_with_stack, "branch_a")
 
     result = _bottom(repo_with_stack)
 
@@ -41,7 +47,7 @@ def test_bottom_already_at_bottom(repo_with_stack: Repo) -> None:
 
 def test_bottom_from_middle(repo_with_stack: Repo) -> None:
     """Test jumping from middle of stack to bottom."""
-    porcelain.switch(repo_with_stack, "branch_b")
+    switch_branch(repo_with_stack, "branch_b")
 
     result = _bottom(repo_with_stack)
 
@@ -52,20 +58,12 @@ def test_bottom_from_middle(repo_with_stack: Repo) -> None:
 
 def test_bottom_not_tracked(tmp_path: Path) -> None:
     """Test error when branch is not tracked."""
-    repo = Repo.init(tmp_path, default_branch=b"main")
-    readme = tmp_path / "README.md"
-    readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    repo = init_repo(tmp_path)
+    commit_files(repo, {tmp_path / "README.md": "# Test"}, "Initial commit")
 
     # Create untracked branch
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/untracked"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/untracked")
-    file_f = tmp_path / "f.txt"
-    file_f.write_text("f")
-    porcelain.add(repo, paths=[str(file_f)])
-    porcelain.commit(repo, message=b"Add feature")
+    create_branch(repo, "untracked", get_branch_head(repo, "main"), checkout=True)
+    commit_files(repo, {tmp_path / "f.txt": "f"}, "Add feature")
 
     with pytest.raises(NotTrackedError):
         _bottom(repo)
@@ -83,7 +81,7 @@ def test_bottom_detached_head(repo_with_stack: Repo) -> None:
 
 def test_bottom_single_tracked_branch(repo_with_tracked_feature: Repo) -> None:
     """Test bottom when there's only one tracked branch above trunk."""
-    repo_with_tracked_feature.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    switch_branch(repo_with_tracked_feature, "feature")
 
     result = _bottom(repo_with_tracked_feature)
 

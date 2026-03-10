@@ -3,8 +3,6 @@
 from pathlib import Path
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake import _git as git
@@ -19,7 +17,7 @@ from shortcake.commands.reorder import (
     _reorder,
     _update_branch_trailer,
 )
-from tests._git_helpers import switch_branch
+from tests._git_helpers import Repo, add_paths, commit, reset_hard, switch_branch
 
 runner = CliRunner()
 
@@ -34,34 +32,34 @@ def _create_stack_3(repo: Repo, tmp_path: Path) -> None:
     # branch_a
     repo.refs[b"refs/heads/branch_a"] = main_sha
     repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
-    porcelain.reset(repo, "hard")
+    reset_hard(repo)
 
     (tmp_path / "a.txt").write_text("branch a content")
-    porcelain.add(repo, paths=[str(tmp_path / "a.txt")])
+    add_paths(repo, tmp_path / "a.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: branch a")
-    porcelain.commit(repo, message=msg_a.encode())
+    commit(repo, msg_a)
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
 
     # branch_b
     repo.refs[b"refs/heads/branch_b"] = branch_a_sha
     repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
-    porcelain.reset(repo, "hard")
+    reset_hard(repo)
 
     (tmp_path / "b.txt").write_text("branch b content")
-    porcelain.add(repo, paths=[str(tmp_path / "b.txt")])
+    add_paths(repo, tmp_path / "b.txt")
     msg_b = Trailers(parent_branch="branch_a").apply_to("feat: branch b")
-    porcelain.commit(repo, message=msg_b.encode())
+    commit(repo, msg_b)
     branch_b_sha = repo.refs[b"refs/heads/branch_b"]
 
     # branch_c
     repo.refs[b"refs/heads/branch_c"] = branch_b_sha
     repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
-    porcelain.reset(repo, "hard")
+    reset_hard(repo)
 
     (tmp_path / "c.txt").write_text("branch c content")
-    porcelain.add(repo, paths=[str(tmp_path / "c.txt")])
+    add_paths(repo, tmp_path / "c.txt")
     msg_c = Trailers(parent_branch="branch_b").apply_to("feat: branch c")
-    porcelain.commit(repo, message=msg_c.encode())
+    commit(repo, msg_c)
 
 
 # --- Precondition tests ---
@@ -80,7 +78,7 @@ def test_reorder_uncommitted_changes(repo_with_stack: Repo, tmp_path: Path) -> N
     """ReorderError when there are uncommitted changes."""
     switch_branch(repo_with_stack, "branch_b")
     (tmp_path / "dirty.txt").write_text("dirty")
-    porcelain.add(repo_with_stack, paths=[str(tmp_path / "dirty.txt")])
+    add_paths(repo_with_stack, tmp_path / "dirty.txt")
     with pytest.raises(ReorderError, match="uncommitted changes"):
         _reorder(repo_with_stack, new_order=["branch_b", "branch_a"])
 
@@ -112,8 +110,8 @@ def test_reorder_untracked_branch(temp_repo: Repo, tmp_path: Path) -> None:
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
 
     (tmp_path / "feature.txt").write_text("feature")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "feature.txt")])
-    porcelain.commit(temp_repo, message=b"Add feature")
+    add_paths(temp_repo, tmp_path / "feature.txt")
+    commit(temp_repo, b"Add feature")
 
     with pytest.raises(ReorderError, match="not tracked"):
         _reorder(temp_repo, new_order=["feature"])
@@ -134,35 +132,35 @@ def test_reorder_fork_below_current(temp_repo: Repo, tmp_path: Path) -> None:
     temp_repo.refs[b"refs/heads/branch_a"] = main_sha
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
+    add_paths(temp_repo, tmp_path / "a.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: a")
-    porcelain.commit(temp_repo, message=msg_a.encode())
+    commit(temp_repo, msg_a)
     sha_a = temp_repo.refs[b"refs/heads/branch_a"]
 
     # B (tracked, child of A, will have 2 children C and D)
     temp_repo.refs[b"refs/heads/branch_b"] = sha_a
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "b.txt")])
+    add_paths(temp_repo, tmp_path / "b.txt")
     msg_b = Trailers(parent_branch="branch_a").apply_to("feat: b")
-    porcelain.commit(temp_repo, message=msg_b.encode())
+    commit(temp_repo, msg_b)
     sha_b = temp_repo.refs[b"refs/heads/branch_b"]
 
     # C (child of B)
     temp_repo.refs[b"refs/heads/branch_c"] = sha_b
     switch_branch(temp_repo, "branch_c")
     (tmp_path / "c.txt").write_text("c")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "c.txt")])
+    add_paths(temp_repo, tmp_path / "c.txt")
     msg_c = Trailers(parent_branch="branch_b").apply_to("feat: c")
-    porcelain.commit(temp_repo, message=msg_c.encode())
+    commit(temp_repo, msg_c)
 
     # D (also child of B -> fork at B)
     temp_repo.refs[b"refs/heads/branch_d"] = sha_b
     switch_branch(temp_repo, "branch_d")
     (tmp_path / "d.txt").write_text("d")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "d.txt")])
+    add_paths(temp_repo, tmp_path / "d.txt")
     msg_d = Trailers(parent_branch="branch_b").apply_to("feat: d")
-    porcelain.commit(temp_repo, message=msg_d.encode())
+    commit(temp_repo, msg_d)
 
     # On branch_a, fork is at branch_b (below current, in downward walk)
     switch_branch(temp_repo, "branch_a")
@@ -464,21 +462,21 @@ def test_reorder_multi_commit_branch(temp_repo: Repo, tmp_path: Path) -> None:
     temp_repo.refs[b"refs/heads/branch_a"] = main_sha
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a1.txt").write_text("a1")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "a1.txt")])
+    add_paths(temp_repo, tmp_path / "a1.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: branch a commit 1")
-    porcelain.commit(temp_repo, message=msg_a.encode())
+    commit(temp_repo, msg_a)
     (tmp_path / "a2.txt").write_text("a2")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "a2.txt")])
-    porcelain.commit(temp_repo, message=b"feat: branch a commit 2")
+    add_paths(temp_repo, tmp_path / "a2.txt")
+    commit(temp_repo, b"feat: branch a commit 2")
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # branch_b: 1 commit
     temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "b.txt")])
+    add_paths(temp_repo, tmp_path / "b.txt")
     msg_b = Trailers(parent_branch="branch_a").apply_to("feat: branch b")
-    porcelain.commit(temp_repo, message=msg_b.encode())
+    commit(temp_repo, msg_b)
 
     # Swap: main -> B -> A
     result = _reorder(temp_repo, new_order=["branch_b", "branch_a"])
@@ -542,18 +540,18 @@ def test_reorder_conflict(temp_repo: Repo, tmp_path: Path) -> None:
     temp_repo.refs[b"refs/heads/branch_a"] = main_sha
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "shared.txt").write_text("content from A")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "shared.txt")])
+    add_paths(temp_repo, tmp_path / "shared.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=msg_a.encode())
+    commit(temp_repo, msg_a)
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # branch_b: modifies same file differently
     temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "shared.txt").write_text("content from B")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "shared.txt")])
+    add_paths(temp_repo, tmp_path / "shared.txt")
     msg_b = Trailers(parent_branch="branch_a").apply_to("feat: branch b")
-    porcelain.commit(temp_repo, message=msg_b.encode())
+    commit(temp_repo, msg_b)
 
     # Reorder: swap A and B -> B needs to go onto main, A onto B
     # B modifies shared.txt to "content from B", A modifies to "content from A"
@@ -573,9 +571,9 @@ def test_reorder_conflict_abort(temp_repo: Repo, tmp_path: Path) -> None:
     temp_repo.refs[b"refs/heads/branch_a"] = main_sha
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "shared.txt").write_text("content from A")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "shared.txt")])
+    add_paths(temp_repo, tmp_path / "shared.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=msg_a.encode())
+    commit(temp_repo, msg_a)
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
     original_a = temp_repo.refs[b"refs/heads/branch_a"]
 
@@ -583,9 +581,9 @@ def test_reorder_conflict_abort(temp_repo: Repo, tmp_path: Path) -> None:
     temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "shared.txt").write_text("content from B")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "shared.txt")])
+    add_paths(temp_repo, tmp_path / "shared.txt")
     msg_b = Trailers(parent_branch="branch_a").apply_to("feat: branch b")
-    porcelain.commit(temp_repo, message=msg_b.encode())
+    commit(temp_repo, msg_b)
     original_b = temp_repo.refs[b"refs/heads/branch_b"]
 
     # Reorder causing conflict
@@ -635,8 +633,8 @@ def test_reorder_conflict_continue(temp_repo: Repo, tmp_path: Path) -> None:
     # Create shared.txt on main so both branches can conflict on it
     switch_branch(temp_repo, "main")
     (tmp_path / "shared.txt").write_text("original")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "shared.txt")])
-    porcelain.commit(temp_repo, message=b"add shared.txt")
+    add_paths(temp_repo, tmp_path / "shared.txt")
+    commit(temp_repo, b"add shared.txt")
     main_sha = temp_repo.refs[b"refs/heads/main"]
 
     # branch_a: modifies shared.txt
@@ -644,12 +642,9 @@ def test_reorder_conflict_continue(temp_repo: Repo, tmp_path: Path) -> None:
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "shared.txt").write_text("content from A")
     (tmp_path / "a.txt").write_text("a")
-    porcelain.add(
-        temp_repo,
-        paths=[str(tmp_path / "shared.txt"), str(tmp_path / "a.txt")],
-    )
+    add_paths(temp_repo, tmp_path / "shared.txt", tmp_path / "a.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=msg_a.encode())
+    commit(temp_repo, msg_a)
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # branch_b: modifies shared.txt differently
@@ -657,12 +652,9 @@ def test_reorder_conflict_continue(temp_repo: Repo, tmp_path: Path) -> None:
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "shared.txt").write_text("content from B")
     (tmp_path / "b.txt").write_text("b")
-    porcelain.add(
-        temp_repo,
-        paths=[str(tmp_path / "shared.txt"), str(tmp_path / "b.txt")],
-    )
+    add_paths(temp_repo, tmp_path / "shared.txt", tmp_path / "b.txt")
     msg_b = Trailers(parent_branch="branch_a").apply_to("feat: branch b")
-    porcelain.commit(temp_repo, message=msg_b.encode())
+    commit(temp_repo, msg_b)
 
     # Reorder: swap -> both rebases will conflict on shared.txt
     result = _reorder(temp_repo, new_order=["branch_b", "branch_a"])
@@ -711,41 +703,41 @@ def test_reorder_conflict_continue_remaining_steps(
     # shared.txt on main
     switch_branch(temp_repo, "main")
     (tmp_path / "shared.txt").write_text("original")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "shared.txt")])
-    porcelain.commit(temp_repo, message=b"add shared.txt")
+    add_paths(temp_repo, tmp_path / "shared.txt")
+    commit(temp_repo, b"add shared.txt")
     main_sha = temp_repo.refs[b"refs/heads/main"]
 
     # branch_a: only adds a.txt (no conflict risk)
     temp_repo.refs[b"refs/heads/branch_a"] = main_sha
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
+    add_paths(temp_repo, tmp_path / "a.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=msg_a.encode())
+    commit(temp_repo, msg_a)
     sha_a = temp_repo.refs[b"refs/heads/branch_a"]
 
     # branch_b: only adds b.txt (no conflict risk)
     temp_repo.refs[b"refs/heads/branch_b"] = sha_a
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "b.txt")])
+    add_paths(temp_repo, tmp_path / "b.txt")
     msg_b = Trailers(parent_branch="branch_a").apply_to("feat: branch b")
-    porcelain.commit(temp_repo, message=msg_b.encode())
+    commit(temp_repo, msg_b)
     sha_b = temp_repo.refs[b"refs/heads/branch_b"]
 
     # branch_c: modifies shared.txt (will conflict when rebased onto main)
     temp_repo.refs[b"refs/heads/branch_c"] = sha_b
     switch_branch(temp_repo, "branch_c")
     (tmp_path / "shared.txt").write_text("content from C")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "shared.txt")])
+    add_paths(temp_repo, tmp_path / "shared.txt")
     msg_c = Trailers(parent_branch="branch_b").apply_to("feat: branch c")
-    porcelain.commit(temp_repo, message=msg_c.encode())
+    commit(temp_repo, msg_c)
 
     # Update shared.txt on main so C conflicts when rebased onto it
     switch_branch(temp_repo, "main")
     (tmp_path / "shared.txt").write_text("updated on main")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "shared.txt")])
-    porcelain.commit(temp_repo, message=b"update shared.txt on main")
+    add_paths(temp_repo, tmp_path / "shared.txt")
+    commit(temp_repo, b"update shared.txt on main")
     switch_branch(temp_repo, "branch_c")
 
     # Reorder to [C, A, B]: C onto main conflicts (shared.txt)
@@ -826,17 +818,17 @@ def test_reorder_cli_conflict_exit_code(
     temp_repo.refs[b"refs/heads/branch_a"] = main_sha
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "shared.txt").write_text("content from A")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "shared.txt")])
+    add_paths(temp_repo, tmp_path / "shared.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=msg_a.encode())
+    commit(temp_repo, msg_a)
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "shared.txt").write_text("content from B")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "shared.txt")])
+    add_paths(temp_repo, tmp_path / "shared.txt")
     msg_b = Trailers(parent_branch="branch_a").apply_to("feat: branch b")
-    porcelain.commit(temp_repo, message=msg_b.encode())
+    commit(temp_repo, msg_b)
 
     result = runner.invoke(app, ["reorder", "branch_b", "branch_a"])
     assert result.exit_code == 1

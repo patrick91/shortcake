@@ -2,8 +2,6 @@ import stat
 from pathlib import Path
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._trailers import Trailers
@@ -19,7 +17,7 @@ from shortcake.commands.create import (
     _validate_branch_name,
 )
 from shortcake.commands.ls import _ls
-from tests._git_helpers import switch_branch
+from tests._git_helpers import Repo, add_paths, switch_branch
 
 # Slugify tests
 
@@ -115,7 +113,7 @@ def test_create_with_staged_changes(temp_repo: Repo, tmp_path: Path) -> None:
     """Test that staged changes are committed."""
     new_file = tmp_path / "new_feature.py"
     new_file.write_text("print('hello')")
-    porcelain.add(temp_repo, paths=[str(new_file)])
+    add_paths(temp_repo, new_file)
 
     message = "feat: add feature file"
     branch_name = _slugify(message)
@@ -132,7 +130,7 @@ def test_create_only_commits_staged_changes(temp_repo: Repo, tmp_path: Path) -> 
     # Create and stage one file
     staged_file = tmp_path / "staged.py"
     staged_file.write_text("print('staged')")
-    porcelain.add(temp_repo, paths=[str(staged_file)])
+    add_paths(temp_repo, staged_file)
 
     # Create another file but don't stage it
     unstaged_file = tmp_path / "unstaged.py"
@@ -214,7 +212,7 @@ def test_precommit_hook_passes(temp_repo: Repo, tmp_path: Path) -> None:
 
     new_file = tmp_path / "test.txt"
     new_file.write_text("content")
-    porcelain.add(temp_repo, paths=[str(new_file)])
+    add_paths(temp_repo, new_file)
 
     success, error = git.run_precommit_hook(temp_repo)
     assert success is True
@@ -231,7 +229,7 @@ def test_precommit_hook_fails(temp_repo: Repo, tmp_path: Path) -> None:
 
     new_file = tmp_path / "test.txt"
     new_file.write_text("content")
-    porcelain.add(temp_repo, paths=[str(new_file)])
+    add_paths(temp_repo, new_file)
 
     success, error = git.run_precommit_hook(temp_repo)
     assert success is False
@@ -444,7 +442,7 @@ def test_create_insert_before_with_staged_changes(
     # Stage a new file while on branch_b
     new_file = tmp_path / "new_feature.py"
     new_file.write_text("print('hello')")
-    porcelain.add(repo_with_stack, paths=[str(new_file)])
+    add_paths(repo_with_stack, new_file)
 
     result = _create_insert_before(
         repo_with_stack, "fix: with-staged", "fix-with-staged"
@@ -472,7 +470,7 @@ def test_create_insert_before_staged_changes_on_shared_file(
     """
     b_file = tmp_path / "b.txt"
     b_file.write_text("modified b content")
-    porcelain.add(repo_with_stack, paths=[str(b_file)])
+    add_paths(repo_with_stack, b_file)
 
     result = _create_insert_before(
         repo_with_stack, "fix: shared-file", "fix-shared-file"

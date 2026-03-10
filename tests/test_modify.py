@@ -2,8 +2,6 @@ import stat
 from pathlib import Path
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._trailers import Trailers, strip_trailers
@@ -14,7 +12,7 @@ from shortcake.commands.modify import (
     _modify_target,
     _modify_with_new_commit,
 )
-from tests._git_helpers import switch_branch
+from tests._git_helpers import Repo, add_paths, commit, switch_branch
 
 # strip_trailers tests
 
@@ -94,7 +92,7 @@ def test_amend_commit_includes_staged_changes(temp_repo: Repo, tmp_path: Path) -
     # Stage a new file
     new_file = tmp_path / "new_file.txt"
     new_file.write_text("new content")
-    porcelain.add(temp_repo, paths=[str(new_file)])
+    add_paths(temp_repo, new_file)
 
     new_sha = git.amend_commit(temp_repo, "Amended with new file")
 
@@ -162,7 +160,7 @@ def test_modify_with_staged_changes(repo_with_feature: Repo, tmp_path: Path) -> 
     # Stage a new file
     new_file = tmp_path / "staged_file.txt"
     new_file.write_text("staged content")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
+    add_paths(repo_with_feature, new_file)
 
     result = _modify_amend(repo_with_feature, "feat: with staged changes")
 
@@ -198,7 +196,7 @@ def test_modify_no_verify(repo_with_feature: Repo, tmp_path: Path) -> None:
     # Stage a file to make the hook relevant
     new_file = tmp_path / "test.txt"
     new_file.write_text("content")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
+    add_paths(repo_with_feature, new_file)
 
     # With no_verify=True, should succeed despite failing hook
     result = _modify_amend(repo_with_feature, "feat: no verify test", no_verify=True)
@@ -219,7 +217,7 @@ def test_modify_with_new_commit_creates_commit(
     # Stage a new file
     new_file = tmp_path / "new_feature.txt"
     new_file.write_text("new feature content")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
+    add_paths(repo_with_feature, new_file)
 
     result = _modify_with_new_commit(repo_with_feature, "feat: new commit")
 
@@ -244,7 +242,7 @@ def test_modify_with_new_commit_preserves_trailer(
     # Stage a new file
     new_file = tmp_path / "another_file.txt"
     new_file.write_text("content")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
+    add_paths(repo_with_feature, new_file)
 
     result = _modify_with_new_commit(repo_with_feature, "feat: another commit")
 
@@ -262,7 +260,7 @@ def test_modify_with_new_commit_without_trailer(
     # Stage a new file
     new_file = tmp_path / "file.txt"
     new_file.write_text("content")
-    porcelain.add(temp_repo, paths=[str(new_file)])
+    add_paths(temp_repo, new_file)
 
     result = _modify_with_new_commit(temp_repo, "New commit")
 
@@ -297,7 +295,7 @@ def test_modify_cli_with_precommit_hook_success(
     # Stage a file to trigger hook
     new_file = tmp_path / "test.txt"
     new_file.write_text("content")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
+    add_paths(repo_with_feature, new_file)
 
     runner = CliRunner()
     os.chdir(tmp_path)
@@ -321,10 +319,10 @@ def test_modify_target_basic(temp_repo: Repo, tmp_path: Path) -> None:
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
-    porcelain.add(repo, paths=[str(file_a)])
+    add_paths(repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(repo, message=message_a.encode())
+    commit(repo, message_a)
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
 
     # Create tracked branch_b from branch_a
@@ -333,15 +331,15 @@ def test_modify_target_basic(temp_repo: Repo, tmp_path: Path) -> None:
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b content")
-    porcelain.add(repo, paths=[str(file_b)])
+    add_paths(repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
     message_b = trailers_b.apply_to("feat: branch b")
-    porcelain.commit(repo, message=message_b.encode())
+    commit(repo, message_b)
 
     # Now on branch_b, stage a new file to fold into branch_a
     new_file = tmp_path / "folded.txt"
     new_file.write_text("folded content")
-    porcelain.add(repo, paths=[str(new_file)])
+    add_paths(repo, new_file)
 
     result = _modify_target(repo, "branch_a")
 
@@ -368,10 +366,10 @@ def test_modify_target_preserves_trailer(temp_repo: Repo, tmp_path: Path) -> Non
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
-    porcelain.add(repo, paths=[str(file_a)])
+    add_paths(repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(repo, message=message_a.encode())
+    commit(repo, message_a)
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
 
     # Create tracked branch_b
@@ -380,15 +378,15 @@ def test_modify_target_preserves_trailer(temp_repo: Repo, tmp_path: Path) -> Non
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b content")
-    porcelain.add(repo, paths=[str(file_b)])
+    add_paths(repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
     message_b = trailers_b.apply_to("feat: branch b")
-    porcelain.commit(repo, message=message_b.encode())
+    commit(repo, message_b)
 
     # Stage changes and fold into branch_a
     new_file = tmp_path / "extra.txt"
     new_file.write_text("extra")
-    porcelain.add(repo, paths=[str(new_file)])
+    add_paths(repo, new_file)
 
     _modify_target(repo, "branch_a")
 
@@ -412,10 +410,10 @@ def test_modify_target_preserves_working_changes(
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
-    porcelain.add(repo, paths=[str(file_a)])
+    add_paths(repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(repo, message=message_a.encode())
+    commit(repo, message_a)
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
 
     # Create tracked branch_b
@@ -424,15 +422,15 @@ def test_modify_target_preserves_working_changes(
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b content")
-    porcelain.add(repo, paths=[str(file_b)])
+    add_paths(repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
     message_b = trailers_b.apply_to("feat: branch b")
-    porcelain.commit(repo, message=message_b.encode())
+    commit(repo, message_b)
 
     # Stage one file, leave another as unstaged working change
     staged_file = tmp_path / "staged.txt"
     staged_file.write_text("staged content")
-    porcelain.add(repo, paths=[str(staged_file)])
+    add_paths(repo, staged_file)
 
     unstaged_file = tmp_path / "unstaged.txt"
     unstaged_file.write_text("unstaged content")
@@ -458,10 +456,10 @@ def test_modify_target_restacks_downstream(temp_repo: Repo, tmp_path: Path) -> N
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
-    porcelain.add(repo, paths=[str(file_a)])
+    add_paths(repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(repo, message=message_a.encode())
+    commit(repo, message_a)
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
 
     # Create branch_b
@@ -470,10 +468,10 @@ def test_modify_target_restacks_downstream(temp_repo: Repo, tmp_path: Path) -> N
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b content")
-    porcelain.add(repo, paths=[str(file_b)])
+    add_paths(repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
     message_b = trailers_b.apply_to("feat: branch b")
-    porcelain.commit(repo, message=message_b.encode())
+    commit(repo, message_b)
     branch_b_sha = repo.refs[b"refs/heads/branch_b"]
 
     # Create branch_c
@@ -482,15 +480,15 @@ def test_modify_target_restacks_downstream(temp_repo: Repo, tmp_path: Path) -> N
 
     file_c = tmp_path / "c.txt"
     file_c.write_text("branch c content")
-    porcelain.add(repo, paths=[str(file_c)])
+    add_paths(repo, file_c)
     trailers_c = Trailers(parent_branch="branch_b")
     message_c = trailers_c.apply_to("feat: branch c")
-    porcelain.commit(repo, message=message_c.encode())
+    commit(repo, message_c)
 
     # Stage a new file to fold into branch_a
     new_file = tmp_path / "folded.txt"
     new_file.write_text("folded")
-    porcelain.add(repo, paths=[str(new_file)])
+    add_paths(repo, new_file)
 
     result = _modify_target(repo, "branch_a")
 
@@ -516,10 +514,10 @@ def test_modify_target_no_staged_changes(temp_repo: Repo, tmp_path: Path) -> Non
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
-    porcelain.add(repo, paths=[str(file_a)])
+    add_paths(repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(repo, message=message_a.encode())
+    commit(repo, message_a)
 
     with pytest.raises(ModifyError, match="No staged changes"):
         _modify_target(repo, "main")
@@ -532,7 +530,7 @@ def test_modify_target_branch_not_exist(temp_repo: Repo, tmp_path: Path) -> None
     # Stage something
     new_file = tmp_path / "file.txt"
     new_file.write_text("content")
-    porcelain.add(repo, paths=[str(new_file)])
+    add_paths(repo, new_file)
 
     with pytest.raises(ModifyError, match="does not exist"):
         _modify_target(repo, "nonexistent")
@@ -549,13 +547,13 @@ def test_modify_target_branch_not_tracked(temp_repo: Repo, tmp_path: Path) -> No
 
     untracked_file = tmp_path / "untracked.txt"
     untracked_file.write_text("content")
-    porcelain.add(repo, paths=[str(untracked_file)])
-    porcelain.commit(repo, message=b"untracked commit")
+    add_paths(repo, untracked_file)
+    commit(repo, b"untracked commit")
 
     # Stage something
     new_file = tmp_path / "file.txt"
     new_file.write_text("content")
-    porcelain.add(repo, paths=[str(new_file)])
+    add_paths(repo, new_file)
 
     with pytest.raises(ModifyError, match="not tracked"):
         _modify_target(repo, "main")
@@ -572,10 +570,10 @@ def test_modify_target_rebase_in_progress(temp_repo: Repo, tmp_path: Path) -> No
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
-    porcelain.add(repo, paths=[str(file_a)])
+    add_paths(repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(repo, message=message_a.encode())
+    commit(repo, message_a)
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
 
     # Create tracked branch_b
@@ -584,15 +582,15 @@ def test_modify_target_rebase_in_progress(temp_repo: Repo, tmp_path: Path) -> No
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b content")
-    porcelain.add(repo, paths=[str(file_b)])
+    add_paths(repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
     message_b = trailers_b.apply_to("feat: branch b")
-    porcelain.commit(repo, message=message_b.encode())
+    commit(repo, message_b)
 
     # Stage something
     new_file = tmp_path / "file.txt"
     new_file.write_text("content")
-    porcelain.add(repo, paths=[str(new_file)])
+    add_paths(repo, new_file)
 
     # Simulate rebase in progress
     rebase_dir = Path(repo.controldir()) / "rebase-merge"
@@ -612,7 +610,7 @@ def test_modify_target_same_branch(temp_repo: Repo, tmp_path: Path) -> None:
     # Stage something
     new_file = tmp_path / "file.txt"
     new_file.write_text("content")
-    porcelain.add(repo, paths=[str(new_file)])
+    add_paths(repo, new_file)
 
     with pytest.raises(ModifyError, match="cannot be the current branch"):
         _modify_target(repo, "main")
@@ -634,10 +632,10 @@ def test_modify_target_rollback_on_restack_failure(
 
     shared = tmp_path / "shared.txt"
     shared.write_text("original line 1\noriginal line 2\n")
-    porcelain.add(repo, paths=[str(shared)])
+    add_paths(repo, shared)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(repo, message=message_a.encode())
+    commit(repo, message_a)
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
 
     # branch_b: child of branch_a, rewrites shared.txt
@@ -645,10 +643,10 @@ def test_modify_target_rollback_on_restack_failure(
     repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
 
     shared.write_text("COMPLETELY DIFFERENT\nFOR CONFLICT\n")
-    porcelain.add(repo, paths=[str(shared)])
+    add_paths(repo, shared)
     trailers_b = Trailers(parent_branch="branch_a")
     message_b = trailers_b.apply_to("feat: branch b conflict")
-    porcelain.commit(repo, message=message_b.encode())
+    commit(repo, message_b)
 
     # branch_c: also child of branch_a (sibling of branch_b)
     # shared.txt on branch_c has branch_a's content ("original line 1\n...")
@@ -657,10 +655,10 @@ def test_modify_target_rollback_on_restack_failure(
 
     file_c = tmp_path / "c.txt"
     file_c.write_text("branch c content")
-    porcelain.add(repo, paths=[str(file_c)])
+    add_paths(repo, file_c)
     trailers_c = Trailers(parent_branch="branch_a")
     message_c = trailers_c.apply_to("feat: branch c")
-    porcelain.commit(repo, message=message_c.encode())
+    commit(repo, message_c)
 
     # Save original SHAs
     a_sha_before = git.get_branch_head(repo, "branch_a").decode()
@@ -670,7 +668,7 @@ def test_modify_target_rollback_on_restack_failure(
     # and stage it. The patch context matches branch_a, so it applies cleanly.
     # But restacking branch_b (which also rewrites shared.txt) will conflict.
     shared.write_text("MODIFIED BY FOLD\nNEW CONTENT\n")
-    porcelain.add(repo, paths=[str(shared)])
+    add_paths(repo, shared)
 
     with pytest.raises(ModifyError, match="Restack failed"):
         _modify_target(repo, "branch_a")
@@ -764,10 +762,10 @@ def test_modify_cli_target_success(temp_repo: Repo, tmp_path: Path) -> None:
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
-    porcelain.add(repo, paths=[str(file_a)])
+    add_paths(repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(repo, message=message_a.encode())
+    commit(repo, message_a)
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
 
     # Create tracked branch_b
@@ -776,15 +774,15 @@ def test_modify_cli_target_success(temp_repo: Repo, tmp_path: Path) -> None:
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b content")
-    porcelain.add(repo, paths=[str(file_b)])
+    add_paths(repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
     message_b = trailers_b.apply_to("feat: branch b")
-    porcelain.commit(repo, message=message_b.encode())
+    commit(repo, message_b)
 
     # Stage a new file to fold into branch_a
     new_file = tmp_path / "folded.txt"
     new_file.write_text("folded content")
-    porcelain.add(repo, paths=[str(new_file)])
+    add_paths(repo, new_file)
 
     runner = CliRunner()
     os.chdir(tmp_path)
@@ -883,7 +881,7 @@ def test_modify_cli_amend_success(repo_with_feature: Repo, tmp_path: Path) -> No
     # Stage a new file
     new_file = tmp_path / "staged.txt"
     new_file.write_text("content")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
+    add_paths(repo_with_feature, new_file)
 
     runner = CliRunner()
     os.chdir(tmp_path)
@@ -906,7 +904,7 @@ def test_modify_cli_message_success(repo_with_feature: Repo, tmp_path: Path) -> 
     # Stage a new file
     new_file = tmp_path / "staged.txt"
     new_file.write_text("content")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
+    add_paths(repo_with_feature, new_file)
 
     runner = CliRunner()
     os.chdir(tmp_path)
@@ -930,7 +928,7 @@ def test_modify_cli_edit_success(repo_with_feature: Repo, tmp_path: Path) -> Non
     # Stage a new file
     new_file = tmp_path / "staged.txt"
     new_file.write_text("content")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
+    add_paths(repo_with_feature, new_file)
 
     runner = CliRunner()
     os.chdir(tmp_path)
@@ -958,7 +956,7 @@ def test_modify_cli_edit_empty_message(repo_with_feature: Repo, tmp_path: Path) 
     # Stage a new file
     new_file = tmp_path / "staged.txt"
     new_file.write_text("content")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
+    add_paths(repo_with_feature, new_file)
 
     runner = CliRunner()
     os.chdir(tmp_path)
@@ -995,7 +993,7 @@ def test_modify_cli_precommit_hook_failure(
     # Stage a file to trigger hook
     new_file = tmp_path / "test.txt"
     new_file.write_text("content")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
+    add_paths(repo_with_feature, new_file)
 
     runner = CliRunner()
     os.chdir(tmp_path)

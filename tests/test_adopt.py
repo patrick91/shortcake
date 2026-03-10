@@ -1,14 +1,20 @@
 from pathlib import Path
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake import _git as git
 from shortcake._trailers import Trailers
 from shortcake.cli import app
 from shortcake.commands.adopt import AdoptError, _adopt
+from tests._git_helpers import (
+    Repo,
+    commit_files,
+    create_branch,
+    get_branch_head,
+    init_repo,
+    switch_branch,
+)
 
 runner = CliRunner()
 
@@ -29,7 +35,7 @@ def test_adopt_current_branch(repo_with_feature: Repo) -> None:
 def test_adopt_specified_branch(repo_with_feature: Repo) -> None:
     """Test adopting a specified branch."""
     # Switch back to main
-    repo_with_feature.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    switch_branch(repo_with_feature, "main")
 
     result = _adopt(repo_with_feature, branch="feature")
 
@@ -61,8 +67,11 @@ def test_adopt_force_reparent(repo_with_feature: Repo, tmp_path: Path) -> None:
     assert result.parent == "main"
 
     # Create a new branch to use as parent
-    main_sha = repo_with_feature.refs[b"refs/heads/main"]
-    repo_with_feature.refs[b"refs/heads/develop"] = main_sha
+    create_branch(
+        repo_with_feature,
+        "develop",
+        get_branch_head(repo_with_feature, "main"),
+    )
 
     # Re-parent to develop with --force
     result = _adopt(repo_with_feature, parent="develop", force=True)
@@ -83,40 +92,36 @@ def test_adopt_force_reparent_diverged_lineage(temp_repo: Repo, tmp_path: Path) 
     lineage caused adopt to amend the wrong commit (an ancestor's
     trailer instead of the branch's own trailer).
     """
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_branch_head(temp_repo, "main")
 
     # Create parent-a from main
-    temp_repo.refs[b"refs/heads/parent-a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/parent-a")
-    file_a = tmp_path / "a.txt"
-    file_a.write_text("a")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    create_branch(temp_repo, "parent-a", main_sha, checkout=True)
     trailers_a = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: parent a").encode())
-    parent_a_sha = temp_repo.refs[b"refs/heads/parent-a"]
+    commit_files(
+        temp_repo,
+        {tmp_path / "a.txt": "a"},
+        trailers_a.apply_to("feat: parent a"),
+    )
+    parent_a_sha = get_branch_head(temp_repo, "parent-a")
 
     # Create child branch (3 commits on top of parent-a)
-    temp_repo.refs[b"refs/heads/child"] = parent_a_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/child")
-    file_c1 = tmp_path / "c1.txt"
-    file_c1.write_text("c1")
-    porcelain.add(temp_repo, paths=[str(file_c1)])
+    create_branch(temp_repo, "child", parent_a_sha, checkout=True)
     trailers_c = Trailers(parent_branch="parent-a")
-    porcelain.commit(temp_repo, message=trailers_c.apply_to("feat: child").encode())
-    file_c2 = tmp_path / "c2.txt"
-    file_c2.write_text("c2")
-    porcelain.add(temp_repo, paths=[str(file_c2)])
-    porcelain.commit(temp_repo, message=b"style: format")
+    commit_files(
+        temp_repo,
+        {tmp_path / "c1.txt": "c1"},
+        trailers_c.apply_to("feat: child"),
+    )
+    commit_files(temp_repo, {tmp_path / "c2.txt": "c2"}, "style: format")
 
     # Create parent-b from main (diverged lineage, not from parent-a)
-    temp_repo.refs[b"refs/heads/parent-b"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/parent-b")
-    porcelain.reset(temp_repo, "hard")
-    file_b = tmp_path / "b.txt"
-    file_b.write_text("b")
-    porcelain.add(temp_repo, paths=[str(file_b)])
+    create_branch(temp_repo, "parent-b", main_sha, checkout=True)
     trailers_b = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: parent b").encode())
+    commit_files(
+        temp_repo,
+        {tmp_path / "b.txt": "b"},
+        trailers_b.apply_to("feat: parent b"),
+    )
 
     # Delete parent-a (simulates the old parent being gone)
     del temp_repo.refs[b"refs/heads/parent-a"]
@@ -153,22 +158,14 @@ def test_adopt_default_branch(temp_repo: Repo) -> None:
 def test_adopt_no_parent_detected(tmp_path: Path) -> None:
     """Test error when no parent branch can be detected."""
     # Create repo without main or master
-    repo = Repo.init(tmp_path, default_branch=b"develop")
-    readme = tmp_path / "README.md"
-    readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    repo = init_repo(tmp_path, default_branch="develop")
+    commit_files(repo, {tmp_path / "README.md": "# Test"}, "Initial commit")
 
     # Create feature branch
-    develop_sha = repo.refs[b"refs/heads/develop"]
-    repo.refs[b"refs/heads/feature"] = develop_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    create_branch(repo, "feature", get_branch_head(repo, "develop"), checkout=True)
 
     # Add commit on feature
-    test_file = tmp_path / "feature.txt"
-    test_file.write_text("feature")
-    porcelain.add(repo, paths=[str(test_file)])
-    porcelain.commit(repo, message=b"Add feature")
+    commit_files(repo, {tmp_path / "feature.txt": "feature"}, "Add feature")
 
     with pytest.raises(AdoptError, match="Cannot detect parent branch"):
         _adopt(repo)
@@ -183,9 +180,12 @@ def test_adopt_parent_not_found(repo_with_feature: Repo) -> None:
 def test_adopt_no_commits_on_branch(temp_repo: Repo) -> None:
     """Test error when branch has no commits relative to parent."""
     # Create feature branch at same commit as main (no new commits)
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    create_branch(
+        temp_repo,
+        "feature",
+        get_branch_head(temp_repo, "main"),
+        checkout=True,
+    )
 
     with pytest.raises(AdoptError, match="No commits on 'feature' relative to 'main'"):
         _adopt(temp_repo)
@@ -194,21 +194,26 @@ def test_adopt_no_commits_on_branch(temp_repo: Repo) -> None:
 def test_adopt_multiple_commits(temp_repo: Repo, tmp_path: Path) -> None:
     """Test adopting branch with multiple commits triggers replay."""
     # Create feature branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    create_branch(
+        temp_repo,
+        "feature",
+        get_branch_head(temp_repo, "main"),
+        checkout=True,
+    )
 
     # Add first commit
-    file1 = tmp_path / "file1.txt"
-    file1.write_text("content1")
-    porcelain.add(temp_repo, paths=[str(file1)])
-    porcelain.commit(temp_repo, message=b"First feature commit")
+    commit_files(
+        temp_repo,
+        {tmp_path / "file1.txt": "content1"},
+        "First feature commit",
+    )
 
     # Add second commit
-    file2 = tmp_path / "file2.txt"
-    file2.write_text("content2")
-    porcelain.add(temp_repo, paths=[str(file2)])
-    porcelain.commit(temp_repo, message=b"Second feature commit")
+    commit_files(
+        temp_repo,
+        {tmp_path / "file2.txt": "content2"},
+        "Second feature commit",
+    )
 
     result = _adopt(temp_repo)
 
@@ -275,8 +280,11 @@ def test_adopt_cli_force_reparent(repo_with_feature: Repo, tmp_path: Path) -> No
     _adopt(repo_with_feature)
 
     # Create a new branch to use as parent
-    main_sha = repo_with_feature.refs[b"refs/heads/main"]
-    repo_with_feature.refs[b"refs/heads/develop"] = main_sha
+    create_branch(
+        repo_with_feature,
+        "develop",
+        get_branch_head(repo_with_feature, "main"),
+    )
 
     os.chdir(tmp_path)
     result = runner.invoke(app, ["adopt", "--force", "--parent", "develop"])

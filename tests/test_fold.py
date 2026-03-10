@@ -3,15 +3,13 @@ import stat
 from pathlib import Path
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake import _git as git
 from shortcake._trailers import Trailers
 from shortcake.cli import app
 from shortcake.commands.fold import FoldError, _fold
-from tests._git_helpers import switch_branch
+from tests._git_helpers import Repo, add_paths, commit, switch_branch
 
 runner = CliRunner()
 
@@ -32,7 +30,7 @@ def test_fold_uncommitted_changes(repo_with_stack: Repo, tmp_path: Path) -> None
     """FoldError when there are uncommitted changes."""
     switch_branch(repo_with_stack, "branch_b")
     (tmp_path / "dirty.txt").write_text("dirty")
-    porcelain.add(repo_with_stack, paths=[str(tmp_path / "dirty.txt")])
+    add_paths(repo_with_stack, tmp_path / "dirty.txt")
     with pytest.raises(FoldError, match="uncommitted changes"):
         _fold(repo_with_stack)
 
@@ -57,8 +55,8 @@ def test_fold_untracked_branch(temp_repo: Repo, tmp_path: Path) -> None:
 
     file = tmp_path / "feature.txt"
     file.write_text("feature")
-    porcelain.add(temp_repo, paths=[str(file)])
-    porcelain.commit(temp_repo, message=b"Add feature")
+    add_paths(temp_repo, file)
+    commit(temp_repo, b"Add feature")
 
     with pytest.raises(FoldError, match="not tracked"):
         _fold(temp_repo)
@@ -141,27 +139,27 @@ def test_fold_reparents_single_child(temp_repo: Repo, tmp_path: Path) -> None:
     temp_repo.refs[b"refs/heads/branch_a"] = main_sha
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
+    add_paths(temp_repo, tmp_path / "a.txt")
     trailers_a = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a").encode())
+    commit(temp_repo, trailers_a.apply_to("feat: branch a"))
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # branch_b
     temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "b.txt")])
+    add_paths(temp_repo, tmp_path / "b.txt")
     trailers_b = Trailers(parent_branch="branch_a")
-    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: branch b").encode())
+    commit(temp_repo, trailers_b.apply_to("feat: branch b"))
     branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
 
     # branch_c
     temp_repo.refs[b"refs/heads/branch_c"] = branch_b_sha
     switch_branch(temp_repo, "branch_c")
     (tmp_path / "c.txt").write_text("c content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "c.txt")])
+    add_paths(temp_repo, tmp_path / "c.txt")
     trailers_c = Trailers(parent_branch="branch_b")
-    porcelain.commit(temp_repo, message=trailers_c.apply_to("feat: branch c").encode())
+    commit(temp_repo, trailers_c.apply_to("feat: branch c"))
 
     # Now fold B (current = B)
     switch_branch(temp_repo, "branch_b")
@@ -209,27 +207,27 @@ def test_fold_restacks_after_reparent(temp_repo: Repo, tmp_path: Path) -> None:
     temp_repo.refs[b"refs/heads/branch_a"] = main_sha
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
+    add_paths(temp_repo, tmp_path / "a.txt")
     trailers_a = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a").encode())
+    commit(temp_repo, trailers_a.apply_to("feat: branch a"))
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # branch_b
     temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "b.txt")])
+    add_paths(temp_repo, tmp_path / "b.txt")
     trailers_b = Trailers(parent_branch="branch_a")
-    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: branch b").encode())
+    commit(temp_repo, trailers_b.apply_to("feat: branch b"))
     branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
 
     # branch_c
     temp_repo.refs[b"refs/heads/branch_c"] = branch_b_sha
     switch_branch(temp_repo, "branch_c")
     (tmp_path / "c.txt").write_text("c content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "c.txt")])
+    add_paths(temp_repo, tmp_path / "c.txt")
     trailers_c = Trailers(parent_branch="branch_b")
-    porcelain.commit(temp_repo, message=trailers_c.apply_to("feat: branch c").encode())
+    commit(temp_repo, trailers_c.apply_to("feat: branch c"))
 
     # Fold B
     switch_branch(temp_repo, "branch_b")
@@ -256,32 +254,32 @@ def test_fold_reparents_child_with_multiple_commits(
     temp_repo.refs[b"refs/heads/branch_a"] = main_sha
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
+    add_paths(temp_repo, tmp_path / "a.txt")
     trailers_a = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a").encode())
+    commit(temp_repo, trailers_a.apply_to("feat: branch a"))
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # branch_b
     temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "b.txt")])
+    add_paths(temp_repo, tmp_path / "b.txt")
     trailers_b = Trailers(parent_branch="branch_a")
-    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: branch b").encode())
+    commit(temp_repo, trailers_b.apply_to("feat: branch b"))
     branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
 
     # branch_c with TWO commits
     temp_repo.refs[b"refs/heads/branch_c"] = branch_b_sha
     switch_branch(temp_repo, "branch_c")
     (tmp_path / "c1.txt").write_text("c1 content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "c1.txt")])
+    add_paths(temp_repo, tmp_path / "c1.txt")
     trailers_c = Trailers(parent_branch="branch_b")
     msg_c = trailers_c.apply_to("feat: branch c first")
-    porcelain.commit(temp_repo, message=msg_c.encode())
+    commit(temp_repo, msg_c)
 
     (tmp_path / "c2.txt").write_text("c2 content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "c2.txt")])
-    porcelain.commit(temp_repo, message=b"feat: branch c second")
+    add_paths(temp_repo, tmp_path / "c2.txt")
+    commit(temp_repo, b"feat: branch c second")
 
     # Fold B
     switch_branch(temp_repo, "branch_b")
@@ -314,8 +312,8 @@ def test_fold_empty_diff(temp_repo: Repo, tmp_path: Path) -> None:
 
     # Instead: create branch_a with a commit that has a file
     (tmp_path / "a.txt").write_text("a content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a").encode())
+    add_paths(temp_repo, tmp_path / "a.txt")
+    commit(temp_repo, trailers_a.apply_to("feat: branch a"))
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # branch_b: has the same file content as branch_a (empty diff relative to parent)
@@ -325,8 +323,8 @@ def test_fold_empty_diff(temp_repo: Repo, tmp_path: Path) -> None:
     # Make a commit with trailer but no file changes - we need at least a commit
     # We create a trivial commit
     (tmp_path / "b_marker.txt").write_text("")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "b_marker.txt")])
-    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: branch b").encode())
+    add_paths(temp_repo, tmp_path / "b_marker.txt")
+    commit(temp_repo, trailers_b.apply_to("feat: branch b"))
 
     # Now fold branch_b into its parent (branch_a)
     result = _fold(temp_repo)
@@ -344,18 +342,18 @@ def test_fold_rollback_on_patch_failure(temp_repo: Repo, tmp_path: Path) -> None
     temp_repo.refs[b"refs/heads/branch_a"] = main_sha
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "shared.txt").write_text("original from a")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "shared.txt")])
+    add_paths(temp_repo, tmp_path / "shared.txt")
     trailers_a = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a").encode())
+    commit(temp_repo, trailers_a.apply_to("feat: branch a"))
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # branch_b: modifies shared.txt
     temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "shared.txt").write_text("modified by b")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "shared.txt")])
+    add_paths(temp_repo, tmp_path / "shared.txt")
     trailers_b = Trailers(parent_branch="branch_a")
-    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: branch b").encode())
+    commit(temp_repo, trailers_b.apply_to("feat: branch b"))
 
     # Save original refs
     original_a = git.get_branch_head(temp_repo, "branch_a").decode()
@@ -380,27 +378,27 @@ def test_fold_after_parent_rebased(temp_repo: Repo, tmp_path: Path) -> None:
     temp_repo.refs[b"refs/heads/branch_a"] = main_sha
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
+    add_paths(temp_repo, tmp_path / "a.txt")
     trailers_a = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a").encode())
+    commit(temp_repo, trailers_a.apply_to("feat: branch a"))
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # branch_b: child of branch_a, adds its own file
     temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "b.txt")])
+    add_paths(temp_repo, tmp_path / "b.txt")
     trailers_b = Trailers(parent_branch="branch_a")
-    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: branch b").encode())
+    commit(temp_repo, trailers_b.apply_to("feat: branch b"))
 
     # Now simulate parent (branch_a) being rebased: amend its commit so HEAD changes.
     # This makes git merge-base(branch_b, branch_a) point to 'main' instead of
     # the old branch_a commit, causing the diff to include branch_a's changes.
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a content amended")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
+    add_paths(temp_repo, tmp_path / "a.txt")
     msg = trailers_a.apply_to("feat: branch a amended")
-    porcelain.commit(temp_repo, message=msg.encode())
+    commit(temp_repo, msg)
 
     # branch_b still points to old branch_a commit — merge base is stale
     switch_branch(temp_repo, "branch_b")
@@ -421,18 +419,18 @@ def test_fold_ignores_untracked_files(temp_repo: Repo, tmp_path: Path) -> None:
     temp_repo.refs[b"refs/heads/branch_a"] = main_sha
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
+    add_paths(temp_repo, tmp_path / "a.txt")
     trailers_a = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a").encode())
+    commit(temp_repo, trailers_a.apply_to("feat: branch a"))
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # branch_b: create b.txt
     temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "b.txt")])
+    add_paths(temp_repo, tmp_path / "b.txt")
     trailers_b = Trailers(parent_branch="branch_a")
-    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: branch b").encode())
+    commit(temp_repo, trailers_b.apply_to("feat: branch b"))
 
     # Create an untracked file (should not be touched by fold)
     (tmp_path / "untracked.txt").write_text("should not be committed")
@@ -462,18 +460,18 @@ def test_fold_no_verify(temp_repo: Repo, tmp_path: Path) -> None:
     temp_repo.refs[b"refs/heads/branch_a"] = main_sha
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
+    add_paths(temp_repo, tmp_path / "a.txt")
     trailers_a = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a").encode())
+    commit(temp_repo, trailers_a.apply_to("feat: branch a"))
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # branch_b
     temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "b.txt")])
+    add_paths(temp_repo, tmp_path / "b.txt")
     trailers_b = Trailers(parent_branch="branch_a")
-    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: branch b").encode())
+    commit(temp_repo, trailers_b.apply_to("feat: branch b"))
 
     # Create a failing pre-commit hook
     hooks_dir = Path(temp_repo.controldir()) / "hooks"
@@ -548,27 +546,27 @@ def test_fold_cli_with_reparent(temp_repo: Repo, tmp_path: Path) -> None:
     temp_repo.refs[b"refs/heads/branch_a"] = main_sha
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "a.txt")])
+    add_paths(temp_repo, tmp_path / "a.txt")
     trailers_a = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a").encode())
+    commit(temp_repo, trailers_a.apply_to("feat: branch a"))
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # branch_b
     temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "b.txt")])
+    add_paths(temp_repo, tmp_path / "b.txt")
     trailers_b = Trailers(parent_branch="branch_a")
-    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: branch b").encode())
+    commit(temp_repo, trailers_b.apply_to("feat: branch b"))
     branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
 
     # branch_c
     temp_repo.refs[b"refs/heads/branch_c"] = branch_b_sha
     switch_branch(temp_repo, "branch_c")
     (tmp_path / "c.txt").write_text("c content")
-    porcelain.add(temp_repo, paths=[str(tmp_path / "c.txt")])
+    add_paths(temp_repo, tmp_path / "c.txt")
     trailers_c = Trailers(parent_branch="branch_b")
-    porcelain.commit(temp_repo, message=trailers_c.apply_to("feat: branch c").encode())
+    commit(temp_repo, trailers_c.apply_to("feat: branch c"))
 
     switch_branch(temp_repo, "branch_b")
     os.chdir(tmp_path)

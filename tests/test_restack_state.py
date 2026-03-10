@@ -2,10 +2,10 @@
 
 import re
 
-from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
+from tests._git_helpers import Repo
 
 runner = CliRunner()
 

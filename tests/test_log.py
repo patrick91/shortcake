@@ -1,10 +1,16 @@
 from pathlib import Path
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 
 from shortcake.commands.log import LogResult, _log, _render_log
+from tests._git_helpers import (
+    Repo,
+    commit_files,
+    create_branch,
+    get_branch_head,
+    init_repo,
+    update_branch,
+)
 
 
 def test_log_tracked_branch(repo_with_feature: Repo, tmp_path: Path) -> None:
@@ -38,21 +44,18 @@ def test_log_multiple_commits(temp_repo: Repo, tmp_path: Path) -> None:
     from shortcake.commands.adopt import _adopt
 
     # Create feature branch with multiple commits
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    create_branch(
+        temp_repo,
+        "feature",
+        get_branch_head(temp_repo, "main"),
+        checkout=True,
+    )
 
     # First commit
-    file1 = tmp_path / "file1.txt"
-    file1.write_text("content1")
-    porcelain.add(temp_repo, paths=[str(file1)])
-    porcelain.commit(temp_repo, message=b"First commit")
+    commit_files(temp_repo, {tmp_path / "file1.txt": "content1"}, "First commit")
 
     # Second commit
-    file2 = tmp_path / "file2.txt"
-    file2.write_text("content2")
-    porcelain.add(temp_repo, paths=[str(file2)])
-    porcelain.commit(temp_repo, message=b"Second commit")
+    commit_files(temp_repo, {tmp_path / "file2.txt": "content2"}, "Second commit")
 
     # Adopt and log
     _adopt(temp_repo)
@@ -71,14 +74,14 @@ def test_log_no_commits_at_parent(temp_repo: Repo, tmp_path: Path) -> None:
     from shortcake.commands.adopt import _adopt
 
     # Create feature branch with one commit
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    create_branch(
+        temp_repo,
+        "feature",
+        get_branch_head(temp_repo, "main"),
+        checkout=True,
+    )
 
-    file1 = tmp_path / "file1.txt"
-    file1.write_text("content")
-    porcelain.add(temp_repo, paths=[str(file1)])
-    porcelain.commit(temp_repo, message=b"Feature commit")
+    commit_files(temp_repo, {tmp_path / "file1.txt": "content"}, "Feature commit")
 
     # Adopt the feature branch
     _adopt(temp_repo)
@@ -86,8 +89,8 @@ def test_log_no_commits_at_parent(temp_repo: Repo, tmp_path: Path) -> None:
     # Now fast-forward main to feature's head (simulating merge)
     # When main catches up, the trailer commit is now on main too,
     # so get_branch_parent returns None (stops at main's head)
-    feature_sha = temp_repo.refs[b"refs/heads/feature"]
-    temp_repo.refs[b"refs/heads/main"] = feature_sha
+    feature_sha = get_branch_head(temp_repo, "feature")
+    update_branch(temp_repo, "main", feature_sha)
 
     result = _log(temp_repo)
 
@@ -112,11 +115,8 @@ def test_log_detached_head(temp_repo: Repo) -> None:
 def test_log_untracked_no_default_branch(tmp_path: Path) -> None:
     """Test log on untracked branch with no default shows just HEAD."""
     # Create repo without main or master
-    repo = Repo.init(tmp_path, default_branch=b"develop")
-    readme = tmp_path / "README.md"
-    readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    repo = init_repo(tmp_path, default_branch="develop")
+    commit_files(repo, {tmp_path / "README.md": "# Test"}, "Initial commit")
 
     result = _log(repo)
 
@@ -140,15 +140,19 @@ def test_log_short_sha_format(repo_with_feature: Repo) -> None:
 def test_log_message_first_line_only(temp_repo: Repo, tmp_path: Path) -> None:
     """Test log only shows first line of multi-line commit messages."""
     # Create feature branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    create_branch(
+        temp_repo,
+        "feature",
+        get_branch_head(temp_repo, "main"),
+        checkout=True,
+    )
 
     # Commit with multi-line message
-    file1 = tmp_path / "file.txt"
-    file1.write_text("content")
-    porcelain.add(temp_repo, paths=[str(file1)])
-    porcelain.commit(temp_repo, message=b"First line\n\nBody paragraph\n\nMore text\n")
+    commit_files(
+        temp_repo,
+        {tmp_path / "file.txt": "content"},
+        "First line\n\nBody paragraph\n\nMore text\n",
+    )
 
     result = _log(temp_repo)
 

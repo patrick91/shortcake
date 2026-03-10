@@ -2,8 +2,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._trailers import Trailers
@@ -12,7 +10,7 @@ from shortcake.commands.move_lines import (
     MoveError,
     _accept_working_hunks,
 )
-from tests._git_helpers import switch_branch
+from tests._git_helpers import Repo, add_paths, commit, switch_branch
 
 
 def _git_diff_working(repo_path: Path) -> str:
@@ -70,10 +68,10 @@ def repo_with_tracked_and_working(temp_repo: Repo, tmp_path: Path) -> Repo:
         "def world():\n"
         "    return 'world'\n"
     )
-    porcelain.add(temp_repo, paths=[str(app_py)])
+    add_paths(temp_repo, app_py)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add app")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     # Modify lines far apart to create two separate hunks
     app_py.write_text(
@@ -174,10 +172,10 @@ def test_accept_hunks_across_multiple_files(temp_repo: Repo, tmp_path: Path) -> 
     app_py.write_text("def hello():\n    return 'hello'\n")
     utils_py = tmp_path / "utils.py"
     utils_py.write_text("def util():\n    return 'util'\n")
-    porcelain.add(repo, paths=[str(app_py), str(utils_py)])
+    add_paths(repo, app_py, utils_py)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add files")
-    porcelain.commit(repo, message=message.encode())
+    commit(repo, message)
 
     # Add working changes to both files
     app_py.write_text("def hello():\n    return 'hello modified'\n")
@@ -236,10 +234,10 @@ def test_remaining_working_changes_preserved(temp_repo: Repo, tmp_path: Path) ->
         "def world():\n"
         "    return 'world'\n"
     )
-    porcelain.add(repo, paths=[str(app_py)])
+    add_paths(repo, app_py)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add app")
-    porcelain.commit(repo, message=message.encode())
+    commit(repo, message)
 
     # Add working changes with two hunks + an untracked file
     app_py.write_text(
@@ -377,10 +375,10 @@ def test_accept_restacks_downstream_branches(temp_repo: Repo, tmp_path: Path) ->
 
     app_py = tmp_path / "app.py"
     app_py.write_text("def hello():\n    return 'hello'\n")
-    porcelain.add(repo, paths=[str(app_py)])
+    add_paths(repo, app_py)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add app")
-    porcelain.commit(repo, message=message.encode())
+    commit(repo, message)
     parent_sha = repo.refs[b"refs/heads/parent_branch"]
 
     # child_branch adds a separate file (non-conflicting)
@@ -389,10 +387,10 @@ def test_accept_restacks_downstream_branches(temp_repo: Repo, tmp_path: Path) ->
 
     child_py = tmp_path / "child.py"
     child_py.write_text("def child():\n    return 'child'\n")
-    porcelain.add(repo, paths=[str(child_py)])
+    add_paths(repo, child_py)
     trailers_c = Trailers(parent_branch="parent_branch")
     message_c = trailers_c.apply_to("feat: add child")
-    porcelain.commit(repo, message=message_c.encode())
+    commit(repo, message_c)
 
     # Switch to parent_branch and add working changes
     switch_branch(repo, "parent_branch")
@@ -424,10 +422,10 @@ def test_rollback_on_restack_failure(temp_repo: Repo, tmp_path: Path) -> None:
 
     app_py = tmp_path / "app.py"
     app_py.write_text("def hello():\n    return 'hello'\n")
-    porcelain.add(repo, paths=[str(app_py)])
+    add_paths(repo, app_py)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add app")
-    porcelain.commit(repo, message=message.encode())
+    commit(repo, message)
     parent_sha = repo.refs[b"refs/heads/parent_branch"]
 
     repo.refs[b"refs/heads/child_branch"] = parent_sha
@@ -435,10 +433,10 @@ def test_rollback_on_restack_failure(temp_repo: Repo, tmp_path: Path) -> None:
 
     # child modifies app.py in a conflicting way
     app_py.write_text("CONFLICT CONTENT\nTHIS WILL PREVENT REBASE\n")
-    porcelain.add(repo, paths=[str(app_py)])
+    add_paths(repo, app_py)
     trailers_c = Trailers(parent_branch="parent_branch")
     message_c = trailers_c.apply_to("feat: conflict")
-    porcelain.commit(repo, message=message_c.encode())
+    commit(repo, message_c)
 
     # Switch to parent_branch and add working changes
     switch_branch(repo, "parent_branch")

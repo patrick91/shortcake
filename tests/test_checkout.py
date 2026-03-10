@@ -7,8 +7,6 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 import respx
-from dulwich import porcelain
-from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake.cli import app
@@ -20,7 +18,7 @@ from shortcake.commands.checkout import (
     checkout,  # noqa: F401 - imported for coverage
     co,  # noqa: F401 - imported for coverage
 )
-from tests._git_helpers import switch_branch
+from tests._git_helpers import Repo, add_paths, switch_branch
 
 # Tests for _checkout with local branches
 
@@ -347,7 +345,7 @@ def test_checkout_cli_uncommitted_changes(
 
     # Create uncommitted changes
     (tmp_path / "uncommitted.txt").write_text("uncommitted")
-    porcelain.add(repo_with_feature, paths=[str(tmp_path / "uncommitted.txt")])
+    add_paths(repo_with_feature, tmp_path / "uncommitted.txt")
 
     os.chdir(tmp_path)
     result = runner.invoke(app, ["checkout", "feature"])

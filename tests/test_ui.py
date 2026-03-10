@@ -7,7 +7,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from dulwich.repo import Repo
 
 from shortcake._github import BranchGitHubInfo
 from shortcake.commands.ui import (
@@ -29,6 +28,7 @@ from shortcake.commands.ui import (
     _write_json,
     ui,
 )
+from tests._git_helpers import Repo
 
 
 def test_build_stack_payload_linear_stack(repo_with_stack: Repo) -> None:

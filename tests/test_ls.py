@@ -3,13 +3,19 @@ from typing import Any
 
 import httpx
 import respx
-from dulwich import porcelain
-from dulwich.repo import Repo
 from inline_snapshot import snapshot
 
 from shortcake import _git as git
 from shortcake.commands.adopt import _adopt
 from shortcake.commands.ls import _build_tree, _collect_nodes, _ls
+from tests._git_helpers import (
+    Repo,
+    add_paths,
+    commit,
+    reset_hard,
+    run_git,
+    switch_branch,
+)
 
 
 def test_ls_no_tracked(temp_repo: Repo) -> None:
@@ -60,14 +66,14 @@ def test_ls_multi_commit_branch(temp_repo: Repo, tmp_path: Path) -> None:
     # Add first commit
     file1 = tmp_path / "file1.txt"
     file1.write_text("content1")
-    porcelain.add(temp_repo, paths=[str(file1)])
-    porcelain.commit(temp_repo, message=b"First feature commit")
+    add_paths(temp_repo, file1)
+    commit(temp_repo, b"First feature commit")
 
     # Add second commit
     file2 = tmp_path / "file2.txt"
     file2.write_text("content2")
-    porcelain.add(temp_repo, paths=[str(file2)])
-    porcelain.commit(temp_repo, message=b"Second feature commit")
+    add_paths(temp_repo, file2)
+    commit(temp_repo, b"Second feature commit")
 
     # Adopt the branch (adds trailer to first commit)
     _adopt(temp_repo)
@@ -88,8 +94,8 @@ def test_ls_chain_of_branches(temp_repo: Repo, tmp_path: Path) -> None:
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
-    porcelain.add(temp_repo, paths=[str(file_a)])
-    porcelain.commit(temp_repo, message=b"Add feature-a")
+    add_paths(temp_repo, file_a)
+    commit(temp_repo, b"Add feature-a")
 
     _adopt(temp_repo, branch="feature-a", parent="main")
 
@@ -100,8 +106,8 @@ def test_ls_chain_of_branches(temp_repo: Repo, tmp_path: Path) -> None:
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
-    porcelain.add(temp_repo, paths=[str(file_b)])
-    porcelain.commit(temp_repo, message=b"Add feature-b")
+    add_paths(temp_repo, file_b)
+    commit(temp_repo, b"Add feature-b")
 
     _adopt(temp_repo, branch="feature-b", parent="feature-a")
 
@@ -125,8 +131,8 @@ def test_ls_parallel_stacks(temp_repo: Repo, tmp_path: Path) -> None:
 
     file_1a = tmp_path / "stack1a.txt"
     file_1a.write_text("stack1a")
-    porcelain.add(temp_repo, paths=[str(file_1a)])
-    porcelain.commit(temp_repo, message=b"Add stack-1-a")
+    add_paths(temp_repo, file_1a)
+    commit(temp_repo, b"Add stack-1-a")
 
     _adopt(temp_repo, branch="stack-1-a", parent="main")
 
@@ -137,8 +143,8 @@ def test_ls_parallel_stacks(temp_repo: Repo, tmp_path: Path) -> None:
 
     file_1b = tmp_path / "stack1b.txt"
     file_1b.write_text("stack1b")
-    porcelain.add(temp_repo, paths=[str(file_1b)])
-    porcelain.commit(temp_repo, message=b"Add stack-1-b")
+    add_paths(temp_repo, file_1b)
+    commit(temp_repo, b"Add stack-1-b")
 
     _adopt(temp_repo, branch="stack-1-b", parent="stack-1-a")
 
@@ -148,8 +154,8 @@ def test_ls_parallel_stacks(temp_repo: Repo, tmp_path: Path) -> None:
 
     file_2a = tmp_path / "stack2a.txt"
     file_2a.write_text("stack2a")
-    porcelain.add(temp_repo, paths=[str(file_2a)])
-    porcelain.commit(temp_repo, message=b"Add stack-2-a")
+    add_paths(temp_repo, file_2a)
+    commit(temp_repo, b"Add stack-2-a")
 
     _adopt(temp_repo, branch="stack-2-a", parent="main")
 
@@ -160,8 +166,8 @@ def test_ls_parallel_stacks(temp_repo: Repo, tmp_path: Path) -> None:
 
     file_2b = tmp_path / "stack2b.txt"
     file_2b.write_text("stack2b")
-    porcelain.add(temp_repo, paths=[str(file_2b)])
-    porcelain.commit(temp_repo, message=b"Add stack-2-b")
+    add_paths(temp_repo, file_2b)
+    commit(temp_repo, b"Add stack-2-b")
 
     _adopt(temp_repo, branch="stack-2-b", parent="stack-2-a")
 
@@ -227,8 +233,8 @@ def test_get_branch_parent_stops_at_other_branch_head(
     # Add another commit to main
     file1 = tmp_path / "file1.txt"
     file1.write_text("content1")
-    porcelain.add(temp_repo, paths=[str(file1)])
-    porcelain.commit(temp_repo, message=b"Second commit on main")
+    add_paths(temp_repo, file1)
+    commit(temp_repo, b"Second commit on main")
 
     # Create develop branch from main
     main_sha = temp_repo.refs[b"refs/heads/main"]
@@ -238,8 +244,8 @@ def test_get_branch_parent_stops_at_other_branch_head(
     # Add commit to develop (now develop is ahead of main)
     file2 = tmp_path / "file2.txt"
     file2.write_text("content2")
-    porcelain.add(temp_repo, paths=[str(file2)])
-    porcelain.commit(temp_repo, message=b"Commit on develop")
+    add_paths(temp_repo, file2)
+    commit(temp_repo, b"Commit on develop")
 
     # Now check - develop has no trailer, so when we walk its history,
     # we'll hit main's HEAD and stop
@@ -269,57 +275,29 @@ def test_get_branch_parent_with_merge_commit(temp_repo: Repo, tmp_path: Path) ->
     # - Pop C1 (first), seen={M,C2,C3,C1}, add C0 → queue = [C1, C0]
     # - Pop C1 (second), it's in seen → skip
 
-    from dulwich.objects import Commit
-
     # C1
     file1 = tmp_path / "file1.txt"
     file1.write_text("content1")
-    porcelain.add(temp_repo, paths=[str(file1)])
-    porcelain.commit(temp_repo, message=b"C1")
-    c1_sha = temp_repo.refs[b"refs/heads/main"]
+    add_paths(temp_repo, file1)
+    commit(temp_repo, b"C1")
 
-    # Create C2 directly (not on a branch) with parent C1
-    c1_commit = temp_repo[c1_sha]
-    c2 = Commit()
-    c2.tree = c1_commit.tree
-    c2.parents = [c1_sha]
-    c2.author = c1_commit.author
-    c2.committer = c1_commit.committer
-    c2.author_time = c1_commit.author_time
-    c2.author_timezone = c1_commit.author_timezone
-    c2.commit_time = c1_commit.commit_time + 1
-    c2.commit_timezone = c1_commit.commit_timezone
-    c2.message = b"C2"
-    temp_repo.object_store.add_object(c2)
-    c2_sha = c2.id
+    # Create the diamond with a real merge commit:
+    # main gets C2, side gets C3, then main merges side.
+    run_git(temp_repo, "branch", "side")
 
-    # Create C3 directly with parent C1
-    c3 = Commit()
-    c3.tree = c1_commit.tree
-    c3.parents = [c1_sha]
-    c3.author = c1_commit.author
-    c3.committer = c1_commit.committer
-    c3.author_time = c1_commit.author_time
-    c3.author_timezone = c1_commit.author_timezone
-    c3.commit_time = c1_commit.commit_time + 2
-    c3.commit_timezone = c1_commit.commit_timezone
-    c3.message = b"C3"
-    temp_repo.object_store.add_object(c3)
-    c3_sha = c3.id
+    file2 = tmp_path / "file2.txt"
+    file2.write_text("content2")
+    add_paths(temp_repo, file2)
+    commit(temp_repo, b"C2")
 
-    # Create merge commit M with parents C2 and C3 (both have parent C1)
-    merge = Commit()
-    merge.tree = c1_commit.tree
-    merge.parents = [c2_sha, c3_sha]  # Two parents that share C1!
-    merge.author = c1_commit.author
-    merge.committer = c1_commit.committer
-    merge.author_time = c1_commit.author_time
-    merge.author_timezone = c1_commit.author_timezone
-    merge.commit_time = c1_commit.commit_time + 3
-    merge.commit_timezone = c1_commit.commit_timezone
-    merge.message = b"Merge C2 and C3"
-    temp_repo.object_store.add_object(merge)
-    temp_repo.refs[b"refs/heads/main"] = merge.id
+    switch_branch(temp_repo, "side")
+    file3 = tmp_path / "file3.txt"
+    file3.write_text("content3")
+    add_paths(temp_repo, file3)
+    commit(temp_repo, b"C3")
+
+    switch_branch(temp_repo, "main")
+    run_git(temp_repo, "merge", "--no-ff", "--no-edit", "side")
 
     # Now when we walk main, we'll visit C1 through both C2 and C3,
     # hitting the "already seen" check
@@ -362,22 +340,22 @@ def test_build_tree_excludes_trunk_after_ff_merge(
 
     test_file = tmp_path / "feature.txt"
     test_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(test_file)])
+    add_paths(temp_repo, test_file)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add feature")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
     feature_sha = temp_repo.refs[b"refs/heads/feature"]
 
     # Fast-forward main to feature (simulates merge)
     temp_repo.refs[b"refs/heads/main"] = feature_sha
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
-    porcelain.reset(temp_repo, "hard")
+    reset_hard(temp_repo)
 
     # Add a post-merge commit on main
     post = tmp_path / "post.txt"
     post.write_text("post merge")
-    porcelain.add(temp_repo, paths=[str(post)])
-    porcelain.commit(temp_repo, message=b"chore: post merge")
+    add_paths(temp_repo, post)
+    commit(temp_repo, b"chore: post merge")
 
     tree, tracked = _build_tree(temp_repo)
 
@@ -406,22 +384,22 @@ def test_untracked_branches_not_tracked_after_ff_merge(
 
     feature_file = tmp_path / "feature.txt"
     feature_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(feature_file)])
+    add_paths(temp_repo, feature_file)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add feature")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
     feature_sha = temp_repo.refs[b"refs/heads/feature"]
 
     # Fast-forward main to feature (simulates merge)
     temp_repo.refs[b"refs/heads/main"] = feature_sha
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
-    porcelain.reset(temp_repo, "hard")
+    reset_hard(temp_repo)
 
     # Add a post-merge commit on main so main is ahead of feature
     post = tmp_path / "post.txt"
     post.write_text("post merge")
-    porcelain.add(temp_repo, paths=[str(post)])
-    porcelain.commit(temp_repo, message=b"chore: post merge")
+    add_paths(temp_repo, post)
+    commit(temp_repo, b"chore: post merge")
     new_main_sha = temp_repo.refs[b"refs/heads/main"]
 
     # Create an untracked branch (e.g. dependabot) forked from new main
@@ -430,8 +408,8 @@ def test_untracked_branches_not_tracked_after_ff_merge(
 
     untracked_file = tmp_path / "untracked.txt"
     untracked_file.write_text("untracked content")
-    porcelain.add(temp_repo, paths=[str(untracked_file)])
-    porcelain.commit(temp_repo, message=b"chore: untracked change")
+    add_paths(temp_repo, untracked_file)
+    commit(temp_repo, b"chore: untracked change")
 
     # Now delete the merged feature branch (as sync would)
     del temp_repo.refs[b"refs/heads/feature"]
@@ -466,8 +444,8 @@ def test_collect_nodes_nested(temp_repo: Repo, tmp_path: Path) -> None:
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
-    porcelain.add(temp_repo, paths=[str(file_a)])
-    porcelain.commit(temp_repo, message=b"Add feature-a")
+    add_paths(temp_repo, file_a)
+    commit(temp_repo, b"Add feature-a")
 
     _adopt(temp_repo, branch="feature-a", parent="main")
 
@@ -478,8 +456,8 @@ def test_collect_nodes_nested(temp_repo: Repo, tmp_path: Path) -> None:
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
-    porcelain.add(temp_repo, paths=[str(file_b)])
-    porcelain.commit(temp_repo, message=b"Add feature-b")
+    add_paths(temp_repo, file_b)
+    commit(temp_repo, b"Add feature-b")
 
     _adopt(temp_repo, branch="feature-b", parent="feature-a")
 

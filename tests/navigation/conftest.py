@@ -3,10 +3,15 @@
 from pathlib import Path
 
 import pytest
-from dulwich.repo import Repo
 
 from shortcake._trailers import Trailers
-from tests._git_helpers import commit_files, create_branch, get_branch_head, init_repo
+from tests._git_helpers import (
+    Repo,
+    commit_files,
+    create_branch,
+    get_branch_head,
+    init_repo,
+)
 
 
 @pytest.fixture
