@@ -244,6 +244,12 @@ def test_trailers_from_message_empty() -> None:
     assert trailers.parent_branch is None
 
 
+def test_trailers_from_message_empty_string() -> None:
+    """Test trailer extraction from an empty message."""
+    trailers = Trailers.from_message("")
+    assert trailers.parent_branch is None
+
+
 def test_trailers_apply_to() -> None:
     """Test trailer addition."""
     message = "feat: something"
@@ -260,12 +266,28 @@ def test_trailers_apply_to_empty() -> None:
     assert result == message
 
 
+def test_trailers_apply_to_empty_message() -> None:
+    """Test apply to an empty message creates a trailer-only message."""
+    trailers = Trailers(parent_branch="main")
+    result = trailers.apply_to("")
+    assert result == "Shortcake-Parent: main"
+
+
 def test_trailers_apply_to_preserves_existing() -> None:
     """Test apply preserves existing trailers."""
     message = "feat: something\n\nBody\n\nExisting-Trailer: value\n"
     trailers = Trailers(parent_branch="main")
     result = trailers.apply_to(message)
     assert "Existing-Trailer: value" in result
+    assert "Shortcake-Parent: main" in result
+
+
+def test_trailers_apply_to_replaces_existing_parent() -> None:
+    """Test apply updates an existing Shortcake trailer instead of duplicating it."""
+    message = "feat: something\n\nBody\n\nShortcake-Parent: old-parent\n"
+    trailers = Trailers(parent_branch="main")
+    result = trailers.apply_to(message)
+    assert "Shortcake-Parent: old-parent" not in result
     assert "Shortcake-Parent: main" in result
 
 
