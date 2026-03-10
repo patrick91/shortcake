@@ -244,6 +244,12 @@ def test_trailers_from_message_empty() -> None:
     assert trailers.parent_branch is None
 
 
+def test_trailers_from_message_empty_string() -> None:
+    """Test trailer extraction from an empty message."""
+    trailers = Trailers.from_message("")
+    assert trailers.parent_branch is None
+
+
 def test_trailers_apply_to() -> None:
     """Test trailer addition."""
     message = "feat: something"
@@ -258,6 +264,13 @@ def test_trailers_apply_to_empty() -> None:
     trailers = Trailers()
     result = trailers.apply_to(message)
     assert result == message
+
+
+def test_trailers_apply_to_empty_message() -> None:
+    """Test apply to an empty message creates a trailer-only message."""
+    trailers = Trailers(parent_branch="main")
+    result = trailers.apply_to("")
+    assert result == "Shortcake-Parent: main"
 
 
 def test_trailers_apply_to_preserves_existing() -> None:
