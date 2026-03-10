@@ -19,14 +19,7 @@ from shortcake.commands.reorder import (
     _reorder,
     _update_branch_trailer,
 )
-
-
-def switch_branch(repo: Repo, branch: str) -> None:
-    """Properly switch branches with index and working tree reset."""
-    ref = f"refs/heads/{branch}".encode()
-    repo.refs.set_symbolic_ref(b"HEAD", ref)
-    porcelain.reset(repo, "hard")
-
+from tests._git_helpers import switch_branch
 
 runner = CliRunner()
 
