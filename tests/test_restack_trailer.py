@@ -10,13 +10,7 @@ from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 from shortcake._trailers import Trailers
 from shortcake.commands.continue_ import _continue
 from shortcake.commands.restack import _restack
-
-
-def switch_branch(repo: Repo, branch: str) -> None:
-    """Properly switch branches with index and working tree reset."""
-    ref = f"refs/heads/{branch}".encode()
-    repo.refs.set_symbolic_ref(b"HEAD", ref)
-    porcelain.reset(repo, "hard")
+from tests._git_helpers import switch_branch
 
 
 def test_restack_preserves_trailer_when_commit_becomes_empty(
