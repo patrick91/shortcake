@@ -13,8 +13,10 @@ def _get_git_editor() -> str | None:
         if git_dir is None:
             return None
         repo = pygit2.Repository(git_dir)
+        if "core.editor" not in repo.config:
+            return None
         return repo.config["core.editor"]
-    except (KeyError, pygit2.GitError):
+    except pygit2.GitError:
         return None
 
 
