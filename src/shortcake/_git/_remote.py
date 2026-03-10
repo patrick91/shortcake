@@ -1,11 +1,8 @@
 """Remote operations."""
 
-import os
-
-from dulwich import porcelain
 from dulwich.repo import Repo
 
-from shortcake._git._core import DULWICH_IO_ERRORS
+from shortcake._git._pygit2 import fetch_remote, get_remote_url
 from shortcake._git._rebase import is_ancestor
 
 
@@ -20,12 +17,7 @@ def get_remote_ref(repo: Repo, remote_branch: str) -> bytes | None:
 
 def has_remote(repo: Repo, remote_name: str = "origin") -> bool:
     """Check if a remote is configured."""
-    config = repo.get_config()
-    try:
-        config.get((b"remote", remote_name.encode()), b"url")
-        return True
-    except KeyError:
-        return False
+    return get_remote_url(repo, remote_name) is not None
 
 
 def fetch_and_fast_forward_trunk(repo: Repo, trunk: str) -> tuple[bool, str | None]:
@@ -38,11 +30,7 @@ def fetch_and_fast_forward_trunk(repo: Repo, trunk: str) -> tuple[bool, str | No
     if not has_remote(repo, "origin"):
         return True, None  # No remote configured, nothing to do
 
-    try:  # pragma: no cover
-        # Suppress progress output (\r chars corrupt terminal output)
-        with open(os.devnull, "wb") as devnull:
-            porcelain.fetch(repo, "origin", quiet=True, errstream=devnull)
-    except DULWICH_IO_ERRORS:  # pragma: no cover
+    if not fetch_remote(repo, "origin"):  # pragma: no cover
         return False, None
 
     remote_ref = f"refs/remotes/origin/{trunk}".encode()  # pragma: no cover
