@@ -2,11 +2,17 @@ import stat
 from pathlib import Path
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake.cli import app
+from tests._git_helpers import (
+    Repo,
+    add_paths,
+    commit,
+    init_repo,
+    reset_hard,
+    switch_branch,
+)
 
 runner = CliRunner()
 
@@ -196,7 +202,7 @@ def test_cli_create_no_verify(
     # Stage a file to trigger hook check
     new_file = tmp_path / "test.txt"
     new_file.write_text("content")
-    porcelain.add(temp_repo, paths=[str(new_file)])
+    add_paths(temp_repo, new_file)
 
     # With --no-verify, should succeed despite failing hook
     result = runner.invoke(app, ["create", "-m", "feat: test", "-n"])
@@ -221,7 +227,7 @@ def test_cli_create_hook_failure(
     # Stage a file to trigger hook check
     new_file = tmp_path / "test.txt"
     new_file.write_text("content")
-    porcelain.add(temp_repo, paths=[str(new_file)])
+    add_paths(temp_repo, new_file)
 
     result = runner.invoke(app, ["create", "-m", "feat: test"])
 
@@ -377,7 +383,7 @@ def test_cli_create_after(
     # Switch to branch_a first (which has branch_b as child)
     ref = b"refs/heads/branch_a"
     repo_with_stack.refs.set_symbolic_ref(b"HEAD", ref)
-    porcelain.reset(repo_with_stack, "hard")
+    reset_hard(repo_with_stack)
 
     result = runner.invoke(
         app, ["create", "-m", "fix: after-a", "--after", "--allow-empty"]
@@ -443,7 +449,7 @@ def test_cli_create_before_with_staged_changes(
     # Stage a new file
     new_file = tmp_path / "new_feature.py"
     new_file.write_text("print('hello')")
-    porcelain.add(repo_with_stack, paths=[str(new_file)])
+    add_paths(repo_with_stack, new_file)
 
     result = runner.invoke(app, ["create", "-m", "fix: staged", "--before"])
 
@@ -461,7 +467,7 @@ def test_cli_create_after_multiple_children_error(
     # Switch to branch_a which has multiple children (branch_b, branch_c)
     ref = b"refs/heads/branch_a"
     repo_with_fork.refs.set_symbolic_ref(b"HEAD", ref)
-    porcelain.reset(repo_with_fork, "hard")
+    reset_hard(repo_with_fork)
 
     result = runner.invoke(
         app, ["create", "-m", "fix: after", "--after", "--allow-empty"]
@@ -551,7 +557,7 @@ def test_cli_up_success(
     runner.invoke(app, ["adopt"])
 
     # Switch to main
-    porcelain.switch(repo_with_feature, "main")
+    switch_branch(repo_with_feature, "main")
 
     result = runner.invoke(app, ["up"])
 
@@ -611,7 +617,7 @@ def test_cli_top_success(
 
     # Adopt and switch to main
     runner.invoke(app, ["adopt"])
-    porcelain.switch(repo_with_feature, "main")
+    switch_branch(repo_with_feature, "main")
 
     result = runner.invoke(app, ["top"])
 
@@ -641,11 +647,11 @@ def test_cli_bottom_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.chdir(tmp_path)
 
     # Create a repo with main → branch_a → branch_b
-    repo = Repo.init(tmp_path, default_branch=b"main")
+    repo = init_repo(tmp_path)
     readme = tmp_path / "README.md"
     readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    add_paths(repo, readme)
+    commit(repo, b"Initial commit")
 
     # Create branch_a
     main_sha = repo.refs[b"refs/heads/main"]
@@ -655,8 +661,8 @@ def test_cli_bottom_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
-    porcelain.add(repo, paths=[str(file_a)])
-    porcelain.commit(repo, message=msg_a.encode())
+    add_paths(repo, file_a)
+    commit(repo, msg_a)
 
     # Create branch_b from branch_a
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
@@ -666,8 +672,8 @@ def test_cli_bottom_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
-    porcelain.add(repo, paths=[str(file_b)])
-    porcelain.commit(repo, message=msg_b.encode())
+    add_paths(repo, file_b)
+    commit(repo, msg_b)
 
     # Now run bottom from branch_b
     result = runner.invoke(app, ["bottom"])
@@ -714,11 +720,11 @@ def test_cli_up_multiple_children_interactive(
     monkeypatch.chdir(tmp_path)
 
     # Create a repo with main → branch_a → (branch_b, branch_c)
-    repo = Repo.init(tmp_path, default_branch=b"main")
+    repo = init_repo(tmp_path)
     readme = tmp_path / "README.md"
     readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    add_paths(repo, readme)
+    commit(repo, b"Initial commit")
 
     # Create branch_a
     main_sha = repo.refs[b"refs/heads/main"]
@@ -728,8 +734,8 @@ def test_cli_up_multiple_children_interactive(
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
-    porcelain.add(repo, paths=[str(file_a)])
-    porcelain.commit(repo, message=msg_a.encode())
+    add_paths(repo, file_a)
+    commit(repo, msg_a)
 
     # Create branch_b from branch_a
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
@@ -739,8 +745,8 @@ def test_cli_up_multiple_children_interactive(
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
-    porcelain.add(repo, paths=[str(file_b)])
-    porcelain.commit(repo, message=msg_b.encode())
+    add_paths(repo, file_b)
+    commit(repo, msg_b)
 
     # Create branch_c from branch_a (fork!)
     repo.refs[b"refs/heads/branch_c"] = branch_a_sha
@@ -749,11 +755,11 @@ def test_cli_up_multiple_children_interactive(
     msg_c = trailers_c.apply_to("feat: c")
     file_c = tmp_path / "c.txt"
     file_c.write_text("c")
-    porcelain.add(repo, paths=[str(file_c)])
-    porcelain.commit(repo, message=msg_c.encode())
+    add_paths(repo, file_c)
+    commit(repo, msg_c)
 
     # Switch to branch_a
-    porcelain.switch(repo, "branch_a")
+    switch_branch(repo, "branch_a")
 
     # Run up with input to select branch_b
     result = runner.invoke(app, ["up"], input="branch_b\n")
@@ -772,11 +778,11 @@ def test_cli_up_multiple_children_invalid_selection(
     monkeypatch.chdir(tmp_path)
 
     # Create a repo with main → branch_a → (branch_b, branch_c)
-    repo = Repo.init(tmp_path, default_branch=b"main")
+    repo = init_repo(tmp_path)
     readme = tmp_path / "README.md"
     readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    add_paths(repo, readme)
+    commit(repo, b"Initial commit")
 
     # Create branch_a
     main_sha = repo.refs[b"refs/heads/main"]
@@ -786,8 +792,8 @@ def test_cli_up_multiple_children_invalid_selection(
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
-    porcelain.add(repo, paths=[str(file_a)])
-    porcelain.commit(repo, message=msg_a.encode())
+    add_paths(repo, file_a)
+    commit(repo, msg_a)
 
     # Create branch_b from branch_a
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
@@ -797,8 +803,8 @@ def test_cli_up_multiple_children_invalid_selection(
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
-    porcelain.add(repo, paths=[str(file_b)])
-    porcelain.commit(repo, message=msg_b.encode())
+    add_paths(repo, file_b)
+    commit(repo, msg_b)
 
     # Create branch_c from branch_a (fork!)
     repo.refs[b"refs/heads/branch_c"] = branch_a_sha
@@ -807,8 +813,8 @@ def test_cli_up_multiple_children_invalid_selection(
     msg_c = trailers_c.apply_to("feat: c")
     file_c = tmp_path / "c.txt"
     file_c.write_text("c")
-    porcelain.add(repo, paths=[str(file_c)])
-    porcelain.commit(repo, message=msg_c.encode())
+    add_paths(repo, file_c)
+    commit(repo, msg_c)
 
     # Switch to branch_a
     repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
@@ -829,11 +835,11 @@ def test_cli_up_with_child_argument(
     monkeypatch.chdir(tmp_path)
 
     # Create repo with main → branch_a → (branch_b, branch_c)
-    repo = Repo.init(tmp_path, default_branch=b"main")
+    repo = init_repo(tmp_path)
     readme = tmp_path / "README.md"
     readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    add_paths(repo, readme)
+    commit(repo, b"Initial commit")
 
     main_sha = repo.refs[b"refs/heads/main"]
     repo.refs[b"refs/heads/branch_a"] = main_sha
@@ -842,8 +848,8 @@ def test_cli_up_with_child_argument(
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
-    porcelain.add(repo, paths=[str(file_a)])
-    porcelain.commit(repo, message=msg_a.encode())
+    add_paths(repo, file_a)
+    commit(repo, msg_a)
 
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
     repo.refs[b"refs/heads/branch_b"] = branch_a_sha
@@ -852,8 +858,8 @@ def test_cli_up_with_child_argument(
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
-    porcelain.add(repo, paths=[str(file_b)])
-    porcelain.commit(repo, message=msg_b.encode())
+    add_paths(repo, file_b)
+    commit(repo, msg_b)
 
     repo.refs[b"refs/heads/branch_c"] = branch_a_sha
     repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
@@ -861,11 +867,11 @@ def test_cli_up_with_child_argument(
     msg_c = trailers_c.apply_to("feat: c")
     file_c = tmp_path / "c.txt"
     file_c.write_text("c")
-    porcelain.add(repo, paths=[str(file_c)])
-    porcelain.commit(repo, message=msg_c.encode())
+    add_paths(repo, file_c)
+    commit(repo, msg_c)
 
     # Switch to branch_a
-    porcelain.switch(repo, "branch_a")
+    switch_branch(repo, "branch_a")
 
     # Run up with explicit child argument
     result = runner.invoke(app, ["up", "branch_c"])
@@ -964,11 +970,11 @@ def test_cli_top_multiple_children_interactive(
     monkeypatch.chdir(tmp_path)
 
     # Create repo with main → branch_a → (branch_b, branch_c)
-    repo = Repo.init(tmp_path, default_branch=b"main")
+    repo = init_repo(tmp_path)
     readme = tmp_path / "README.md"
     readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    add_paths(repo, readme)
+    commit(repo, b"Initial commit")
 
     main_sha = repo.refs[b"refs/heads/main"]
     repo.refs[b"refs/heads/branch_a"] = main_sha
@@ -977,8 +983,8 @@ def test_cli_top_multiple_children_interactive(
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
-    porcelain.add(repo, paths=[str(file_a)])
-    porcelain.commit(repo, message=msg_a.encode())
+    add_paths(repo, file_a)
+    commit(repo, msg_a)
 
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
     repo.refs[b"refs/heads/branch_b"] = branch_a_sha
@@ -987,8 +993,8 @@ def test_cli_top_multiple_children_interactive(
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
-    porcelain.add(repo, paths=[str(file_b)])
-    porcelain.commit(repo, message=msg_b.encode())
+    add_paths(repo, file_b)
+    commit(repo, msg_b)
 
     repo.refs[b"refs/heads/branch_c"] = branch_a_sha
     repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
@@ -996,11 +1002,11 @@ def test_cli_top_multiple_children_interactive(
     msg_c = trailers_c.apply_to("feat: c")
     file_c = tmp_path / "c.txt"
     file_c.write_text("c")
-    porcelain.add(repo, paths=[str(file_c)])
-    porcelain.commit(repo, message=msg_c.encode())
+    add_paths(repo, file_c)
+    commit(repo, msg_c)
 
     # Switch to main
-    porcelain.switch(repo, "main")
+    switch_branch(repo, "main")
 
     # Run top with input to select branch_b (which is a leaf)
     result = runner.invoke(app, ["top"], input="branch_b\n")
@@ -1019,11 +1025,11 @@ def test_cli_top_multiple_children_invalid_selection(
     monkeypatch.chdir(tmp_path)
 
     # Create repo with main → branch_a → (branch_b, branch_c)
-    repo = Repo.init(tmp_path, default_branch=b"main")
+    repo = init_repo(tmp_path)
     readme = tmp_path / "README.md"
     readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    add_paths(repo, readme)
+    commit(repo, b"Initial commit")
 
     main_sha = repo.refs[b"refs/heads/main"]
     repo.refs[b"refs/heads/branch_a"] = main_sha
@@ -1032,8 +1038,8 @@ def test_cli_top_multiple_children_invalid_selection(
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
-    porcelain.add(repo, paths=[str(file_a)])
-    porcelain.commit(repo, message=msg_a.encode())
+    add_paths(repo, file_a)
+    commit(repo, msg_a)
 
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
     repo.refs[b"refs/heads/branch_b"] = branch_a_sha
@@ -1042,8 +1048,8 @@ def test_cli_top_multiple_children_invalid_selection(
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
-    porcelain.add(repo, paths=[str(file_b)])
-    porcelain.commit(repo, message=msg_b.encode())
+    add_paths(repo, file_b)
+    commit(repo, msg_b)
 
     repo.refs[b"refs/heads/branch_c"] = branch_a_sha
     repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
@@ -1051,8 +1057,8 @@ def test_cli_top_multiple_children_invalid_selection(
     msg_c = trailers_c.apply_to("feat: c")
     file_c = tmp_path / "c.txt"
     file_c.write_text("c")
-    porcelain.add(repo, paths=[str(file_c)])
-    porcelain.commit(repo, message=msg_c.encode())
+    add_paths(repo, file_c)
+    commit(repo, msg_c)
 
     # Switch to main
     repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
@@ -1073,11 +1079,11 @@ def test_cli_up_invalid_child_argument(
     monkeypatch.chdir(tmp_path)
 
     # Create repo with main → branch_a → branch_b
-    repo = Repo.init(tmp_path, default_branch=b"main")
+    repo = init_repo(tmp_path)
     readme = tmp_path / "README.md"
     readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    add_paths(repo, readme)
+    commit(repo, b"Initial commit")
 
     main_sha = repo.refs[b"refs/heads/main"]
     repo.refs[b"refs/heads/branch_a"] = main_sha
@@ -1086,8 +1092,8 @@ def test_cli_up_invalid_child_argument(
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
-    porcelain.add(repo, paths=[str(file_a)])
-    porcelain.commit(repo, message=msg_a.encode())
+    add_paths(repo, file_a)
+    commit(repo, msg_a)
 
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
     repo.refs[b"refs/heads/branch_b"] = branch_a_sha
@@ -1096,8 +1102,8 @@ def test_cli_up_invalid_child_argument(
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
-    porcelain.add(repo, paths=[str(file_b)])
-    porcelain.commit(repo, message=msg_b.encode())
+    add_paths(repo, file_b)
+    commit(repo, msg_b)
 
     # Switch to main (which has branch_a as child)
     repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
@@ -1118,11 +1124,11 @@ def test_cli_down_to_non_trunk_parent(
     monkeypatch.chdir(tmp_path)
 
     # Create repo with main → branch_a → branch_b
-    repo = Repo.init(tmp_path, default_branch=b"main")
+    repo = init_repo(tmp_path)
     readme = tmp_path / "README.md"
     readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    add_paths(repo, readme)
+    commit(repo, b"Initial commit")
 
     main_sha = repo.refs[b"refs/heads/main"]
     repo.refs[b"refs/heads/branch_a"] = main_sha
@@ -1131,8 +1137,8 @@ def test_cli_down_to_non_trunk_parent(
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
-    porcelain.add(repo, paths=[str(file_a)])
-    porcelain.commit(repo, message=msg_a.encode())
+    add_paths(repo, file_a)
+    commit(repo, msg_a)
 
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
     repo.refs[b"refs/heads/branch_b"] = branch_a_sha
@@ -1141,8 +1147,8 @@ def test_cli_down_to_non_trunk_parent(
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
-    porcelain.add(repo, paths=[str(file_b)])
-    porcelain.commit(repo, message=msg_b.encode())
+    add_paths(repo, file_b)
+    commit(repo, msg_b)
 
     # Now on branch_b, go down to branch_a (not trunk)
     result = runner.invoke(app, ["down"])
@@ -1161,11 +1167,11 @@ def test_cli_top_fork_then_continue(
     monkeypatch.chdir(tmp_path)
 
     # Create: main → branch_a → (branch_b → branch_d, branch_c)
-    repo = Repo.init(tmp_path, default_branch=b"main")
+    repo = init_repo(tmp_path)
     readme = tmp_path / "README.md"
     readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    add_paths(repo, readme)
+    commit(repo, b"Initial commit")
 
     main_sha = repo.refs[b"refs/heads/main"]
     repo.refs[b"refs/heads/branch_a"] = main_sha
@@ -1174,8 +1180,8 @@ def test_cli_top_fork_then_continue(
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
-    porcelain.add(repo, paths=[str(file_a)])
-    porcelain.commit(repo, message=msg_a.encode())
+    add_paths(repo, file_a)
+    commit(repo, msg_a)
 
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
 
@@ -1186,8 +1192,8 @@ def test_cli_top_fork_then_continue(
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
-    porcelain.add(repo, paths=[str(file_b)])
-    porcelain.commit(repo, message=msg_b.encode())
+    add_paths(repo, file_b)
+    commit(repo, msg_b)
 
     branch_b_sha = repo.refs[b"refs/heads/branch_b"]
 
@@ -1198,8 +1204,8 @@ def test_cli_top_fork_then_continue(
     msg_d = trailers_d.apply_to("feat: d")
     file_d = tmp_path / "d.txt"
     file_d.write_text("d")
-    porcelain.add(repo, paths=[str(file_d)])
-    porcelain.commit(repo, message=msg_d.encode())
+    add_paths(repo, file_d)
+    commit(repo, msg_d)
 
     # branch_c from branch_a (fork sibling of branch_b)
     repo.refs[b"refs/heads/branch_c"] = branch_a_sha
@@ -1208,11 +1214,11 @@ def test_cli_top_fork_then_continue(
     msg_c = trailers_c.apply_to("feat: c")
     file_c = tmp_path / "c.txt"
     file_c.write_text("c")
-    porcelain.add(repo, paths=[str(file_c)])
-    porcelain.commit(repo, message=msg_c.encode())
+    add_paths(repo, file_c)
+    commit(repo, msg_c)
 
     # Switch to main
-    porcelain.switch(repo, "main")
+    switch_branch(repo, "main")
 
     # Run top, select branch_b which has branch_d as child
     result = runner.invoke(app, ["top"], input="branch_b\n")
@@ -1233,11 +1239,11 @@ def test_cli_top_fork_then_another_fork(
     monkeypatch.chdir(tmp_path)
 
     # Create: main → branch_a → (branch_b → (branch_d, branch_e), branch_c)
-    repo = Repo.init(tmp_path, default_branch=b"main")
+    repo = init_repo(tmp_path)
     readme = tmp_path / "README.md"
     readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    add_paths(repo, readme)
+    commit(repo, b"Initial commit")
 
     main_sha = repo.refs[b"refs/heads/main"]
     repo.refs[b"refs/heads/branch_a"] = main_sha
@@ -1246,8 +1252,8 @@ def test_cli_top_fork_then_another_fork(
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
-    porcelain.add(repo, paths=[str(file_a)])
-    porcelain.commit(repo, message=msg_a.encode())
+    add_paths(repo, file_a)
+    commit(repo, msg_a)
 
     branch_a_sha = repo.refs[b"refs/heads/branch_a"]
 
@@ -1258,8 +1264,8 @@ def test_cli_top_fork_then_another_fork(
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
-    porcelain.add(repo, paths=[str(file_b)])
-    porcelain.commit(repo, message=msg_b.encode())
+    add_paths(repo, file_b)
+    commit(repo, msg_b)
 
     branch_b_sha = repo.refs[b"refs/heads/branch_b"]
 
@@ -1270,8 +1276,8 @@ def test_cli_top_fork_then_another_fork(
     msg_d = trailers_d.apply_to("feat: d")
     file_d = tmp_path / "d.txt"
     file_d.write_text("d")
-    porcelain.add(repo, paths=[str(file_d)])
-    porcelain.commit(repo, message=msg_d.encode())
+    add_paths(repo, file_d)
+    commit(repo, msg_d)
 
     # branch_e from branch_b (another fork!)
     repo.refs[b"refs/heads/branch_e"] = branch_b_sha
@@ -1280,8 +1286,8 @@ def test_cli_top_fork_then_another_fork(
     msg_e = trailers_e.apply_to("feat: e")
     file_e = tmp_path / "e.txt"
     file_e.write_text("e")
-    porcelain.add(repo, paths=[str(file_e)])
-    porcelain.commit(repo, message=msg_e.encode())
+    add_paths(repo, file_e)
+    commit(repo, msg_e)
 
     # branch_c from branch_a
     repo.refs[b"refs/heads/branch_c"] = branch_a_sha
@@ -1290,11 +1296,11 @@ def test_cli_top_fork_then_another_fork(
     msg_c = trailers_c.apply_to("feat: c")
     file_c = tmp_path / "c.txt"
     file_c.write_text("c")
-    porcelain.add(repo, paths=[str(file_c)])
-    porcelain.commit(repo, message=msg_c.encode())
+    add_paths(repo, file_c)
+    commit(repo, msg_c)
 
     # Switch to main
-    porcelain.switch(repo, "main")
+    switch_branch(repo, "main")
 
     # Run top, select branch_b which has another fork (branch_d, branch_e)
     result = runner.invoke(app, ["top"], input="branch_b\n")
@@ -1325,7 +1331,7 @@ def test_cli_modify_with_message_creates_new_commit(
     # Stage a new file (required for -m)
     new_file = tmp_path / "new.txt"
     new_file.write_text("content")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
+    add_paths(repo_with_feature, new_file)
 
     result = runner.invoke(app, ["modify", "-m", "feat: new commit"])
 
@@ -1351,7 +1357,7 @@ def test_cli_modify_preserves_trailer(
     # Stage a new file (required for -m)
     new_file = tmp_path / "new.txt"
     new_file.write_text("content")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
+    add_paths(repo_with_feature, new_file)
 
     result = runner.invoke(app, ["modify", "-m", "feat: completely new message"])
 
@@ -1424,7 +1430,7 @@ def test_cli_modify_with_staged_changes(
     # Stage a new file
     new_file = tmp_path / "staged.txt"
     new_file.write_text("staged content")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
+    add_paths(repo_with_feature, new_file)
 
     result = runner.invoke(app, ["modify", "-m", "feat: with staged changes"])
 
@@ -1454,7 +1460,7 @@ def test_cli_modify_no_verify(
     # Stage a file to trigger hook check
     new_file = tmp_path / "test.txt"
     new_file.write_text("content")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
+    add_paths(repo_with_feature, new_file)
 
     # With --no-verify, should succeed despite failing hook
     result = runner.invoke(app, ["modify", "-m", "feat: test", "-n"])
@@ -1479,7 +1485,7 @@ def test_cli_modify_hook_failure(
     # Stage a file to trigger hook check
     new_file = tmp_path / "test.txt"
     new_file.write_text("content")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
+    add_paths(repo_with_feature, new_file)
 
     result = runner.invoke(app, ["modify", "-m", "feat: test"])
 
@@ -1498,7 +1504,7 @@ def test_cli_modify_no_flags_amends_with_staged(
     # Stage a new file
     new_file = tmp_path / "staged.txt"
     new_file.write_text("staged content")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
+    add_paths(repo_with_feature, new_file)
 
     result = runner.invoke(app, ["modify"])
 
@@ -1623,8 +1629,8 @@ def test_cli_log_no_commits(
 
     file1 = tmp_path / "file1.txt"
     file1.write_text("content")
-    porcelain.add(temp_repo, paths=[str(file1)])
-    porcelain.commit(temp_repo, message=b"Feature commit")
+    add_paths(temp_repo, file1)
+    commit(temp_repo, b"Feature commit")
 
     # Adopt the branch
     runner.invoke(app, ["adopt"])
@@ -1653,14 +1659,14 @@ def test_cli_log_multiple_commits(
     # First commit
     file1 = tmp_path / "file1.txt"
     file1.write_text("content1")
-    porcelain.add(temp_repo, paths=[str(file1)])
-    porcelain.commit(temp_repo, message=b"First commit")
+    add_paths(temp_repo, file1)
+    commit(temp_repo, b"First commit")
 
     # Second commit
     file2 = tmp_path / "file2.txt"
     file2.write_text("content2")
-    porcelain.add(temp_repo, paths=[str(file2)])
-    porcelain.commit(temp_repo, message=b"Second commit")
+    add_paths(temp_repo, file2)
+    commit(temp_repo, b"Second commit")
 
     # Adopt and log
     runner.invoke(app, ["adopt"])

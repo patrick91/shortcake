@@ -6,7 +6,6 @@ from unittest.mock import MagicMock, patch
 import httpx
 import pytest
 import respx
-from dulwich.repo import Repo
 
 from shortcake._github import (
     BranchGitHubInfo,
@@ -15,6 +14,7 @@ from shortcake._github import (
     get_repo_info,
     push_branch,
 )
+from tests._git_helpers import Repo
 
 # Save reference to real method before conftest autouse fixture patches it out
 _real_resolve_repo_identity = GitHubClient._resolve_repo_identity

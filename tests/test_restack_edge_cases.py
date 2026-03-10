@@ -4,8 +4,6 @@ import re
 from pathlib import Path
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake import _git as git
@@ -15,6 +13,7 @@ from shortcake.cli import app
 from shortcake.commands.restack import (
     _get_stack_in_order,
 )
+from tests._git_helpers import Repo, add_paths, commit, switch_branch
 
 runner = CliRunner()
 
@@ -63,18 +62,18 @@ def test_restack_non_conflict_failure(
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers.apply_to("feat: a").encode())
+    commit(temp_repo, trailers.apply_to("feat: a"))
 
     # Add commit to main
-    porcelain.switch(temp_repo, "main")
+    switch_branch(temp_repo, "main")
     main_file = tmp_path / "main.txt"
     main_file.write_text("main content")
-    porcelain.add(temp_repo, paths=[str(main_file)])
-    porcelain.commit(temp_repo, message=b"chore: main update")
+    add_paths(temp_repo, main_file)
+    commit(temp_repo, b"chore: main update")
 
-    porcelain.switch(temp_repo, "branch_a")
+    switch_branch(temp_repo, "branch_a")
 
     # Mock _rebase_branch to fail without creating a conflict state
     def mock_rebase(repo_path, branch, onto, merge_base):
@@ -150,9 +149,9 @@ def test_get_stack_in_order_finds_stack_root(temp_repo: Repo, tmp_path: Path) ->
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: a").encode())
+    commit(temp_repo, trailers_a.apply_to("feat: a"))
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # branch_b
@@ -160,9 +159,9 @@ def test_get_stack_in_order_finds_stack_root(temp_repo: Repo, tmp_path: Path) ->
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
-    porcelain.add(temp_repo, paths=[str(file_b)])
+    add_paths(temp_repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
-    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: b").encode())
+    commit(temp_repo, trailers_b.apply_to("feat: b"))
     branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
 
     # branch_c
@@ -170,9 +169,9 @@ def test_get_stack_in_order_finds_stack_root(temp_repo: Repo, tmp_path: Path) ->
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
     file_c = tmp_path / "c.txt"
     file_c.write_text("c")
-    porcelain.add(temp_repo, paths=[str(file_c)])
+    add_paths(temp_repo, file_c)
     trailers_c = Trailers(parent_branch="branch_b")
-    porcelain.commit(temp_repo, message=trailers_c.apply_to("feat: c").encode())
+    commit(temp_repo, trailers_c.apply_to("feat: c"))
 
     # Get stack from branch_c - should find branch_a as root
     order = _get_stack_in_order(temp_repo, "branch_c")

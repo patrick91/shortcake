@@ -5,8 +5,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake._trailers import Trailers
@@ -23,7 +21,7 @@ from shortcake.commands.pull import (
     _update_branch_from_remote,
     pull,  # noqa: F401 - imported for coverage
 )
-from tests._git_helpers import switch_branch
+from tests._git_helpers import Repo, add_paths, commit, switch_branch
 
 # Tests for _pull
 
@@ -59,8 +57,8 @@ def test_pull_fast_forward(repo_with_feature: Repo, tmp_path: Path) -> None:
     # Create a new commit to simulate remote being ahead
     new_file = tmp_path / "remote_change.txt"
     new_file.write_text("remote change")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
-    porcelain.commit(repo_with_feature, message=b"Remote change")
+    add_paths(repo_with_feature, new_file)
+    commit(repo_with_feature, b"Remote change")
     remote_sha = repo_with_feature.refs[b"refs/heads/feature"]
 
     # Reset local branch back to original position
@@ -95,16 +93,16 @@ def test_pull_diverged_resets_by_default(
     # Create a local commit
     local_file = tmp_path / "local_change.txt"
     local_file.write_text("local change")
-    porcelain.add(repo_with_feature, paths=[str(local_file)])
-    porcelain.commit(repo_with_feature, message=b"Local change")
+    add_paths(repo_with_feature, local_file)
+    commit(repo_with_feature, b"Local change")
 
     # Create a different commit on "remote" (from original position)
     repo_with_feature.refs[b"refs/heads/temp"] = original_sha
     switch_branch(repo_with_feature, "temp")
     remote_file = tmp_path / "remote_change.txt"
     remote_file.write_text("remote change")
-    porcelain.add(repo_with_feature, paths=[str(remote_file)])
-    porcelain.commit(repo_with_feature, message=b"Remote change")
+    add_paths(repo_with_feature, remote_file)
+    commit(repo_with_feature, b"Remote change")
     remote_sha = repo_with_feature.refs[b"refs/heads/temp"]
 
     # Set up remote ref
@@ -151,8 +149,8 @@ def test_pull_diverged_with_rebase(repo_with_feature: Repo, tmp_path: Path) -> N
     # Create a local commit (different file to avoid conflict)
     local_file = tmp_path / "local_change.txt"
     local_file.write_text("local change")
-    porcelain.add(repo_with_feature, paths=[str(local_file)])
-    porcelain.commit(repo_with_feature, message=b"Local change")
+    add_paths(repo_with_feature, local_file)
+    commit(repo_with_feature, b"Local change")
     local_sha = repo_with_feature.refs[b"refs/heads/feature"]
 
     # Create "remote" commit from original position
@@ -160,8 +158,8 @@ def test_pull_diverged_with_rebase(repo_with_feature: Repo, tmp_path: Path) -> N
     switch_branch(repo_with_feature, "temp")
     remote_file = tmp_path / "remote_change.txt"
     remote_file.write_text("remote change")
-    porcelain.add(repo_with_feature, paths=[str(remote_file)])
-    porcelain.commit(repo_with_feature, message=b"Remote change")
+    add_paths(repo_with_feature, remote_file)
+    commit(repo_with_feature, b"Remote change")
     remote_sha = repo_with_feature.refs[b"refs/heads/temp"]
 
     # Set up remote ref
@@ -208,16 +206,16 @@ def test_pull_rebase_conflict(repo_with_feature: Repo, tmp_path: Path) -> None:
     # Create a local commit modifying the same file
     conflict_file = tmp_path / "conflict.txt"
     conflict_file.write_text("local version")
-    porcelain.add(repo_with_feature, paths=[str(conflict_file)])
-    porcelain.commit(repo_with_feature, message=b"Local change")
+    add_paths(repo_with_feature, conflict_file)
+    commit(repo_with_feature, b"Local change")
     local_sha = repo_with_feature.refs[b"refs/heads/feature"]
 
     # Create "remote" commit modifying the same file
     repo_with_feature.refs[b"refs/heads/temp"] = original_sha
     switch_branch(repo_with_feature, "temp")
     conflict_file.write_text("remote version")
-    porcelain.add(repo_with_feature, paths=[str(conflict_file)])
-    porcelain.commit(repo_with_feature, message=b"Remote change")
+    add_paths(repo_with_feature, conflict_file)
+    commit(repo_with_feature, b"Remote change")
     remote_sha = repo_with_feature.refs[b"refs/heads/temp"]
 
     # Set up remote ref
@@ -259,7 +257,7 @@ def test_pull_uncommitted_changes(repo_with_feature: Repo, tmp_path: Path) -> No
     """Test error when uncommitted changes exist."""
     # Create uncommitted changes
     (tmp_path / "uncommitted.txt").write_text("uncommitted")
-    porcelain.add(repo_with_feature, paths=[str(tmp_path / "uncommitted.txt")])
+    add_paths(repo_with_feature, tmp_path / "uncommitted.txt")
 
     with pytest.raises(PullError, match="uncommitted changes"):
         _pull(repo_with_feature)
@@ -353,8 +351,8 @@ def test_reset_to_remote(repo_with_feature: Repo, tmp_path: Path) -> None:
     # Create a local commit
     local_file = tmp_path / "local_change.txt"
     local_file.write_text("local change")
-    porcelain.add(repo_with_feature, paths=[str(local_file)])
-    porcelain.commit(repo_with_feature, message=b"Local change")
+    add_paths(repo_with_feature, local_file)
+    commit(repo_with_feature, b"Local change")
 
     # Set up remote ref at original position (simulating remote is behind)
     repo_with_feature.refs[b"refs/remotes/origin/feature"] = original_sha
@@ -402,8 +400,8 @@ def test_pull_cli_fast_forward(repo_with_feature: Repo, tmp_path: Path) -> None:
     # Create a new commit to simulate remote being ahead
     new_file = tmp_path / "remote_change.txt"
     new_file.write_text("remote change")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
-    porcelain.commit(repo_with_feature, message=b"Remote change")
+    add_paths(repo_with_feature, new_file)
+    commit(repo_with_feature, b"Remote change")
     remote_sha = repo_with_feature.refs[b"refs/heads/feature"]
 
     # Reset local branch back to original position
@@ -443,16 +441,16 @@ def test_pull_cli_reset_by_default(repo_with_feature: Repo, tmp_path: Path) -> N
     # Create a local commit
     local_file = tmp_path / "local_change.txt"
     local_file.write_text("local change")
-    porcelain.add(repo_with_feature, paths=[str(local_file)])
-    porcelain.commit(repo_with_feature, message=b"Local change")
+    add_paths(repo_with_feature, local_file)
+    commit(repo_with_feature, b"Local change")
 
     # Create a different commit on "remote" (from original position)
     repo_with_feature.refs[b"refs/heads/temp"] = original_sha
     switch_branch(repo_with_feature, "temp")
     remote_file = tmp_path / "remote_change.txt"
     remote_file.write_text("remote change")
-    porcelain.add(repo_with_feature, paths=[str(remote_file)])
-    porcelain.commit(repo_with_feature, message=b"Remote change")
+    add_paths(repo_with_feature, remote_file)
+    commit(repo_with_feature, b"Remote change")
     remote_sha = repo_with_feature.refs[b"refs/heads/temp"]
 
     # Set up remote ref
@@ -497,8 +495,8 @@ def test_pull_cli_rebase_flag(repo_with_feature: Repo, tmp_path: Path) -> None:
     # Create a local commit (different file to avoid conflict)
     local_file = tmp_path / "local_change.txt"
     local_file.write_text("local change")
-    porcelain.add(repo_with_feature, paths=[str(local_file)])
-    porcelain.commit(repo_with_feature, message=b"Local change")
+    add_paths(repo_with_feature, local_file)
+    commit(repo_with_feature, b"Local change")
     local_sha = repo_with_feature.refs[b"refs/heads/feature"]
 
     # Create "remote" commit from original position
@@ -506,8 +504,8 @@ def test_pull_cli_rebase_flag(repo_with_feature: Repo, tmp_path: Path) -> None:
     switch_branch(repo_with_feature, "temp")
     remote_file = tmp_path / "remote_change.txt"
     remote_file.write_text("remote change")
-    porcelain.add(repo_with_feature, paths=[str(remote_file)])
-    porcelain.commit(repo_with_feature, message=b"Remote change")
+    add_paths(repo_with_feature, remote_file)
+    commit(repo_with_feature, b"Remote change")
     remote_sha = repo_with_feature.refs[b"refs/heads/temp"]
 
     # Set up remote ref
@@ -557,8 +555,8 @@ def test_update_branch_from_remote_updated(
     # Create a new commit to simulate remote being ahead
     new_file = tmp_path / "remote_change.txt"
     new_file.write_text("remote change")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
-    porcelain.commit(repo_with_feature, message=b"Remote change")
+    add_paths(repo_with_feature, new_file)
+    commit(repo_with_feature, b"Remote change")
     remote_sha = repo_with_feature.refs[b"refs/heads/feature"]
 
     # Reset local branch back
@@ -614,8 +612,8 @@ def test_pull_stack_some_updated(repo_with_stack: Repo, tmp_path: Path) -> None:
     # Switch to branch_b, create a new commit, use it as remote
     new_file = tmp_path / "remote_b_change.txt"
     new_file.write_text("remote change on b")
-    porcelain.add(repo_with_stack, paths=[str(new_file)])
-    porcelain.commit(repo_with_stack, message=b"Remote change on b")
+    add_paths(repo_with_stack, new_file)
+    commit(repo_with_stack, b"Remote change on b")
     remote_b_sha = repo_with_stack.refs[b"refs/heads/branch_b"]
 
     # Reset local branch_b back
@@ -689,8 +687,8 @@ def test_pull_stack_untracked_fallback_updated(
     # Create remote ahead
     new_file = tmp_path / "remote_change.txt"
     new_file.write_text("remote change")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
-    porcelain.commit(repo_with_feature, message=b"Remote change")
+    add_paths(repo_with_feature, new_file)
+    commit(repo_with_feature, b"Remote change")
     remote_sha = repo_with_feature.refs[b"refs/heads/feature"]
 
     repo_with_feature.refs[b"refs/heads/feature"] = local_sha
@@ -716,7 +714,7 @@ def test_pull_stack_detached_head(temp_repo: Repo, tmp_path: Path) -> None:
 def test_pull_stack_uncommitted_changes(repo_with_stack: Repo, tmp_path: Path) -> None:
     """Test _pull_stack error with uncommitted changes."""
     (tmp_path / "uncommitted.txt").write_text("uncommitted")
-    porcelain.add(repo_with_stack, paths=[str(tmp_path / "uncommitted.txt")])
+    add_paths(repo_with_stack, tmp_path / "uncommitted.txt")
 
     with pytest.raises(PullError, match="uncommitted changes"):
         _pull_stack(repo_with_stack)
@@ -785,8 +783,8 @@ def test_pull_stack_working_tree_updated(repo_with_stack: Repo, tmp_path: Path) 
     branch_b_sha = repo_with_stack.refs[b"refs/heads/branch_b"]
     new_file = tmp_path / "new_remote_file.txt"
     new_file.write_text("new remote content")
-    porcelain.add(repo_with_stack, paths=[str(new_file)])
-    porcelain.commit(repo_with_stack, message=b"Remote: add new file")
+    add_paths(repo_with_stack, new_file)
+    commit(repo_with_stack, b"Remote: add new file")
     remote_b_sha = repo_with_stack.refs[b"refs/heads/branch_b"]
 
     # Reset local branch_b back
@@ -835,8 +833,8 @@ def test_pull_single_after_fetch_fast_forward(
 
     new_file = tmp_path / "remote_change.txt"
     new_file.write_text("remote change")
-    porcelain.add(repo_with_feature, paths=[str(new_file)])
-    porcelain.commit(repo_with_feature, message=b"Remote change")
+    add_paths(repo_with_feature, new_file)
+    commit(repo_with_feature, b"Remote change")
     remote_sha = repo_with_feature.refs[b"refs/heads/feature"]
 
     repo_with_feature.refs[b"refs/heads/feature"] = local_sha
@@ -860,16 +858,16 @@ def test_pull_single_after_fetch_diverged_resets(
     # Local commit
     local_file = tmp_path / "local_change.txt"
     local_file.write_text("local change")
-    porcelain.add(repo_with_feature, paths=[str(local_file)])
-    porcelain.commit(repo_with_feature, message=b"Local change")
+    add_paths(repo_with_feature, local_file)
+    commit(repo_with_feature, b"Local change")
 
     # Remote commit from original
     repo_with_feature.refs[b"refs/heads/temp"] = original_sha
     switch_branch(repo_with_feature, "temp")
     remote_file = tmp_path / "remote_change.txt"
     remote_file.write_text("remote change")
-    porcelain.add(repo_with_feature, paths=[str(remote_file)])
-    porcelain.commit(repo_with_feature, message=b"Remote change")
+    add_paths(repo_with_feature, remote_file)
+    commit(repo_with_feature, b"Remote change")
     remote_sha = repo_with_feature.refs[b"refs/heads/temp"]
 
     repo_with_feature.refs[b"refs/remotes/origin/feature"] = remote_sha
@@ -944,8 +942,8 @@ def test_pull_cli_stack_with_updates(repo_with_stack: Repo, tmp_path: Path) -> N
     branch_b_sha = repo_with_stack.refs[b"refs/heads/branch_b"]
     new_file = tmp_path / "remote_b_change.txt"
     new_file.write_text("remote change on b")
-    porcelain.add(repo_with_stack, paths=[str(new_file)])
-    porcelain.commit(repo_with_stack, message=b"Remote change on b")
+    add_paths(repo_with_stack, new_file)
+    commit(repo_with_stack, b"Remote change on b")
     remote_b_sha = repo_with_stack.refs[b"refs/heads/branch_b"]
 
     repo_with_stack.refs[b"refs/heads/branch_b"] = branch_b_sha
@@ -989,10 +987,10 @@ def test_pull_cli_stack_with_restack(repo_with_stack: Repo, tmp_path: Path) -> N
     switch_branch(repo_with_stack, "branch_a")
     extra_file = tmp_path / "extra_a.txt"
     extra_file.write_text("extra on a")
-    porcelain.add(repo_with_stack, paths=[str(extra_file)])
+    add_paths(repo_with_stack, extra_file)
     trailers_a = Trailers(parent_branch="main")
     msg = trailers_a.apply_to("feat: extra on branch a")
-    porcelain.commit(repo_with_stack, message=msg.encode())
+    commit(repo_with_stack, msg)
     remote_a_sha = repo_with_stack.refs[b"refs/heads/branch_a"]
 
     # Reset local branch_a back
@@ -1035,10 +1033,10 @@ def test_ensure_stack_creates_parent_from_remote(
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=msg_a.encode())
+    commit(temp_repo, msg_a)
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # Create branch_b locally with trailer pointing to branch_a
@@ -1047,10 +1045,10 @@ def test_ensure_stack_creates_parent_from_remote(
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("b content")
-    porcelain.add(temp_repo, paths=[str(file_b)])
+    add_paths(temp_repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
     msg_b = trailers_b.apply_to("feat: branch b")
-    porcelain.commit(temp_repo, message=msg_b.encode())
+    commit(temp_repo, msg_b)
 
     # Now delete branch_a locally but keep it as remote ref
     temp_repo.refs[b"refs/remotes/origin/branch_a"] = branch_a_sha
@@ -1076,10 +1074,10 @@ def test_ensure_stack_creates_child_from_remote(
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=msg_a.encode())
+    commit(temp_repo, msg_a)
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # Create branch_b commit (will only exist on remote)
@@ -1088,10 +1086,10 @@ def test_ensure_stack_creates_child_from_remote(
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("b content")
-    porcelain.add(temp_repo, paths=[str(file_b)])
+    add_paths(temp_repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
     msg_b = trailers_b.apply_to("feat: branch b")
-    porcelain.commit(temp_repo, message=msg_b.encode())
+    commit(temp_repo, msg_b)
     branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
 
     # Move branch_b to remote only
@@ -1117,10 +1115,10 @@ def test_ensure_stack_start_not_local(temp_repo: Repo, tmp_path: Path) -> None:
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=msg_a.encode())
+    commit(temp_repo, msg_a)
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # Delete branch_a locally but keep it as remote ref
@@ -1146,10 +1144,10 @@ def test_ensure_stack_no_remote(temp_repo: Repo, tmp_path: Path) -> None:
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="nonexistent")
     msg_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=msg_a.encode())
+    commit(temp_repo, msg_a)
 
     # No remote ref for nonexistent — should not crash
     created = _ensure_stack_branches_local(temp_repo, "branch_a")
@@ -1171,20 +1169,20 @@ def test_ensure_stack_does_not_pull_sibling_stacks(
     switch_branch(temp_repo, "branch_a")
     file_a = tmp_path / "a.txt"
     file_a.write_text("a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=msg_a.encode())
+    commit(temp_repo, msg_a)
 
     # Create stack 2 (only on remote): main → other_branch
     temp_repo.refs[b"refs/heads/other_branch"] = main_sha
     switch_branch(temp_repo, "other_branch")
     file_other = tmp_path / "other.txt"
     file_other.write_text("other content")
-    porcelain.add(temp_repo, paths=[str(file_other)])
+    add_paths(temp_repo, file_other)
     trailers_other = Trailers(parent_branch="main")
     msg_other = trailers_other.apply_to("feat: other branch")
-    porcelain.commit(temp_repo, message=msg_other.encode())
+    commit(temp_repo, msg_other)
     other_sha = temp_repo.refs[b"refs/heads/other_branch"]
 
     # Move other_branch to remote only
@@ -1211,10 +1209,10 @@ def test_pull_stack_creates_missing_branches(temp_repo: Repo, tmp_path: Path) ->
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=msg_a.encode())
+    commit(temp_repo, msg_a)
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # Create branch_b commit (will be remote only)
@@ -1223,10 +1221,10 @@ def test_pull_stack_creates_missing_branches(temp_repo: Repo, tmp_path: Path) ->
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("b content")
-    porcelain.add(temp_repo, paths=[str(file_b)])
+    add_paths(temp_repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
     msg_b = trailers_b.apply_to("feat: branch b")
-    porcelain.commit(temp_repo, message=msg_b.encode())
+    commit(temp_repo, msg_b)
     branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
 
     # Set up remote refs
@@ -1259,10 +1257,10 @@ def test_pull_cli_creates_missing_branches(temp_repo: Repo, tmp_path: Path) -> N
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=msg_a.encode())
+    commit(temp_repo, msg_a)
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # Create branch_b commit (will be remote only)
@@ -1271,10 +1269,10 @@ def test_pull_cli_creates_missing_branches(temp_repo: Repo, tmp_path: Path) -> N
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("b content")
-    porcelain.add(temp_repo, paths=[str(file_b)])
+    add_paths(temp_repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
     msg_b = trailers_b.apply_to("feat: branch b")
-    porcelain.commit(temp_repo, message=msg_b.encode())
+    commit(temp_repo, msg_b)
     branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
 
     # Set up remote refs
@@ -1304,9 +1302,9 @@ def test_find_trailer_parent_single_commit(temp_repo: Repo, tmp_path: Path) -> N
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers.apply_to("feat: feature").encode())
+    commit(temp_repo, trailers.apply_to("feat: feature"))
 
     head_sha = temp_repo.refs[b"refs/heads/feature"]
     result = _find_trailer_parent(temp_repo, head_sha, set())
@@ -1323,21 +1321,21 @@ def test_find_trailer_parent_multi_commit(temp_repo: Repo, tmp_path: Path) -> No
     # First commit has trailer
     file_a = tmp_path / "a.txt"
     file_a.write_text("a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers.apply_to("feat: first").encode())
+    commit(temp_repo, trailers.apply_to("feat: first"))
 
     # Second commit has no trailer
     file_b = tmp_path / "b.txt"
     file_b.write_text("b content")
-    porcelain.add(temp_repo, paths=[str(file_b)])
-    porcelain.commit(temp_repo, message=b"feat: second commit")
+    add_paths(temp_repo, file_b)
+    commit(temp_repo, b"feat: second commit")
 
     # Third commit (HEAD) has no trailer
     file_c = tmp_path / "c.txt"
     file_c.write_text("c content")
-    porcelain.add(temp_repo, paths=[str(file_c)])
-    porcelain.commit(temp_repo, message=b"feat: third commit")
+    add_paths(temp_repo, file_c)
+    commit(temp_repo, b"feat: third commit")
 
     head_sha = temp_repo.refs[b"refs/heads/feature"]
     result = _find_trailer_parent(temp_repo, head_sha, set())
@@ -1356,8 +1354,8 @@ def test_find_trailer_parent_stops_at_known_head(
     # Commit with no trailer
     file_a = tmp_path / "a.txt"
     file_a.write_text("a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
-    porcelain.commit(temp_repo, message=b"feat: no trailer")
+    add_paths(temp_repo, file_a)
+    commit(temp_repo, b"feat: no trailer")
 
     head_sha = temp_repo.refs[b"refs/heads/feature"]
     # main_sha is a known head — walker should stop there, not walk further
@@ -1390,9 +1388,9 @@ def test_ensure_children_discovers_multi_commit_remote_branch(
     switch_branch(temp_repo, "branch_a")
     file_a = tmp_path / "a.txt"
     file_a.write_text("a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a").encode())
+    commit(temp_repo, trailers_a.apply_to("feat: branch a"))
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # Create branch_b with trailer pointing to branch_a, then add more commits
@@ -1400,15 +1398,15 @@ def test_ensure_children_discovers_multi_commit_remote_branch(
     switch_branch(temp_repo, "branch_b")
     file_b = tmp_path / "b.txt"
     file_b.write_text("b content")
-    porcelain.add(temp_repo, paths=[str(file_b)])
+    add_paths(temp_repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
-    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: branch b").encode())
+    commit(temp_repo, trailers_b.apply_to("feat: branch b"))
 
     # Add a second commit to branch_b (HEAD won't have trailer)
     file_c = tmp_path / "c.txt"
     file_c.write_text("c content")
-    porcelain.add(temp_repo, paths=[str(file_c)])
-    porcelain.commit(temp_repo, message=b"feat: second commit on b")
+    add_paths(temp_repo, file_c)
+    commit(temp_repo, b"feat: second commit on b")
     branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
 
     # Set up remote ref for branch_b and delete it locally

@@ -3,8 +3,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._trailers import Trailers
@@ -23,7 +21,7 @@ from shortcake.commands.move_lines import (
     _split_lines_batch,
     _stage_patch_files,
 )
-from tests._git_helpers import switch_branch
+from tests._git_helpers import Repo, add_paths, commit, switch_branch
 
 
 def _git_diff_patch(repo_path: Path, parent: str, branch: str) -> str:
@@ -71,10 +69,10 @@ def repo_for_move(temp_repo: Repo, tmp_path: Path) -> Repo:
     app_py.write_text(
         "def hello():\n    return 'hello'\n\ndef goodbye():\n    return 'goodbye'\n"
     )
-    porcelain.add(temp_repo, paths=[str(app_py)])
+    add_paths(temp_repo, app_py)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: add app functions")
-    porcelain.commit(temp_repo, message=message_a.encode())
+    commit(temp_repo, message_a)
     child_a_sha = temp_repo.refs[b"refs/heads/child_a"]
 
     # Create child_b from child_a
@@ -83,10 +81,10 @@ def repo_for_move(temp_repo: Repo, tmp_path: Path) -> Repo:
 
     utils_py = tmp_path / "utils.py"
     utils_py.write_text("def util():\n    return 'util'\n")
-    porcelain.add(temp_repo, paths=[str(utils_py)])
+    add_paths(temp_repo, utils_py)
     trailers_b = Trailers(parent_branch="child_a")
     message_b = trailers_b.apply_to("feat: add utils")
-    porcelain.commit(temp_repo, message=message_b.encode())
+    commit(temp_repo, message_b)
 
     # Switch back to child_a
     switch_branch(temp_repo, "child_a")
@@ -108,10 +106,10 @@ def repo_for_move_parent_to_child(temp_repo: Repo, tmp_path: Path) -> Repo:
     shared_py.write_text(
         "def func_a():\n    return 'a'\n\ndef func_b():\n    return 'b'\n"
     )
-    porcelain.add(temp_repo, paths=[str(shared_py)])
+    add_paths(temp_repo, shared_py)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add shared functions")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
     parent_sha = temp_repo.refs[b"refs/heads/parent_branch"]
 
     temp_repo.refs[b"refs/heads/child_branch"] = parent_sha
@@ -119,10 +117,10 @@ def repo_for_move_parent_to_child(temp_repo: Repo, tmp_path: Path) -> Repo:
 
     child_py = tmp_path / "child.py"
     child_py.write_text("def child_func():\n    return 'child'\n")
-    porcelain.add(temp_repo, paths=[str(child_py)])
+    add_paths(temp_repo, child_py)
     trailers_c = Trailers(parent_branch="parent_branch")
     message_c = trailers_c.apply_to("feat: add child function")
-    porcelain.commit(temp_repo, message=message_c.encode())
+    commit(temp_repo, message_c)
 
     switch_branch(temp_repo, "parent_branch")
     return temp_repo
@@ -222,7 +220,7 @@ def test_error_dirty_working_tree(repo_for_move: Repo, tmp_path: Path) -> None:
     # Create a dirty file
     dirty = tmp_path / "dirty.txt"
     dirty.write_text("dirty")
-    porcelain.add(repo, paths=[str(dirty)])
+    add_paths(repo, dirty)
 
     with pytest.raises(MoveError, match="uncommitted changes"):
         _move_lines(
@@ -299,7 +297,7 @@ def test_rollback_on_restack_failure(repo_for_move: Repo, tmp_path: Path) -> Non
     git.switch_branch(repo, "child_b")
     app_py = tmp_path / "app.py"
     app_py.write_text("CONFLICT CONTENT\nTHIS WILL PREVENT REBASE\n")
-    porcelain.add(repo, paths=[str(app_py)])
+    add_paths(repo, app_py)
     head = git.get_branch_head(repo, "child_b")
     msg = git.get_commit_message(repo, head)
     git.amend_commit(repo, msg)
@@ -490,10 +488,10 @@ def test_move_restacks_target_descendants(temp_repo: Repo, tmp_path: Path) -> No
 
     a_py = tmp_path / "a.py"
     a_py.write_text("def a():\n    return 'a1'\n\ndef a2():\n    return 'a2'\n")
-    porcelain.add(repo, paths=[str(a_py)])
+    add_paths(repo, a_py)
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(repo, message=msg_a.encode())
+    commit(repo, msg_a)
     a_sha = repo.refs[b"refs/heads/branch_a"]
 
     repo.refs[b"refs/heads/branch_b"] = a_sha
@@ -501,10 +499,10 @@ def test_move_restacks_target_descendants(temp_repo: Repo, tmp_path: Path) -> No
 
     b_py = tmp_path / "b.py"
     b_py.write_text("def b():\n    return 'b'\n")
-    porcelain.add(repo, paths=[str(b_py)])
+    add_paths(repo, b_py)
     trailers_b = Trailers(parent_branch="branch_a")
     msg_b = trailers_b.apply_to("feat: branch b")
-    porcelain.commit(repo, message=msg_b.encode())
+    commit(repo, msg_b)
     b_sha = repo.refs[b"refs/heads/branch_b"]
 
     repo.refs[b"refs/heads/branch_c"] = b_sha
@@ -512,10 +510,10 @@ def test_move_restacks_target_descendants(temp_repo: Repo, tmp_path: Path) -> No
 
     c_py = tmp_path / "c.py"
     c_py.write_text("def c():\n    return 'c'\n")
-    porcelain.add(repo, paths=[str(c_py)])
+    add_paths(repo, c_py)
     trailers_c = Trailers(parent_branch="branch_b")
     msg_c = trailers_c.apply_to("feat: branch c")
-    porcelain.commit(repo, message=msg_c.encode())
+    commit(repo, msg_c)
 
     switch_branch(repo, "branch_a")
 
@@ -553,7 +551,7 @@ def test_move_deletions(temp_repo: Repo, tmp_path: Path) -> None:
         "def func_a():\n    return 'a'\n\ndef func_b():\n    return 'b'\n"
         "\ndef func_c():\n    return 'c'\n"
     )
-    porcelain.add(repo, paths=[str(shared_py)])
+    add_paths(repo, shared_py)
     git.amend_commit(repo, "init with shared.py")
 
     # Create parent_branch from main, delete func_c
@@ -564,10 +562,10 @@ def test_move_deletions(temp_repo: Repo, tmp_path: Path) -> None:
     shared_py.write_text(
         "def func_a():\n    return 'a'\n\ndef func_b():\n    return 'b'\n"
     )
-    porcelain.add(repo, paths=[str(shared_py)])
+    add_paths(repo, shared_py)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: remove func_c")
-    porcelain.commit(repo, message=message.encode())
+    commit(repo, message)
     parent_sha = repo.refs[b"refs/heads/parent_branch"]
 
     # Create child_branch from parent_branch
@@ -576,10 +574,10 @@ def test_move_deletions(temp_repo: Repo, tmp_path: Path) -> None:
 
     child_py = tmp_path / "child.py"
     child_py.write_text("def child_func():\n    return 'child'\n")
-    porcelain.add(repo, paths=[str(child_py)])
+    add_paths(repo, child_py)
     trailers_c = Trailers(parent_branch="parent_branch")
     message_c = trailers_c.apply_to("feat: add child function")
-    porcelain.commit(repo, message=message_c.encode())
+    commit(repo, message_c)
 
     switch_branch(repo, "parent_branch")
 
@@ -666,7 +664,7 @@ def test_move_hunks_error_dirty_tree(repo_for_move: Repo, tmp_path: Path) -> Non
     """Error when working tree has uncommitted changes."""
     dirty = tmp_path / "dirty.txt"
     dirty.write_text("dirty")
-    porcelain.add(repo_for_move, paths=[str(dirty)])
+    add_paths(repo_for_move, dirty)
 
     hunks = [HunkSelection(file_path="f.py", file_patch="fake", hunk_index=0)]
     with pytest.raises(MoveError, match="uncommitted changes"):
@@ -715,7 +713,7 @@ def test_move_hunks_rollback_on_restack_failure(
     git.switch_branch(repo, "child_b")
     app_py = tmp_path / "app.py"
     app_py.write_text("CONFLICT CONTENT\nTHIS WILL PREVENT REBASE\n")
-    porcelain.add(repo, paths=[str(app_py)])
+    add_paths(repo, app_py)
     head = git.get_branch_head(repo, "child_b")
     msg = git.get_commit_message(repo, head)
     git.amend_commit(repo, msg)
@@ -756,10 +754,10 @@ def test_move_hunks_restacks_target_children(
 
     extra = tmp_path / "extra.py"
     extra.write_text("def extra():\n    return 'extra'\n")
-    porcelain.add(repo, paths=[str(extra)])
+    add_paths(repo, extra)
     trailers = Trailers(parent_branch="child_b")
     message = trailers.apply_to("feat: add extra")
-    porcelain.commit(repo, message=message.encode())
+    commit(repo, message)
 
     git.switch_branch(repo, "child_a")
 
@@ -808,10 +806,10 @@ def repo_for_split(temp_repo: Repo, tmp_path: Path) -> Repo:
     app_py.write_text(
         "def hello():\n    return 'hello'\n\ndef goodbye():\n    return 'goodbye'\n"
     )
-    porcelain.add(temp_repo, paths=[str(app_py)])
+    add_paths(temp_repo, app_py)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: add app functions")
-    porcelain.commit(temp_repo, message=message_a.encode())
+    commit(temp_repo, message_a)
     child_a_sha = temp_repo.refs[b"refs/heads/child_a"]
 
     temp_repo.refs[b"refs/heads/child_b"] = child_a_sha
@@ -819,10 +817,10 @@ def repo_for_split(temp_repo: Repo, tmp_path: Path) -> Repo:
 
     utils_py = tmp_path / "utils.py"
     utils_py.write_text("def util():\n    return 'util'\n")
-    porcelain.add(temp_repo, paths=[str(utils_py)])
+    add_paths(temp_repo, utils_py)
     trailers_b = Trailers(parent_branch="child_a")
     message_b = trailers_b.apply_to("feat: add utils")
-    porcelain.commit(temp_repo, message=message_b.encode())
+    commit(temp_repo, message_b)
 
     switch_branch(temp_repo, "child_a")
     return temp_repo
@@ -913,10 +911,10 @@ def test_split_hunks_after_no_child(temp_repo: Repo, tmp_path: Path) -> None:
 
     f = tmp_path / "leaf.py"
     f.write_text("def a():\n    return 'a'\n\ndef b():\n    return 'b'\n")
-    porcelain.add(repo, paths=[str(f)])
+    add_paths(repo, f)
     trailers = Trailers(parent_branch="main")
     msg = trailers.apply_to("feat: leaf functions")
-    porcelain.commit(repo, message=msg.encode())
+    commit(repo, msg)
 
     switch_branch(repo, "leaf")
     repo_path = Path(repo.path)
@@ -953,9 +951,9 @@ def test_split_hunks_after_multiple_children_error(
     repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/parent_br")
     f = tmp_path / "p.py"
     f.write_text("def p():\n    return 'p'\n")
-    porcelain.add(repo, paths=[str(f)])
+    add_paths(repo, f)
     trailers = Trailers(parent_branch="main")
-    porcelain.commit(repo, message=trailers.apply_to("feat: parent").encode())
+    commit(repo, trailers.apply_to("feat: parent"))
     parent_sha = repo.refs[b"refs/heads/parent_br"]
 
     # Create two children
@@ -964,9 +962,9 @@ def test_split_hunks_after_multiple_children_error(
         repo.refs.set_symbolic_ref(b"HEAD", f"refs/heads/{name}".encode())
         cf = tmp_path / f"{name}.py"
         cf.write_text(f"def {name}():\n    return '{name}'\n")
-        porcelain.add(repo, paths=[str(cf)])
+        add_paths(repo, cf)
         t = Trailers(parent_branch="parent_br")
-        porcelain.commit(repo, message=t.apply_to(f"feat: {name}").encode())
+        commit(repo, t.apply_to(f"feat: {name}"))
 
     switch_branch(repo, "parent_br")
     repo_path = Path(repo.path)
@@ -990,7 +988,7 @@ def test_split_hunks_error_dirty_tree(repo_for_split: Repo, tmp_path: Path) -> N
     repo = repo_for_split
     dirty = tmp_path / "dirty.txt"
     dirty.write_text("dirty")
-    porcelain.add(repo, paths=[str(dirty)])
+    add_paths(repo, dirty)
 
     hunks = [HunkSelection(file_path="app.py", file_patch="fake", hunk_index=0)]
     with pytest.raises(MoveError, match="uncommitted changes"):
@@ -1050,10 +1048,10 @@ def test_split_hunks_multiple_hunks(temp_repo: Repo, tmp_path: Path) -> None:
     f1.write_text("def alpha():\n    return 'alpha'\n")
     f2 = tmp_path / "beta.py"
     f2.write_text("def beta():\n    return 'beta'\n")
-    porcelain.add(repo, paths=[str(f1), str(f2)])
+    add_paths(repo, f1, f2)
     trailers = Trailers(parent_branch="main")
     msg = trailers.apply_to("feat: add alpha and beta")
-    porcelain.commit(repo, message=msg.encode())
+    commit(repo, msg)
 
     switch_branch(repo, "multi")
     repo_path = Path(repo.path)
@@ -1336,10 +1334,10 @@ def repo_for_split_lines(temp_repo: Repo, tmp_path: Path) -> Repo:
         "def baz():\n"
         "    return 'baz'\n"
     )
-    porcelain.add(temp_repo, paths=[str(app_py)])
+    add_paths(temp_repo, app_py)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add three functions")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     switch_branch(temp_repo, "work")
     return temp_repo
@@ -1501,7 +1499,7 @@ def test_split_lines_dirty_tree_error(
     """Error when working tree has uncommitted changes."""
     dirty = tmp_path / "dirty.txt"
     dirty.write_text("dirty")
-    porcelain.add(repo_for_split_lines, paths=[str(dirty)])
+    add_paths(repo_for_split_lines, dirty)
 
     chunks = [
         SplitChunk(
@@ -1613,10 +1611,10 @@ def test_split_lines_restacks_source_descendants(
 
     extra = tmp_path / "extra.py"
     extra.write_text("def extra():\n    return 'extra'\n")
-    porcelain.add(repo, paths=[str(extra)])
+    add_paths(repo, extra)
     trailers = Trailers(parent_branch="work")
     msg = trailers.apply_to("feat: extra file")
-    porcelain.commit(repo, message=msg.encode())
+    commit(repo, msg)
 
     switch_branch(repo, "work")
 
@@ -1805,9 +1803,9 @@ def test_split_lines_restack_failure_triggers_rollback(
     repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/work-child")
     extra = tmp_path / "extra.py"
     extra.write_text("x = 1\n")
-    porcelain.add(repo, paths=[str(extra)])
+    add_paths(repo, extra)
     trailers_child = Trailers(parent_branch="work")
-    porcelain.commit(repo, message=trailers_child.apply_to("feat: extra").encode())
+    commit(repo, trailers_child.apply_to("feat: extra"))
     switch_branch(repo, "work")
 
     full_patch = _git_diff_patch(repo_path, "main", "work")

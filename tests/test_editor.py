@@ -3,9 +3,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from dulwich.repo import Repo
 
 from shortcake._editor import _get_git_editor, get_editor, open_editor
+from tests._git_helpers import Repo
 
 # Editor detection tests
 

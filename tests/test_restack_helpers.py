@@ -5,8 +5,6 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake import _git as git
@@ -22,6 +20,7 @@ from shortcake.commands.restack import (
     _restack,
     _show_conflict_message,
 )
+from tests._git_helpers import Repo, add_paths, commit, run_git, switch_branch
 
 runner = CliRunner()
 
@@ -83,11 +82,11 @@ def test_get_stack_in_order_with_nonlocal_parent(
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     # Parent points to "origin/main" which is not a local branch
     trailers = Trailers(parent_branch="origin/main")
     message = trailers.apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     order = _get_stack_in_order(temp_repo, "branch_a")
     # Should return just branch_a since parent is not local
@@ -280,10 +279,10 @@ def test_plan_restack_parent_not_exists(temp_repo: Repo, tmp_path: Path) -> None
 
     file_o = tmp_path / "orphan.txt"
     file_o.write_text("content")
-    porcelain.add(temp_repo, paths=[str(file_o)])
+    add_paths(temp_repo, file_o)
     trailers = Trailers(parent_branch="nonexistent")
     message = trailers.apply_to("feat: orphan")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     plan = _plan_restack(temp_repo, ["orphan"])
     assert plan == []
@@ -291,43 +290,22 @@ def test_plan_restack_parent_not_exists(temp_repo: Repo, tmp_path: Path) -> None
 
 def test_plan_restack_unrelated_histories(temp_repo: Repo, tmp_path: Path) -> None:
     """Test plan raises error when branch has unrelated history with parent."""
-    # Create an orphan branch with unrelated history
-    # First, create an orphan commit (no parent)
-    from dulwich.objects import Blob, Commit, Tree
-
-    # Create a blob
-    blob = Blob.from_string(b"orphan content")
-    temp_repo.object_store.add_object(blob)
-
-    # Create a tree with the blob
-    tree = Tree()
-    tree.add(b"orphan.txt", 0o100644, blob.id)
-    temp_repo.object_store.add_object(tree)
-
-    # Create an orphan commit (no parents)
-    import time
-
-    commit = Commit()
-    commit.tree = tree.id
-    commit.author = b"Test <test@example.com>"
-    commit.committer = b"Test <test@example.com>"
-    commit.author_time = commit.commit_time = int(time.time())
-    commit.author_timezone = commit.commit_timezone = 0
-    commit.encoding = b"UTF-8"
-    # Add Shortcake-Parent trailer pointing to main
-    commit.message = b"feat: orphan branch\n\nShortcake-Parent: main"
-    temp_repo.object_store.add_object(commit)
-
-    # Create branch pointing to this orphan commit
-    temp_repo.refs[b"refs/heads/orphan"] = commit.id
+    # Create an orphan branch with unrelated history.
+    run_git(temp_repo, "checkout", "--orphan", "orphan")
+    readme = tmp_path / "README.md"
+    if readme.exists():
+        readme.unlink()
+    orphan_file = tmp_path / "orphan.txt"
+    orphan_file.write_text("orphan content")
+    run_git(temp_repo, "add", "-A")
+    commit(temp_repo, "feat: orphan branch\n\nShortcake-Parent: main")
 
     # Now add a commit to main to make orphan "need" rebasing
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
-    porcelain.switch(temp_repo, "main")
+    switch_branch(temp_repo, "main")
     main_file = tmp_path / "main_update.txt"
     main_file.write_text("main update")
-    porcelain.add(temp_repo, paths=[str(main_file)])
-    porcelain.commit(temp_repo, message=b"chore: update main")
+    add_paths(temp_repo, main_file)
+    commit(temp_repo, b"chore: update main")
 
     # Should raise RestackError because orphan has no common history with main
     with pytest.raises(RestackError, match="no common history"):
@@ -494,19 +472,19 @@ def test_restack_conflict_returns_conflict_branch(
 
     conflict_file = tmp_path / "conflict.txt"
     conflict_file.write_text("branch_a content")
-    porcelain.add(temp_repo, paths=[str(conflict_file)])
+    add_paths(temp_repo, conflict_file)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     # Now add a conflicting commit to main
-    porcelain.switch(temp_repo, "main")
+    switch_branch(temp_repo, "main")
     conflict_file.write_text("main content - different!")
-    porcelain.add(temp_repo, paths=[str(conflict_file)])
-    porcelain.commit(temp_repo, message=b"chore: conflicting change on main")
+    add_paths(temp_repo, conflict_file)
+    commit(temp_repo, b"chore: conflicting change on main")
 
     # Switch back to branch_a
-    porcelain.switch(temp_repo, "branch_a")
+    switch_branch(temp_repo, "branch_a")
 
     # Restack should hit a conflict
     result = runner.invoke(app, ["restack"])
@@ -530,25 +508,25 @@ def test_continue_conflict_in_remaining_branch(
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
     file_a = tmp_path / "file.txt"
     file_a.write_text("branch_a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: a").encode())
+    commit(temp_repo, trailers_a.apply_to("feat: a"))
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # Branch B with conflicting content
     temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
     file_a.write_text("branch_b different content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_b = Trailers(parent_branch="branch_a")
-    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: b").encode())
+    commit(temp_repo, trailers_b.apply_to("feat: b"))
     branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
 
     # Modify branch_a to create conflict with branch_b
-    porcelain.switch(temp_repo, "branch_a")
+    switch_branch(temp_repo, "branch_a")
     file_a.write_text("branch_a modified - will conflict with b")
-    porcelain.add(temp_repo, paths=[str(file_a)])
-    porcelain.commit(temp_repo, message=b"chore: modify a")
+    add_paths(temp_repo, file_a)
+    commit(temp_repo, b"chore: modify a")
 
     # Create state as if we just finished rebasing branch_a
     state = RestackState(
@@ -601,19 +579,19 @@ def test_integration_restack_continue_with_real_conflict(
 
     conflict_file = tmp_path / "conflict.txt"
     conflict_file.write_text("branch_a content")
-    porcelain.add(temp_repo, paths=[str(conflict_file)])
+    add_paths(temp_repo, conflict_file)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     # Add conflicting commit to main
-    porcelain.switch(temp_repo, "main")
+    switch_branch(temp_repo, "main")
     conflict_file.write_text("main content - different!")
-    porcelain.add(temp_repo, paths=[str(conflict_file)])
-    porcelain.commit(temp_repo, message=b"chore: conflicting change on main")
+    add_paths(temp_repo, conflict_file)
+    commit(temp_repo, b"chore: conflicting change on main")
 
     # Switch back to branch_a and run restack (will hit conflict)
-    porcelain.switch(temp_repo, "branch_a")
+    switch_branch(temp_repo, "branch_a")
     result = runner.invoke(app, ["restack"])
     assert result.exit_code == 1
     assert "conflict" in result.output.lower()
@@ -623,7 +601,7 @@ def test_integration_restack_continue_with_real_conflict(
 
     # Resolve the conflict manually
     conflict_file.write_text("resolved content")
-    porcelain.add(temp_repo, paths=[str(conflict_file)])
+    add_paths(temp_repo, conflict_file)
 
     # Continue the restack
     result = runner.invoke(app, ["continue"])
@@ -653,20 +631,20 @@ def test_integration_restack_abort_with_real_conflict(
 
     conflict_file = tmp_path / "conflict.txt"
     conflict_file.write_text("branch_a content")
-    porcelain.add(temp_repo, paths=[str(conflict_file)])
+    add_paths(temp_repo, conflict_file)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
     original_branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # Add conflicting commit to main
-    porcelain.switch(temp_repo, "main")
+    switch_branch(temp_repo, "main")
     conflict_file.write_text("main content - different!")
-    porcelain.add(temp_repo, paths=[str(conflict_file)])
-    porcelain.commit(temp_repo, message=b"chore: conflicting change on main")
+    add_paths(temp_repo, conflict_file)
+    commit(temp_repo, b"chore: conflicting change on main")
 
     # Switch back to branch_a and run restack (will hit conflict)
-    porcelain.switch(temp_repo, "branch_a")
+    switch_branch(temp_repo, "branch_a")
     result = runner.invoke(app, ["restack"])
     assert result.exit_code == 1
     assert "conflict" in result.output.lower()

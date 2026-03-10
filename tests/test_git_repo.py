@@ -1,10 +1,9 @@
 from pathlib import Path
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 
 from shortcake import _git as git
+from tests._git_helpers import Repo, commit_files, init_repo
 
 
 def test_open_repo_current_dir(
@@ -77,12 +76,8 @@ def test_get_default_branch_fallback_main(temp_repo: Repo) -> None:
 
 def test_get_default_branch_fallback_master(tmp_path: Path) -> None:
     """Test fallback to master when main doesn't exist."""
-    repo = Repo.init(tmp_path, default_branch=b"master")
-    # Need to create a commit for the branch to exist
-    readme = tmp_path / "README.md"
-    readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    repo = init_repo(tmp_path, default_branch="master")
+    commit_files(repo, {tmp_path / "README.md": "# Test"}, "Initial commit")
 
     default = git.get_default_branch(repo)
     assert default == "master"
@@ -90,12 +85,8 @@ def test_get_default_branch_fallback_master(tmp_path: Path) -> None:
 
 def test_get_default_branch_none(tmp_path: Path) -> None:
     """Test None when no default branch can be determined."""
-    repo = Repo.init(tmp_path, default_branch=b"develop")
-    # Create commit so develop branch exists
-    readme = tmp_path / "README.md"
-    readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    repo = init_repo(tmp_path, default_branch="develop")
+    commit_files(repo, {tmp_path / "README.md": "# Test"}, "Initial commit")
 
     default = git.get_default_branch(repo)
     assert default is None

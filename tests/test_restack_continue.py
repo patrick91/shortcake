@@ -3,13 +3,13 @@
 import re
 
 import pytest
-from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake import _git as git
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 from shortcake.commands.abort import AbortError, _abort
 from shortcake.commands.continue_ import ContinueError, _continue
+from tests._git_helpers import Repo
 
 runner = CliRunner()
 
