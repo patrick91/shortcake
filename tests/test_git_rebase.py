@@ -2,11 +2,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 
 from shortcake import _git as git
-from tests._git_helpers import switch_branch
+from tests._git_helpers import Repo, add_paths, commit, switch_branch
 
 
 def test_rebase_failure_class() -> None:
@@ -59,14 +57,14 @@ def test_rebase_abort_with_cherry_pick_in_progress(
 
     readme = tmp_path / "README.md"
     readme.write_text("# Feature Version")
-    porcelain.add(temp_repo, paths=[str(readme)])
-    porcelain.commit(temp_repo, message=b"feat: modify readme")
+    add_paths(temp_repo, readme)
+    commit(temp_repo, b"feat: modify readme")
 
     # Create conflicting change on main
     switch_branch(temp_repo, "main")
     readme.write_text("# Main Version")
-    porcelain.add(temp_repo, paths=[str(readme)])
-    porcelain.commit(temp_repo, message=b"chore: update readme")
+    add_paths(temp_repo, readme)
+    commit(temp_repo, b"chore: update readme")
 
     # Start rebase which will conflict
     switch_branch(temp_repo, "feature")
@@ -169,14 +167,14 @@ def test_rebase_abort_with_cherry_pick_head(temp_repo: Repo, tmp_path: Path) -> 
 
     readme = tmp_path / "README.md"
     readme.write_text("# Feature")
-    porcelain.add(temp_repo, paths=[str(readme)])
-    porcelain.commit(temp_repo, message=b"feat: feature change")
+    add_paths(temp_repo, readme)
+    commit(temp_repo, b"feat: feature change")
     feature_sha = temp_repo.refs[b"refs/heads/feature"]
 
     switch_branch(temp_repo, "main")
     readme.write_text("# Main")
-    porcelain.add(temp_repo, paths=[str(readme)])
-    porcelain.commit(temp_repo, message=b"chore: main change")
+    add_paths(temp_repo, readme)
+    commit(temp_repo, b"chore: main change")
 
     # Cherry-pick feature commit onto main (will conflict)
     sp.run(

@@ -4,12 +4,12 @@ import re
 from pathlib import Path
 
 import pytest
-from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake import _git as git
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 from shortcake.cli import app
+from tests._git_helpers import Repo
 
 runner = CliRunner()
 

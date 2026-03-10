@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from dulwich.repo import Repo
+from tests._git_helpers import Repo
 
 if TYPE_CHECKING:
     import pytest

@@ -5,8 +5,6 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake._github import GitHubClient, PRInfo
@@ -25,6 +23,7 @@ from shortcake.commands.submit import (
     _submit,
     _update_pr_body_with_stack,
 )
+from tests._git_helpers import Repo, add_paths, commit
 
 runner = CliRunner()
 
@@ -302,7 +301,7 @@ def test_submit_warns_uncommitted_changes(
     # Create uncommitted changes
     test_file = tmp_path / "uncommitted.txt"
     test_file.write_text("uncommitted")
-    porcelain.add(repo_with_tracked_feature, paths=[str(test_file)])
+    add_paths(repo_with_tracked_feature, test_file)
 
     mock_client = MagicMock(spec=GitHubClient)
     mock_client.get_pr_for_branch.return_value = None
@@ -1846,10 +1845,10 @@ def test_submit_resolves_merged_parent_for_existing_pr(
 
     test_file = tmp_path / "feature.txt"
     test_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(test_file)])
+    add_paths(temp_repo, test_file)
     trailers = Trailers(parent_branch="deleted-parent")
     message = trailers.apply_to("feat: add feature")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     # "deleted-parent" does NOT exist as a local branch
     setup_origin_remote(temp_repo)
@@ -1900,10 +1899,10 @@ def test_submit_resolves_merged_parent_for_new_pr(
 
     test_file = tmp_path / "feature.txt"
     test_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(test_file)])
+    add_paths(temp_repo, test_file)
     trailers = Trailers(parent_branch="deleted-parent")
     message = trailers.apply_to("feat: add feature")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     setup_origin_remote(temp_repo)
     monkeypatch.setenv("GH_TOKEN", "test-token")
@@ -1984,10 +1983,10 @@ def test_submit_merged_parent_resolution_api_error_ignored(
 
     test_file = tmp_path / "feature.txt"
     test_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(test_file)])
+    add_paths(temp_repo, test_file)
     trailers = Trailers(parent_branch="deleted-parent")
     message = trailers.apply_to("feat: add feature")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     setup_origin_remote(temp_repo)
     monkeypatch.setenv("GH_TOKEN", "test-token")

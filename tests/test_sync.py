@@ -4,8 +4,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake import _git as git
@@ -28,6 +26,16 @@ from shortcake.commands.sync import (
     _resolve_deleted_parent,
     _sync,
     _topological_sort_for_deletion,
+)
+from tests._git_helpers import (
+    Repo,
+    add_paths,
+    commit,
+    init_repo,
+    remove_paths,
+    reset_hard,
+    run_git,
+    switch_branch,
 )
 
 runner = CliRunner()
@@ -74,18 +82,18 @@ def test_is_squash_merged_true(temp_repo: Repo, tmp_path: Path) -> None:
     # Add a commit on feature
     feature_file = tmp_path / "feature.txt"
     feature_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(feature_file)])
+    add_paths(temp_repo, feature_file)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add feature")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     # Simulate squash merge: add same file to main directly
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
-    porcelain.reset(temp_repo, "hard")
+    reset_hard(temp_repo)
     # Create same file with same content on main
     feature_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(feature_file)])
-    porcelain.commit(temp_repo, message=b"squash: add feature")
+    add_paths(temp_repo, feature_file)
+    commit(temp_repo, b"squash: add feature")
 
     # Branch is NOT an ancestor of main (not regular merged)
     assert not is_merged(temp_repo, "feature", "main")
@@ -113,28 +121,28 @@ def test_is_squash_merged_with_deletion(temp_repo: Repo, tmp_path: Path) -> None
     # Create a file on main first
     delete_me = tmp_path / "delete_me.txt"
     delete_me.write_text("will be deleted")
-    porcelain.add(temp_repo, paths=[str(delete_me)])
-    porcelain.commit(temp_repo, message=b"Add file to delete")
+    add_paths(temp_repo, delete_me)
+    commit(temp_repo, b"Add file to delete")
 
     # Create feature branch from main
     main_sha = temp_repo.refs[b"refs/heads/main"]
     temp_repo.refs[b"refs/heads/feature"] = main_sha
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
-    porcelain.reset(temp_repo, "hard")
+    reset_hard(temp_repo)
 
     # Delete the file on feature branch
     delete_me.unlink()
-    porcelain.rm(temp_repo, paths=[str(delete_me)])
+    remove_paths(temp_repo, delete_me)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: delete file")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     # Simulate squash merge: delete same file on main
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
-    porcelain.reset(temp_repo, "hard")
+    reset_hard(temp_repo)
     delete_me.unlink()
-    porcelain.rm(temp_repo, paths=[str(delete_me)])
-    porcelain.commit(temp_repo, message=b"squash: delete file")
+    remove_paths(temp_repo, delete_me)
+    commit(temp_repo, b"squash: delete file")
 
     # Should detect as squash-merged
     assert is_squash_merged(temp_repo, "feature", "main")
@@ -155,21 +163,21 @@ def test_is_squash_merged_with_extra_trunk_changes(
     # Add a commit on feature
     feature_file = tmp_path / "feature.txt"
     feature_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(feature_file)])
+    add_paths(temp_repo, feature_file)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add feature")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     # Simulate squash merge with extra changes:
     # Add same file to main PLUS an additional file
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
-    porcelain.reset(temp_repo, "hard")
+    reset_hard(temp_repo)
     # Create same file with same content on main
     feature_file.write_text("feature content")
     extra_file = tmp_path / "extra.txt"
     extra_file.write_text("extra content")
-    porcelain.add(temp_repo, paths=[str(feature_file), str(extra_file)])
-    porcelain.commit(temp_repo, message=b"squash: add feature plus extra")
+    add_paths(temp_repo, feature_file, extra_file)
+    commit(temp_repo, b"squash: add feature plus extra")
 
     # Branch is NOT an ancestor of main (not regular merged)
     assert not is_merged(temp_repo, "feature", "main")
@@ -192,8 +200,8 @@ def test_is_squash_merged_with_extra_trunk_deletions(
     branch_deletes.write_text("branch will delete this")
     trunk_deletes = tmp_path / "trunk_deletes.txt"
     trunk_deletes.write_text("only trunk will delete this")
-    porcelain.add(temp_repo, paths=[str(branch_deletes), str(trunk_deletes)])
-    porcelain.commit(temp_repo, message=b"Add files to delete later")
+    add_paths(temp_repo, branch_deletes, trunk_deletes)
+    commit(temp_repo, b"Add files to delete later")
 
     # Create feature branch from main
     main_sha = temp_repo.refs[b"refs/heads/main"]
@@ -202,30 +210,28 @@ def test_is_squash_merged_with_extra_trunk_deletions(
 
     # On feature: delete one file AND add a new file
     branch_deletes.unlink()
-    porcelain.rm(temp_repo, paths=[str(branch_deletes)])
+    remove_paths(temp_repo, branch_deletes)
     feature_file = tmp_path / "feature.txt"
     feature_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(feature_file)])
+    add_paths(temp_repo, feature_file)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: delete file and add feature")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     # Simulate squash merge with extra deletion:
     # Apply same changes as branch (delete + add) AND delete another file
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
-    porcelain.reset(temp_repo, "hard")
+    reset_hard(temp_repo)
     # Delete same file branch deleted
     branch_deletes.unlink()
-    porcelain.rm(temp_repo, paths=[str(branch_deletes)])
+    remove_paths(temp_repo, branch_deletes)
     # Add same file branch added
     feature_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(feature_file)])
+    add_paths(temp_repo, feature_file)
     # Delete extra file that branch didn't touch
     trunk_deletes.unlink()
-    porcelain.rm(temp_repo, paths=[str(trunk_deletes)])
-    porcelain.commit(
-        temp_repo, message=b"squash: apply branch changes plus extra delete"
-    )
+    remove_paths(temp_repo, trunk_deletes)
+    commit(temp_repo, b"squash: apply branch changes plus extra delete")
 
     # Branch is NOT an ancestor of main (not regular merged)
     assert not is_merged(temp_repo, "feature", "main")
@@ -246,8 +252,8 @@ def test_is_squash_merged_trunk_modified_same_files_further(
     # Create a file on main that will be modified by both branch and trunk
     shared_file = tmp_path / "shared.txt"
     shared_file.write_text("original content")
-    porcelain.add(temp_repo, paths=[str(shared_file)])
-    porcelain.commit(temp_repo, message=b"Add shared file")
+    add_paths(temp_repo, shared_file)
+    commit(temp_repo, b"Add shared file")
 
     # Create feature branch from main
     main_sha = temp_repo.refs[b"refs/heads/main"]
@@ -256,22 +262,22 @@ def test_is_squash_merged_trunk_modified_same_files_further(
 
     # Modify the shared file on feature
     shared_file.write_text("modified by feature")
-    porcelain.add(temp_repo, paths=[str(shared_file)])
+    add_paths(temp_repo, shared_file)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: modify shared file")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     # Simulate squash merge into main, then additional changes to same file
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
-    porcelain.reset(temp_repo, "hard")
+    reset_hard(temp_repo)
     # Apply branch's changes (simulating squash merge)
     shared_file.write_text("modified by feature")
-    porcelain.add(temp_repo, paths=[str(shared_file)])
-    porcelain.commit(temp_repo, message=b"squash: modify shared file")
+    add_paths(temp_repo, shared_file)
+    commit(temp_repo, b"squash: modify shared file")
     # Then make additional changes to the SAME file
     shared_file.write_text("modified by feature, then modified again on trunk")
-    porcelain.add(temp_repo, paths=[str(shared_file)])
-    porcelain.commit(temp_repo, message=b"chore: further modifications")
+    add_paths(temp_repo, shared_file)
+    commit(temp_repo, b"chore: further modifications")
 
     # Branch is NOT an ancestor of main
     assert not is_merged(temp_repo, "feature", "main")
@@ -290,8 +296,8 @@ def test_is_squash_merged_false_positive_independent_changes(
     # Create a shared file on main
     shared_file = tmp_path / "shared.txt"
     shared_file.write_text("original content")
-    porcelain.add(temp_repo, paths=[str(shared_file)])
-    porcelain.commit(temp_repo, message=b"Add shared file")
+    add_paths(temp_repo, shared_file)
+    commit(temp_repo, b"Add shared file")
 
     # Create feature branch from main
     main_sha = temp_repo.refs[b"refs/heads/main"]
@@ -300,17 +306,17 @@ def test_is_squash_merged_false_positive_independent_changes(
 
     # Modify shared file on feature
     shared_file.write_text("modified by feature")
-    porcelain.add(temp_repo, paths=[str(shared_file)])
+    add_paths(temp_repo, shared_file)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: modify shared file")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     # Independently modify same file on main with DIFFERENT content
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
-    porcelain.reset(temp_repo, "hard")
+    reset_hard(temp_repo)
     shared_file.write_text("independently modified on main")
-    porcelain.add(temp_repo, paths=[str(shared_file)])
-    porcelain.commit(temp_repo, message=b"chore: independent change to shared file")
+    add_paths(temp_repo, shared_file)
+    commit(temp_repo, b"chore: independent change to shared file")
 
     # Branch is NOT an ancestor of main
     assert not is_merged(temp_repo, "feature", "main")
@@ -327,8 +333,8 @@ def test_is_squash_merged_deletion_not_applied(temp_repo: Repo, tmp_path: Path) 
     # Create a file on main
     to_delete = tmp_path / "to_delete.txt"
     to_delete.write_text("will be deleted by branch")
-    porcelain.add(temp_repo, paths=[str(to_delete)])
-    porcelain.commit(temp_repo, message=b"Add file to delete")
+    add_paths(temp_repo, to_delete)
+    commit(temp_repo, b"Add file to delete")
 
     # Create feature branch from main
     main_sha = temp_repo.refs[b"refs/heads/main"]
@@ -337,17 +343,17 @@ def test_is_squash_merged_deletion_not_applied(temp_repo: Repo, tmp_path: Path) 
 
     # Delete the file on feature branch
     to_delete.unlink()
-    porcelain.rm(temp_repo, paths=[str(to_delete)])
+    remove_paths(temp_repo, to_delete)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: delete file")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     # On main, modify the file instead of deleting it
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
-    porcelain.reset(temp_repo, "hard")
+    reset_hard(temp_repo)
     to_delete.write_text("modified on trunk, not deleted")
-    porcelain.add(temp_repo, paths=[str(to_delete)])
-    porcelain.commit(temp_repo, message=b"chore: modify file on trunk")
+    add_paths(temp_repo, to_delete)
+    commit(temp_repo, b"chore: modify file on trunk")
 
     # Should NOT be detected as squash-merged (branch deleted file, trunk didn't)
     assert not is_squash_merged(temp_repo, "feature", "main")
@@ -355,42 +361,23 @@ def test_is_squash_merged_deletion_not_applied(temp_repo: Repo, tmp_path: Path) 
 
 def test_is_squash_merged_no_common_ancestor(tmp_path: Path) -> None:
     """Test is_squash_merged returns False when branches have no common ancestor."""
-    from dulwich.repo import Repo
-
     # Create a repo with two unrelated branches
-    repo = Repo.init(tmp_path, default_branch=b"main")
+    repo = init_repo(tmp_path, default_branch="main")
 
     # First commit on main
     file1 = tmp_path / "main.txt"
     file1.write_text("main content")
-    porcelain.add(repo, paths=[str(file1)])
-    porcelain.commit(repo, message=b"Initial commit on main")
+    add_paths(repo, file1)
+    commit(repo, b"Initial commit on main")
 
-    # Create orphan branch with unrelated history using dulwich directly
-    # First, create a new tree and commit without parents
-    import time
-
-    from dulwich.objects import Blob, Commit, Tree
-
-    blob = Blob.from_string(b"orphan content")
-    repo.object_store.add_object(blob)
-
-    tree = Tree()
-    tree.add(b"orphan.txt", 0o100644, blob.id)
-    repo.object_store.add_object(tree)
-
-    commit = Commit()
-    commit.tree = tree.id
-    commit.author = b"Test <test@test.com>"
-    commit.committer = b"Test <test@test.com>"
-    commit.author_time = commit.commit_time = int(time.time())
-    commit.author_timezone = commit.commit_timezone = 0
-    commit.message = b"Orphan commit"
-    commit.parents = []  # No parents - orphan
-    repo.object_store.add_object(commit)
-
-    # Create orphan ref
-    repo.refs[b"refs/heads/orphan"] = commit.id
+    # Create an orphan branch with unrelated history.
+    run_git(repo, "checkout", "--orphan", "orphan")
+    if file1.exists():
+        file1.unlink()
+    orphan_file = tmp_path / "orphan.txt"
+    orphan_file.write_text("orphan content")
+    run_git(repo, "add", "-A")
+    commit(repo, b"Orphan commit")
 
     # Branches have no common ancestor
     assert not is_squash_merged(repo, "orphan", "main")
@@ -408,17 +395,17 @@ def test_get_merged_branches_detects_squash_merge(
     # Add a commit on feature with trailer
     feature_file = tmp_path / "feature.txt"
     feature_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(feature_file)])
+    add_paths(temp_repo, feature_file)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add feature")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     # Simulate squash merge: add same file to main
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
-    porcelain.reset(temp_repo, "hard")
+    reset_hard(temp_repo)
     feature_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(feature_file)])
-    porcelain.commit(temp_repo, message=b"squash: add feature")
+    add_paths(temp_repo, feature_file)
+    commit(temp_repo, b"squash: add feature")
 
     # get_merged_branches should detect it
     tracked = get_tracked_branches(temp_repo)
@@ -486,9 +473,9 @@ def test_reparent_branch_when_parent_diverged(temp_repo: Repo, tmp_path: Path) -
     # Commit on branch_a
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: branch a").encode())
+    commit(temp_repo, trailers_a.apply_to("feat: branch a"))
     old_branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # Create branch_b from branch_a
@@ -498,22 +485,20 @@ def test_reparent_branch_when_parent_diverged(temp_repo: Repo, tmp_path: Path) -
     # Commit on branch_b
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b content")
-    porcelain.add(temp_repo, paths=[str(file_b)])
+    add_paths(temp_repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
-    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: branch b").encode())
+    commit(temp_repo, trailers_b.apply_to("feat: branch b"))
 
     # Now simulate branch_a being rebased (new commit with different SHA)
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
-    porcelain.reset(temp_repo, "hard", treeish=main_sha)
+    reset_hard(temp_repo, treeish=main_sha)
     file_a.write_text("branch a content rebased")
-    porcelain.add(temp_repo, paths=[str(file_a)])
-    porcelain.commit(
-        temp_repo, message=trailers_a.apply_to("feat: branch a rebased").encode()
-    )
+    add_paths(temp_repo, file_a)
+    commit(temp_repo, trailers_a.apply_to("feat: branch a rebased").encode())
     # branch_a now has a different head than what branch_b was based on
 
     temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
-    porcelain.reset(temp_repo, "hard")
+    reset_hard(temp_repo)
 
     # Reparent branch_b to main (as if branch_a was merged and deleted)
     _reparent_branch(temp_repo, "branch_b", "main")
@@ -604,7 +589,7 @@ def test_sync_error_uncommitted_changes(repo_with_stack: Repo, tmp_path: Path) -
     # Create uncommitted changes
     test_file = tmp_path / "uncommitted.txt"
     test_file.write_text("uncommitted")
-    porcelain.add(repo_with_stack, paths=[str(test_file)])
+    add_paths(repo_with_stack, test_file)
 
     with pytest.raises(SyncError, match="uncommitted changes"):
         _sync(repo_with_stack)
@@ -632,9 +617,9 @@ def test_sync_chain_deletion(temp_repo: Repo, tmp_path: Path) -> None:
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: a").encode())
+    commit(temp_repo, trailers_a.apply_to("feat: a"))
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
@@ -642,20 +627,20 @@ def test_sync_chain_deletion(temp_repo: Repo, tmp_path: Path) -> None:
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
-    porcelain.add(temp_repo, paths=[str(file_b)])
+    add_paths(temp_repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
-    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: b").encode())
+    commit(temp_repo, trailers_b.apply_to("feat: b"))
     branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
 
     # Merge both into main (fast-forward to branch_b)
     temp_repo.refs[b"refs/heads/main"] = branch_b_sha
 
     # Add commit to main so it's ahead
-    porcelain.switch(temp_repo, "main")
+    switch_branch(temp_repo, "main")
     main_file = tmp_path / "main_after_merge.txt"
     main_file.write_text("main after merge")
-    porcelain.add(temp_repo, paths=[str(main_file)])
-    porcelain.commit(temp_repo, message=b"chore: post-merge commit")
+    add_paths(temp_repo, main_file)
+    commit(temp_repo, b"chore: post-merge commit")
 
     result = _sync(temp_repo, force=True)
 
@@ -715,7 +700,7 @@ def test_cli_sync_uncommitted_changes(
     monkeypatch.chdir(tmp_path)
     test_file = tmp_path / "uncommitted.txt"
     test_file.write_text("uncommitted")
-    porcelain.add(repo_with_stack, paths=[str(test_file)])
+    add_paths(repo_with_stack, test_file)
 
     result = runner.invoke(app, ["sync"])
 
@@ -766,11 +751,11 @@ def test_sync_error_rebase_in_progress(repo_with_stack: Repo, tmp_path: Path) ->
 def test_sync_error_no_default_branch(tmp_path: Path) -> None:
     """Test sync fails when no default branch can be determined."""
     # Create repo with non-standard branch name
-    repo = Repo.init(tmp_path, default_branch=b"develop")
+    repo = init_repo(tmp_path, default_branch="develop")
     readme = tmp_path / "README.md"
     readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    add_paths(repo, readme)
+    commit(repo, b"Initial commit")
 
     with pytest.raises(SyncError, match="Cannot determine default branch"):
         _sync(repo)
@@ -786,8 +771,8 @@ def test_reparent_branch_untracked(temp_repo: Repo, tmp_path: Path) -> None:
     # Add commit without trailer
     file_a = tmp_path / "feature.txt"
     file_a.write_text("feature")
-    porcelain.add(temp_repo, paths=[str(file_a)])
-    porcelain.commit(temp_repo, message=b"feat: untracked feature")
+    add_paths(temp_repo, file_a)
+    commit(temp_repo, b"feat: untracked feature")
 
     # This should do nothing since branch is untracked
     _reparent_branch(temp_repo, "feature", "main")
@@ -798,47 +783,32 @@ def test_reparent_branch_untracked(temp_repo: Repo, tmp_path: Path) -> None:
 
 def test_reparent_branch_orphan_commit(tmp_path: Path) -> None:
     """Test _reparent_branch returns early for orphan commit."""
-    import time
-
-    from dulwich.objects import Blob, Commit, Tree
-
-    repo = Repo.init(tmp_path, default_branch=b"main")
+    repo = init_repo(tmp_path, default_branch="main")
 
     # Create initial commit on main
     readme = tmp_path / "README.md"
     readme.write_text("# Test")
-    porcelain.add(repo, paths=[str(readme)])
-    porcelain.commit(repo, message=b"Initial commit")
+    add_paths(repo, readme)
+    commit(repo, b"Initial commit")
 
-    # Create an orphan commit with a Shortcake-Parent trailer
-    blob = Blob.from_string(b"orphan content")
-    repo.object_store.add_object(blob)
-
-    tree = Tree()
-    tree.add(b"orphan.txt", 0o100644, blob.id)
-    repo.object_store.add_object(tree)
-
+    # Create an orphan branch with a Shortcake-Parent trailer.
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: orphan feature")
-
-    commit = Commit()
-    commit.tree = tree.id
-    commit.author = b"Test <test@test.com>"
-    commit.committer = b"Test <test@test.com>"
-    commit.author_time = commit.commit_time = int(time.time())
-    commit.author_timezone = commit.commit_timezone = 0
-    commit.message = message.encode()
-    commit.parents = []  # No parents - orphan
-    repo.object_store.add_object(commit)
-
-    repo.refs[b"refs/heads/feature"] = commit.id
+    run_git(repo, "checkout", "--orphan", "feature")
+    if readme.exists():
+        readme.unlink()
+    orphan_file = tmp_path / "orphan.txt"
+    orphan_file.write_text("orphan content")
+    run_git(repo, "add", "-A")
+    commit(repo, message)
+    feature_sha = repo.refs[b"refs/heads/feature"]
 
     # Reparent should return early (orphan commit, merge_base is None)
     _reparent_branch(repo, "feature", "main")
 
     # Branch should still exist and be unchanged
     assert git.branch_exists(repo, "feature")
-    assert repo.refs[b"refs/heads/feature"] == commit.id
+    assert repo.refs[b"refs/heads/feature"] == feature_sha
 
 
 def test_reparent_branch_no_commits(temp_repo: Repo, tmp_path: Path) -> None:
@@ -855,8 +825,8 @@ def test_reparent_branch_no_commits(temp_repo: Repo, tmp_path: Path) -> None:
     # Create a file so we have a commit
     file_a = tmp_path / "feature.txt"
     file_a.write_text("content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
-    porcelain.commit(temp_repo, message=message.encode())
+    add_paths(temp_repo, file_a)
+    commit(temp_repo, message)
 
     # Now fast-forward main to feature so they're at the same commit
     feature_sha = temp_repo.refs[b"refs/heads/feature"]
@@ -964,9 +934,9 @@ def test_reparent_branch_same_commit(temp_repo: Repo, tmp_path: Path) -> None:
     # Add commit to feature
     file_a = tmp_path / "feature.txt"
     file_a.write_text("content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers.apply_to("feat: feature").encode())
+    commit(temp_repo, trailers.apply_to("feat: feature"))
 
     # Create a "child" branch that points to the same commit as its "parent"
     feature_sha = temp_repo.refs[b"refs/heads/feature"]
@@ -976,9 +946,9 @@ def test_reparent_branch_same_commit(temp_repo: Repo, tmp_path: Path) -> None:
     # Add trailer to child pointing to feature
     child_file = tmp_path / "child.txt"
     child_file.write_text("child content")
-    porcelain.add(temp_repo, paths=[str(child_file)])
+    add_paths(temp_repo, child_file)
     child_trailers = Trailers(parent_branch="feature")
-    porcelain.commit(temp_repo, message=child_trailers.apply_to("feat: child").encode())
+    commit(temp_repo, child_trailers.apply_to("feat: child"))
 
     # Fast-forward feature to child's commit so they're the same
     child_sha = temp_repo.refs[b"refs/heads/child"]
@@ -998,11 +968,9 @@ def test_reparent_branch_multiple_commits(temp_repo: Repo, tmp_path: Path) -> No
 
     file_p = tmp_path / "parent.txt"
     file_p.write_text("parent content")
-    porcelain.add(temp_repo, paths=[str(file_p)])
+    add_paths(temp_repo, file_p)
     parent_trailers = Trailers(parent_branch="main")
-    porcelain.commit(
-        temp_repo, message=parent_trailers.apply_to("feat: parent").encode()
-    )
+    commit(temp_repo, parent_trailers.apply_to("feat: parent").encode())
     parent_sha = temp_repo.refs[b"refs/heads/parent"]
 
     # Create child branch with TWO commits on top of parent
@@ -1011,16 +979,14 @@ def test_reparent_branch_multiple_commits(temp_repo: Repo, tmp_path: Path) -> No
 
     file_c1 = tmp_path / "child1.txt"
     file_c1.write_text("child commit 1")
-    porcelain.add(temp_repo, paths=[str(file_c1)])
+    add_paths(temp_repo, file_c1)
     child_trailers = Trailers(parent_branch="parent")
-    porcelain.commit(
-        temp_repo, message=child_trailers.apply_to("feat: child commit 1").encode()
-    )
+    commit(temp_repo, child_trailers.apply_to("feat: child commit 1").encode())
 
     file_c2 = tmp_path / "child2.txt"
     file_c2.write_text("child commit 2")
-    porcelain.add(temp_repo, paths=[str(file_c2)])
-    porcelain.commit(temp_repo, message=b"feat: child commit 2")
+    add_paths(temp_repo, file_c2)
+    commit(temp_repo, b"feat: child commit 2")
 
     # Reparent child to main (as if parent was deleted)
     _reparent_branch(temp_repo, "child", "main")
@@ -1384,10 +1350,10 @@ def test_sync_reparents_branch_with_deleted_parent(
 
     test_file = tmp_path / "feature.txt"
     test_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(test_file)])
+    add_paths(temp_repo, test_file)
     trailers = Trailers(parent_branch="deleted-parent")
     message = trailers.apply_to("feat: add feature")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     git.switch_branch(temp_repo, "main")
 
@@ -1413,10 +1379,10 @@ def test_sync_reparents_branch_dry_run(temp_repo: Repo, tmp_path: Path) -> None:
 
     test_file = tmp_path / "feature.txt"
     test_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(test_file)])
+    add_paths(temp_repo, test_file)
     trailers = Trailers(parent_branch="deleted-parent")
     message = trailers.apply_to("feat: add feature")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     git.switch_branch(temp_repo, "main")
 
@@ -1444,10 +1410,10 @@ def test_sync_skips_reparent_when_resolve_returns_none(
 
     test_file = tmp_path / "feature.txt"
     test_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(test_file)])
+    add_paths(temp_repo, test_file)
     trailers = Trailers(parent_branch="deleted-parent")
     message = trailers.apply_to("feat: add feature")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     git.switch_branch(temp_repo, "main")
 
@@ -1521,7 +1487,7 @@ def test_sync_never_deletes_trunk(temp_repo: Repo, tmp_path: Path) -> None:
 
     def _switch(repo, branch):
         repo.refs.set_symbolic_ref(b"HEAD", f"refs/heads/{branch}".encode())
-        porcelain.reset(repo, "hard")
+        reset_hard(repo)
 
     # Create a tracked feature branch
     main_sha = temp_repo.refs[b"refs/heads/main"]
@@ -1530,10 +1496,10 @@ def test_sync_never_deletes_trunk(temp_repo: Repo, tmp_path: Path) -> None:
 
     test_file = tmp_path / "feature.txt"
     test_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(test_file)])
+    add_paths(temp_repo, test_file)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add feature")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
     feature_sha = temp_repo.refs[b"refs/heads/feature"]
 
     # Fast-forward main to feature (simulates merge)
@@ -1544,8 +1510,8 @@ def test_sync_never_deletes_trunk(temp_repo: Repo, tmp_path: Path) -> None:
     _switch(temp_repo, "main")
     post = tmp_path / "post.txt"
     post.write_text("post merge")
-    porcelain.add(temp_repo, paths=[str(post)])
-    porcelain.commit(temp_repo, message=b"chore: post merge")
+    add_paths(temp_repo, post)
+    commit(temp_repo, b"chore: post merge")
 
     # Now main's HEAD has the feature commit with Shortcake-Parent: main
     # in its history. get_tracked_branches may include main.
@@ -1570,7 +1536,7 @@ def test_delete_and_reparent_grandparent_already_deleted(
 
     def _switch(repo, branch):
         repo.refs.set_symbolic_ref(b"HEAD", f"refs/heads/{branch}".encode())
-        porcelain.reset(repo, "hard")
+        reset_hard(repo)
 
     # Create branch_a from main
     main_sha = temp_repo.refs[b"refs/heads/main"]
@@ -1579,9 +1545,9 @@ def test_delete_and_reparent_grandparent_already_deleted(
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
-    porcelain.commit(temp_repo, message=trailers_a.apply_to("feat: a").encode())
+    commit(temp_repo, trailers_a.apply_to("feat: a"))
     a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # Create branch_b from branch_a
@@ -1590,9 +1556,9 @@ def test_delete_and_reparent_grandparent_already_deleted(
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b")
-    porcelain.add(temp_repo, paths=[str(file_b)])
+    add_paths(temp_repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
-    porcelain.commit(temp_repo, message=trailers_b.apply_to("feat: b").encode())
+    commit(temp_repo, trailers_b.apply_to("feat: b"))
     b_sha = temp_repo.refs[b"refs/heads/branch_b"]
 
     # Create branch_c from branch_b (unmerged, should be reparented)
@@ -1601,9 +1567,9 @@ def test_delete_and_reparent_grandparent_already_deleted(
 
     file_c = tmp_path / "c.txt"
     file_c.write_text("branch c")
-    porcelain.add(temp_repo, paths=[str(file_c)])
+    add_paths(temp_repo, file_c)
     trailers_c = Trailers(parent_branch="branch_b")
-    porcelain.commit(temp_repo, message=trailers_c.apply_to("feat: c").encode())
+    commit(temp_repo, trailers_c.apply_to("feat: c"))
 
     _switch(temp_repo, "main")
 

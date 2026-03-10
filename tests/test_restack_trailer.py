@@ -2,15 +2,12 @@
 
 from pathlib import Path
 
-from dulwich import porcelain
-from dulwich.repo import Repo
-
 from shortcake import _git as git
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 from shortcake._trailers import Trailers
 from shortcake.commands.continue_ import _continue
 from shortcake.commands.restack import _restack
-from tests._git_helpers import switch_branch
+from tests._git_helpers import Repo, add_paths, commit, switch_branch
 
 
 def test_restack_preserves_trailer_when_commit_becomes_empty(
@@ -32,17 +29,17 @@ def test_restack_preserves_trailer_when_commit_becomes_empty(
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=message_a.encode())
+    commit(temp_repo, message_a)
 
     # Now simulate squash-merge: add the same file changes to main
     switch_branch(temp_repo, "main")
     file_a_on_main = tmp_path / "a.txt"
     file_a_on_main.write_text("branch a content")
-    porcelain.add(temp_repo, paths=[str(file_a_on_main)])
-    porcelain.commit(temp_repo, message=b"chore: squash merge branch_a changes")
+    add_paths(temp_repo, file_a_on_main)
+    commit(temp_repo, b"chore: squash merge branch_a changes")
 
     # Switch to branch_a for restack
     switch_branch(temp_repo, "branch_a")
@@ -82,23 +79,23 @@ def test_restack_preserves_trailer_multi_commit_branch(
     # First commit: trailer + file changes that will become empty
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a first commit")
-    porcelain.commit(temp_repo, message=message_a.encode())
+    commit(temp_repo, message_a)
 
     # Second commit: unique file changes that won't become empty
     file_b = tmp_path / "unique.txt"
     file_b.write_text("unique content")
-    porcelain.add(temp_repo, paths=[str(file_b)])
-    porcelain.commit(temp_repo, message=b"feat: branch a second commit")
+    add_paths(temp_repo, file_b)
+    commit(temp_repo, b"feat: branch a second commit")
 
     # Simulate squash-merge of first commit's changes into main
     switch_branch(temp_repo, "main")
     file_a_on_main = tmp_path / "a.txt"
     file_a_on_main.write_text("branch a content")
-    porcelain.add(temp_repo, paths=[str(file_a_on_main)])
-    porcelain.commit(temp_repo, message=b"chore: squash merge first commit changes")
+    add_paths(temp_repo, file_a_on_main)
+    commit(temp_repo, b"chore: squash merge first commit changes")
 
     # Switch to branch_a for restack
     switch_branch(temp_repo, "branch_a")
@@ -144,10 +141,10 @@ def test_restack_preserves_trailer_in_stack_with_empty_commit(
     # Commit on branch_a with trailer
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=message_a.encode())
+    commit(temp_repo, message_a)
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # Create branch_b from branch_a
@@ -157,17 +154,17 @@ def test_restack_preserves_trailer_in_stack_with_empty_commit(
     # Commit on branch_b with trailer
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b content")
-    porcelain.add(temp_repo, paths=[str(file_b)])
+    add_paths(temp_repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
     message_b = trailers_b.apply_to("feat: branch b")
-    porcelain.commit(temp_repo, message=message_b.encode())
+    commit(temp_repo, message_b)
 
     # Squash-merge branch_a's changes into main
     switch_branch(temp_repo, "main")
     file_a_on_main = tmp_path / "a.txt"
     file_a_on_main.write_text("branch a content")
-    porcelain.add(temp_repo, paths=[str(file_a_on_main)])
-    porcelain.commit(temp_repo, message=b"chore: squash merge branch_a")
+    add_paths(temp_repo, file_a_on_main)
+    commit(temp_repo, b"chore: squash merge branch_a")
 
     # Switch to branch_b for restack
     switch_branch(temp_repo, "branch_b")
@@ -208,29 +205,29 @@ def test_restack_preserves_trailer_replays_multiple_surviving_commits(
     # First commit: trailer + file changes that will become empty
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a first commit")
-    porcelain.commit(temp_repo, message=message_a.encode())
+    commit(temp_repo, message_a)
 
     # Second commit: unique changes
     file_b = tmp_path / "unique1.txt"
     file_b.write_text("unique content 1")
-    porcelain.add(temp_repo, paths=[str(file_b)])
-    porcelain.commit(temp_repo, message=b"feat: branch a second commit")
+    add_paths(temp_repo, file_b)
+    commit(temp_repo, b"feat: branch a second commit")
 
     # Third commit: more unique changes
     file_c = tmp_path / "unique2.txt"
     file_c.write_text("unique content 2")
-    porcelain.add(temp_repo, paths=[str(file_c)])
-    porcelain.commit(temp_repo, message=b"feat: branch a third commit")
+    add_paths(temp_repo, file_c)
+    commit(temp_repo, b"feat: branch a third commit")
 
     # Simulate squash-merge of first commit's changes into main
     switch_branch(temp_repo, "main")
     file_a_on_main = tmp_path / "a.txt"
     file_a_on_main.write_text("branch a content")
-    porcelain.add(temp_repo, paths=[str(file_a_on_main)])
-    porcelain.commit(temp_repo, message=b"chore: squash merge first commit changes")
+    add_paths(temp_repo, file_a_on_main)
+    commit(temp_repo, b"chore: squash merge first commit changes")
 
     # Switch to branch_a for restack
     switch_branch(temp_repo, "branch_a")
@@ -273,17 +270,17 @@ def test_continue_preserves_trailer_current_step(
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=message_a.encode())
+    commit(temp_repo, message_a)
 
     # Squash-merge branch_a into main
     switch_branch(temp_repo, "main")
     file_a_main = tmp_path / "a.txt"
     file_a_main.write_text("branch a content")
-    porcelain.add(temp_repo, paths=[str(file_a_main)])
-    porcelain.commit(temp_repo, message=b"chore: squash merge branch_a")
+    add_paths(temp_repo, file_a_main)
+    commit(temp_repo, b"chore: squash merge branch_a")
 
     # Now restack branch_a — this will drop the commit and restore trailer
     switch_branch(temp_repo, "branch_a")
@@ -301,17 +298,17 @@ def test_continue_preserves_trailer_current_step(
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b content")
-    porcelain.add(temp_repo, paths=[str(file_b)])
+    add_paths(temp_repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
     message_b = trailers_b.apply_to("feat: branch b")
-    porcelain.commit(temp_repo, message=message_b.encode())
+    commit(temp_repo, message_b)
 
     # Add b.txt to branch_a so branch_b's commit becomes empty
     switch_branch(temp_repo, "branch_a")
     file_b_on_a = tmp_path / "b.txt"
     file_b_on_a.write_text("branch b content")
-    porcelain.add(temp_repo, paths=[str(file_b_on_a)])
-    porcelain.commit(temp_repo, message=b"chore: add b.txt to branch_a")
+    add_paths(temp_repo, file_b_on_a)
+    commit(temp_repo, b"chore: add b.txt to branch_a")
 
     branch_a_head = git.get_branch_head(temp_repo, "branch_a")
     branch_b_head = git.get_branch_head(temp_repo, "branch_b")
@@ -366,10 +363,10 @@ def test_continue_preserves_trailer_remaining_steps(
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
-    porcelain.add(temp_repo, paths=[str(file_a)])
+    add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
-    porcelain.commit(temp_repo, message=message_a.encode())
+    commit(temp_repo, message_a)
     branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
 
     # Create branch_b from branch_a with changes that will become empty
@@ -378,26 +375,26 @@ def test_continue_preserves_trailer_remaining_steps(
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b content")
-    porcelain.add(temp_repo, paths=[str(file_b)])
+    add_paths(temp_repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
     message_b = trailers_b.apply_to("feat: branch b")
-    porcelain.commit(temp_repo, message=message_b.encode())
+    commit(temp_repo, message_b)
     branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
 
     # Add b.txt to branch_a so branch_b's commit becomes empty during rebase
     switch_branch(temp_repo, "branch_a")
     file_b_on_a = tmp_path / "b.txt"
     file_b_on_a.write_text("branch b content")
-    porcelain.add(temp_repo, paths=[str(file_b_on_a)])
-    porcelain.commit(temp_repo, message=b"chore: add b.txt")
+    add_paths(temp_repo, file_b_on_a)
+    commit(temp_repo, b"chore: add b.txt")
     branch_a_new = git.get_branch_head(temp_repo, "branch_a")
 
     # Also advance main so branch_a needs rebasing too
     switch_branch(temp_repo, "main")
     main_file = tmp_path / "main_update.txt"
     main_file.write_text("main update")
-    porcelain.add(temp_repo, paths=[str(main_file)])
-    porcelain.commit(temp_repo, message=b"chore: update main")
+    add_paths(temp_repo, main_file)
+    commit(temp_repo, b"chore: update main")
     git.get_branch_head(temp_repo, "main")
 
     # Set up restack state: branch_a is current (index 0), branch_b is remaining

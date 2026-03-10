@@ -1,8 +1,8 @@
 import pytest
-from dulwich.objects import Commit
-from dulwich.repo import Repo
 
 from shortcake import _git as git
+from shortcake._git._core import Commit
+from tests._git_helpers import Repo
 
 
 def test_get_rebase_commits_same_commit(temp_repo: Repo) -> None:

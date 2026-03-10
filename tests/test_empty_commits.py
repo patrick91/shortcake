@@ -9,14 +9,11 @@ that can occur when:
 import subprocess
 from pathlib import Path
 
-from dulwich import porcelain
-from dulwich.repo import Repo
-
 from shortcake import _git as git
 from shortcake._git._rebase import RebaseResult, rebase_branch, rebase_continue
 from shortcake._trailers import Trailers
 from shortcake.commands.restack import _restack
-from tests._git_helpers import switch_branch
+from tests._git_helpers import Repo, add_paths, commit, switch_branch
 
 
 def test_rebase_result_dataclass() -> None:
@@ -45,16 +42,16 @@ def test_rebase_branch_normal(temp_repo: Repo, tmp_path: Path) -> None:
     # Add a commit on feature
     feature_file = tmp_path / "feature.txt"
     feature_file.write_text("feature content")
-    porcelain.add(temp_repo, paths=[str(feature_file)])
-    porcelain.commit(temp_repo, message=b"feat: add feature")
+    add_paths(temp_repo, feature_file)
+    commit(temp_repo, b"feat: add feature")
     feature_sha = temp_repo.refs[b"refs/heads/feature"]
 
     # Add a commit to main
     switch_branch(temp_repo, "main")
     main_file = tmp_path / "main_update.txt"
     main_file.write_text("main update")
-    porcelain.add(temp_repo, paths=[str(main_file)])
-    porcelain.commit(temp_repo, message=b"chore: update main")
+    add_paths(temp_repo, main_file)
+    commit(temp_repo, b"chore: update main")
     main_new_sha = temp_repo.refs[b"refs/heads/main"]
 
     # Rebase feature onto main
@@ -82,14 +79,14 @@ def test_rebase_branch_skips_empty_commits(temp_repo: Repo, tmp_path: Path) -> N
     # Add a change on feature
     readme = tmp_path / "README.md"
     readme.write_text("# Test\nmodified")
-    porcelain.add(temp_repo, paths=[str(readme)])
-    porcelain.commit(temp_repo, message=b"feat: modify readme")
+    add_paths(temp_repo, readme)
+    commit(temp_repo, b"feat: modify readme")
 
     # Add same change to main (simulating squash merge)
     switch_branch(temp_repo, "main")
     readme.write_text("# Test\nmodified")
-    porcelain.add(temp_repo, paths=[str(readme)])
-    porcelain.commit(temp_repo, message=b"squash: same change")
+    add_paths(temp_repo, readme)
+    commit(temp_repo, b"squash: same change")
 
     # Rebase feature onto main - the commit should be empty
     switch_branch(temp_repo, "feature")
@@ -113,8 +110,8 @@ def test_reproduce_content_loss_bug(temp_repo: Repo, tmp_path: Path) -> None:
     # Initial state
     file_txt = tmp_path / "file.txt"
     file_txt.write_text("initial\n")
-    porcelain.add(temp_repo, paths=[str(file_txt)])
-    porcelain.commit(temp_repo, message=b"initial file.txt")
+    add_paths(temp_repo, file_txt)
+    commit(temp_repo, b"initial file.txt")
     main_base_sha = temp_repo.refs[b"refs/heads/main"]
 
     # Feature branch with important changes
@@ -123,14 +120,14 @@ def test_reproduce_content_loss_bug(temp_repo: Repo, tmp_path: Path) -> None:
     file_txt.write_text("initial\nfeature line 1\nfeature line 2\n")
     important_txt = tmp_path / "important.txt"
     important_txt.write_text("important work\n")
-    porcelain.add(temp_repo, paths=[str(file_txt), str(important_txt)])
-    porcelain.commit(temp_repo, message=b"feat: add feature")
+    add_paths(temp_repo, file_txt, important_txt)
+    commit(temp_repo, b"feat: add feature")
 
     # Main gets same file.txt change (simulating squash that included file.txt)
     switch_branch(temp_repo, "main")
     file_txt.write_text("initial\nfeature line 1\nfeature line 2\n")
-    porcelain.add(temp_repo, paths=[str(file_txt)])
-    porcelain.commit(temp_repo, message=b"squash merged")
+    add_paths(temp_repo, file_txt)
+    commit(temp_repo, b"squash merged")
 
     # Rebase feature onto main
     switch_branch(temp_repo, "feature")
@@ -153,14 +150,14 @@ def test_rebase_branch_with_conflict(temp_repo: Repo, tmp_path: Path) -> None:
     # Modify README on feature
     readme = tmp_path / "README.md"
     readme.write_text("# Feature Version")
-    porcelain.add(temp_repo, paths=[str(readme)])
-    porcelain.commit(temp_repo, message=b"feat: modify readme")
+    add_paths(temp_repo, readme)
+    commit(temp_repo, b"feat: modify readme")
 
     # Modify same file differently on main
     switch_branch(temp_repo, "main")
     readme.write_text("# Main Version")
-    porcelain.add(temp_repo, paths=[str(readme)])
-    porcelain.commit(temp_repo, message=b"chore: update readme")
+    add_paths(temp_repo, readme)
+    commit(temp_repo, b"chore: update readme")
 
     # Rebase feature onto main - should conflict
     result = rebase_branch(temp_repo, "feature", "main", main_sha.decode())
@@ -179,13 +176,13 @@ def test_rebase_continue_success(temp_repo: Repo, tmp_path: Path) -> None:
 
     readme = tmp_path / "README.md"
     readme.write_text("# Feature Version")
-    porcelain.add(temp_repo, paths=[str(readme)])
-    porcelain.commit(temp_repo, message=b"feat: modify readme")
+    add_paths(temp_repo, readme)
+    commit(temp_repo, b"feat: modify readme")
 
     switch_branch(temp_repo, "main")
     readme.write_text("# Main Version")
-    porcelain.add(temp_repo, paths=[str(readme)])
-    porcelain.commit(temp_repo, message=b"chore: update readme")
+    add_paths(temp_repo, readme)
+    commit(temp_repo, b"chore: update readme")
 
     # Start rebase - will conflict
     result = rebase_branch(temp_repo, "feature", "main", main_sha.decode())
@@ -221,13 +218,13 @@ def test_rebase_continue_empty_after_conflict_resolution(
 
     readme = tmp_path / "README.md"
     readme.write_text("# Feature Version")
-    porcelain.add(temp_repo, paths=[str(readme)])
-    porcelain.commit(temp_repo, message=b"feat: modify readme")
+    add_paths(temp_repo, readme)
+    commit(temp_repo, b"feat: modify readme")
 
     switch_branch(temp_repo, "main")
     readme.write_text("# Main Version")
-    porcelain.add(temp_repo, paths=[str(readme)])
-    porcelain.commit(temp_repo, message=b"chore: update readme")
+    add_paths(temp_repo, readme)
+    commit(temp_repo, b"chore: update readme")
 
     # Start rebase - will conflict
     result = rebase_branch(temp_repo, "feature", "main", main_sha.decode())
@@ -252,14 +249,14 @@ def test_rebase_abort_after_conflict(temp_repo: Repo, tmp_path: Path) -> None:
 
     readme = tmp_path / "README.md"
     readme.write_text("# Feature Version")
-    porcelain.add(temp_repo, paths=[str(readme)])
-    porcelain.commit(temp_repo, message=b"feat: modify readme")
+    add_paths(temp_repo, readme)
+    commit(temp_repo, b"feat: modify readme")
     feature_sha = temp_repo.refs[b"refs/heads/feature"]
 
     switch_branch(temp_repo, "main")
     readme.write_text("# Main Version")
-    porcelain.add(temp_repo, paths=[str(readme)])
-    porcelain.commit(temp_repo, message=b"chore: update readme")
+    add_paths(temp_repo, readme)
+    commit(temp_repo, b"chore: update readme")
 
     # Start rebase - will conflict
     result = rebase_branch(temp_repo, "feature", "main", main_sha.decode())
@@ -285,16 +282,16 @@ def test_restack_with_empty_commits(temp_repo: Repo, tmp_path: Path) -> None:
     # Add a change on feature with trailer
     readme = tmp_path / "README.md"
     readme.write_text("# Test\nmodified")
-    porcelain.add(temp_repo, paths=[str(readme)])
+    add_paths(temp_repo, readme)
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: modify readme")
-    porcelain.commit(temp_repo, message=message.encode())
+    commit(temp_repo, message)
 
     # Add same change to main (simulating squash merge)
     switch_branch(temp_repo, "main")
     readme.write_text("# Test\nmodified")
-    porcelain.add(temp_repo, paths=[str(readme)])
-    porcelain.commit(temp_repo, message=b"squash: same change")
+    add_paths(temp_repo, readme)
+    commit(temp_repo, b"squash: same change")
 
     # Switch back to feature and restack
     switch_branch(temp_repo, "feature")

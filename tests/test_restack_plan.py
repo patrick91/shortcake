@@ -2,7 +2,6 @@
 
 import re
 
-from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake.commands.restack import (
@@ -10,6 +9,7 @@ from shortcake.commands.restack import (
     _needs_restack,
     _plan_restack,
 )
+from tests._git_helpers import Repo
 
 runner = CliRunner()
 

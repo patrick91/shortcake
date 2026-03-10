@@ -1,7 +1,8 @@
 import pytest
-from dulwich.repo import Repo
 
 from shortcake import _git as git
+from shortcake._git._core import ConflictedIndexEntry
+from tests._git_helpers import Repo
 
 
 def test_get_conflict_files_no_conflicts(temp_repo: Repo) -> None:
@@ -28,12 +29,11 @@ def test_get_conflict_files_with_conflicts(
     temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Test get_conflict_files returns conflicted files."""
-    from dulwich.index import ConflictedIndexEntry, IndexEntry
 
     class MockIndex:
         def items(self):
             return [
-                (b"normal.txt", IndexEntry(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, b"")),
+                (b"normal.txt", object()),
                 (b"conflict1.txt", ConflictedIndexEntry()),
                 (b"conflict2.txt", ConflictedIndexEntry()),
             ]

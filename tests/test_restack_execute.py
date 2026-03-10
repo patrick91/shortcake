@@ -4,8 +4,6 @@ import re
 from pathlib import Path
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 from typer.testing import CliRunner
 
 from shortcake import _git as git
@@ -15,6 +13,7 @@ from shortcake.commands.restack import (
     _needs_restack,
     _restack,
 )
+from tests._git_helpers import Repo, add_paths
 
 runner = CliRunner()
 
@@ -90,7 +89,7 @@ def test_restack_uncommitted_changes(
     # Create uncommitted change
     test_file = tmp_path / "uncommitted.txt"
     test_file.write_text("uncommitted")
-    porcelain.add(repo_with_stack_behind, paths=[str(test_file)])
+    add_paths(repo_with_stack_behind, test_file)
 
     with pytest.raises(RestackError, match="uncommitted changes"):
         _restack(repo_with_stack_behind)
@@ -147,7 +146,7 @@ def test_restack_after_parent_amend_preserves_content(
     git.switch_branch(repo_with_stack, "branch_a")
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content\nmodified content")
-    porcelain.add(repo_with_stack, paths=[str(file_a)])
+    add_paths(repo_with_stack, file_a)
     git.amend_commit(repo_with_stack, "feat: branch a (amended)")
 
     # Verify branch_a was actually modified

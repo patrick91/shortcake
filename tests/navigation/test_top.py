@@ -3,8 +3,6 @@
 from pathlib import Path
 
 import pytest
-from dulwich import porcelain
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake.commands.top import (
@@ -13,11 +11,12 @@ from shortcake.commands.top import (
     TopResult,
     _top,
 )
+from tests._git_helpers import Repo, switch_branch
 
 
 def test_top_jumps_to_leaf(repo_with_stack: Repo) -> None:
     """Test jumping from branch_a to branch_c (top of stack)."""
-    porcelain.switch(repo_with_stack, "branch_a")
+    switch_branch(repo_with_stack, "branch_a")
 
     result = _top(repo_with_stack)
 
@@ -41,7 +40,7 @@ def test_top_already_at_top(repo_with_stack: Repo) -> None:
 
 def test_top_from_main(repo_with_stack: Repo) -> None:
     """Test jumping from main to top of stack."""
-    porcelain.switch(repo_with_stack, "main")
+    switch_branch(repo_with_stack, "main")
 
     result = _top(repo_with_stack)
 
@@ -51,7 +50,7 @@ def test_top_from_main(repo_with_stack: Repo) -> None:
 
 def test_top_multiple_children(repo_with_fork: Repo) -> None:
     """Test error when multiple children at some level."""
-    porcelain.switch(repo_with_fork, "main")
+    switch_branch(repo_with_fork, "main")
 
     # Walking up from main will hit branch_a which has two children
     with pytest.raises(MultipleChildrenError) as exc_info:
@@ -78,7 +77,7 @@ def test_top_updates_working_directory(repo_with_stack: Repo) -> None:
     tmp_path = Path(repo_with_stack.path)
 
     # Switch to main (only has README.md, no a.txt/b.txt/c.txt)
-    porcelain.switch(repo_with_stack, "main")
+    switch_branch(repo_with_stack, "main")
     assert not (tmp_path / "c.txt").exists()
 
     # Navigate to top (branch_c)
