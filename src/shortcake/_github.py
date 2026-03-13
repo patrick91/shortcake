@@ -12,6 +12,8 @@ import yaml
 from dulwich import porcelain
 from dulwich.repo import Repo
 
+from shortcake._git._pygit2 import get_remote_url
+
 
 @dataclass
 class PRInfo:
@@ -93,10 +95,8 @@ def get_repo_info(repo: Repo) -> tuple[str, str] | None:
     - https://github.com/owner/repo.git
     - https://github.com/owner/repo
     """
-    config = repo.get_config()
-    try:
-        url = config.get((b"remote", b"origin"), b"url").decode()
-    except KeyError:
+    url = get_remote_url(repo, "origin")
+    if url is None:
         return None
 
     # SSH format: git@github.com:owner/repo.git

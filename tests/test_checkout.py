@@ -268,20 +268,19 @@ def test_checkout_by_pr_number_api_error(
 
 def test_fetch_branch_success(temp_repo: Repo) -> None:
     """Test _fetch_branch returns True on success."""
-    # Mock at the transport level to let fetch() run but not actually connect
-    with patch("shortcake.commands.checkout.porcelain.fetch") as mock_fetch:
-        mock_fetch.return_value = {}
+    with patch("shortcake.commands.checkout.fetch_remote") as mock_fetch:
+        mock_fetch.return_value = True
         result = _fetch_branch(temp_repo, "feature")
 
     assert result is True
-    mock_fetch.assert_called_once()
+    mock_fetch.assert_called_once_with(temp_repo, "origin")
 
 
 def test_fetch_branch_failure(temp_repo: Repo) -> None:
     """Test _fetch_branch returns False on failure."""
     with patch(
-        "shortcake.commands.checkout.porcelain.fetch",
-        side_effect=Exception("fetch failed"),
+        "shortcake.commands.checkout.fetch_remote",
+        return_value=False,
     ):
         result = _fetch_branch(temp_repo, "feature")
 
