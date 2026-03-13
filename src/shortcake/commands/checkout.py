@@ -5,11 +5,11 @@ from typing import Annotated
 
 import httpx
 import typer
-from dulwich import porcelain
 from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
+from shortcake._git._pygit2 import fetch_remote
 from shortcake._github import GitHubClient, get_github_token, get_repo_info
 
 
@@ -32,18 +32,9 @@ def _fetch_branch(repo: Repo, branch: str) -> bool:
     """Fetch from origin to get updates for the branch.
 
     Returns True if fetch succeeded, False otherwise.
-    Note: dulwich's porcelain.fetch fetches all refs, which is fine.
     The branch parameter is reserved for future selective fetch.
     """
-    try:
-        porcelain.fetch(
-            repo,
-            "origin",
-            quiet=True,
-        )
-        return True
-    except Exception:  # pragma: no cover
-        return False
+    return fetch_remote(repo, "origin")
 
 
 def _create_branch_from_remote(repo: Repo, branch: str) -> bool:
