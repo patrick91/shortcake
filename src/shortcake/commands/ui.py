@@ -291,14 +291,17 @@ def _write_json(
     status: int,
     payload: dict[str, Any],
 ) -> None:
-    body = json.dumps(payload).encode()
-    handler.send_response(status)
-    handler.send_header("Content-Type", "application/json")
-    handler.send_header("Cache-Control", "no-store")
-    handler.send_header("Access-Control-Allow-Origin", "*")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.end_headers()
-    handler.wfile.write(body)
+    try:
+        body = json.dumps(payload).encode()
+        handler.send_response(status)
+        handler.send_header("Content-Type", "application/json")
+        handler.send_header("Cache-Control", "no-store")
+        handler.send_header("Access-Control-Allow-Origin", "*")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        handler.wfile.write(body)
+    except (BrokenPipeError, ConnectionError):
+        pass
 
 
 def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
