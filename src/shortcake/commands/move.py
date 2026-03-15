@@ -4,10 +4,10 @@ from dataclasses import dataclass, field
 from typing import Annotated
 
 import typer
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
+from shortcake._git._core import Repo
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 from shortcake.commands.reorder import _update_branch_trailer
 from shortcake.commands.restack import (

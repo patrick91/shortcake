@@ -1,18 +1,18 @@
 """Remote operations."""
 
-from dulwich.repo import Repo
+import pygit2
 
+from shortcake._git._core import Repo, _oid
 from shortcake._git._pygit2 import fetch_remote, get_remote_url
 from shortcake._git._rebase import is_ancestor
 
 
 def get_remote_ref(repo: Repo, remote_branch: str) -> bytes | None:
     """Get SHA of remote ref like origin/branch_a."""
-    full_ref = f"refs/remotes/{remote_branch}".encode()
-    try:
-        return repo.refs[full_ref]
-    except KeyError:
+    ref = repo.references.get(f"refs/remotes/{remote_branch}")
+    if ref is None:
         return None
+    return str(ref.target).encode()
 
 
 def has_remote(repo: Repo, remote_name: str = "origin") -> bool:
@@ -33,21 +33,31 @@ def fetch_and_fast_forward_trunk(repo: Repo, trunk: str) -> tuple[bool, str | No
     if not fetch_remote(repo, "origin"):  # pragma: no cover
         return False, None
 
-    remote_ref = f"refs/remotes/origin/{trunk}".encode()  # pragma: no cover
-    local_ref = f"refs/heads/{trunk}".encode()  # pragma: no cover
+    remote_ref_name = f"refs/remotes/origin/{trunk}"  # pragma: no cover
+    local_ref_name = f"refs/heads/{trunk}"  # pragma: no cover
 
-    if remote_ref not in repo.refs:  # pragma: no cover
+    remote_ref = repo.references.get(remote_ref_name)  # pragma: no cover
+    if remote_ref is None:  # pragma: no cover
         return True, None  # No remote ref, nothing to do
 
-    remote_sha = repo.refs[remote_ref]  # pragma: no cover
-    local_sha = repo.refs[local_ref]  # pragma: no cover
+    remote_sha = str(remote_ref.target).encode()  # pragma: no cover
+    local_ref = repo.references.get(local_ref_name)  # pragma: no cover
+    local_sha = (
+        str(local_ref.target).encode() if local_ref else None
+    )  # pragma: no cover
 
     if local_sha == remote_sha:  # pragma: no cover
         return True, None  # Already up to date
 
     # Check if we can fast-forward (local is ancestor of remote)
-    if not is_ancestor(repo, local_sha, remote_sha):  # pragma: no cover
+    if local_sha and not is_ancestor(repo, local_sha, remote_sha):  # pragma: no cover
         return False, None  # Diverged, can't fast-forward
 
-    repo.refs[local_ref] = remote_sha  # pragma: no cover
-    return True, remote_sha[:7].decode()  # pragma: no cover
+    # Fast-forward: update local ref
+    remote_oid = pygit2.Oid(hex=_oid(remote_sha))  # pragma: no cover
+    if local_ref:  # pragma: no cover
+        local_ref.set_target(remote_oid)
+    else:  # pragma: no cover
+        repo.references.create(local_ref_name, remote_oid)
+
+    return True, _oid(remote_sha)[:7]  # pragma: no cover

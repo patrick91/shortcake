@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 from shortcake import _git as git
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 from shortcake.cli import app
-from tests._git_helpers import Repo
+from tests._git_helpers import Repo, get_ref, set_ref
 
 runner = CliRunner()
 
@@ -62,9 +62,8 @@ def test_cli_restack_detached_head(
     """Test CLI restack in detached HEAD state."""
     monkeypatch.chdir(tmp_path)
     # Detach HEAD
-    head_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs.remove_if_equals(b"HEAD", temp_repo.refs.read_ref(b"HEAD"))
-    temp_repo.refs.add_if_new(b"HEAD", head_sha)
+    head_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", head_sha)
 
     result = runner.invoke(app, ["restack"])
 

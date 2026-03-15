@@ -1,13 +1,21 @@
+from pathlib import Path
+
 import pytest
 
 from shortcake import _git as git
-from shortcake._git._core import Commit
-from tests._git_helpers import Repo
+from tests._git_helpers import (
+    Repo,
+    commit_files,
+    create_branch,
+    get_ref,
+    run_git,
+    switch_branch,
+)
 
 
 def test_get_rebase_commits_same_commit(temp_repo: Repo) -> None:
     """Test get_rebase_commits returns empty when head equals merge_base."""
-    head_sha = temp_repo.refs[b"refs/heads/main"]
+    head_sha = get_ref(temp_repo, "refs/heads/main")
     commits = git.get_rebase_commits(temp_repo, head_sha, head_sha)
     assert commits == []
 
@@ -15,7 +23,7 @@ def test_get_rebase_commits_same_commit(temp_repo: Repo) -> None:
 def test_get_rebase_commits_no_parents(temp_repo: Repo) -> None:
     """Test get_rebase_commits handles root commit (no parents)."""
     # The initial commit has no parents - walk should stop there
-    head_sha = temp_repo.refs[b"refs/heads/main"]
+    head_sha = get_ref(temp_repo, "refs/heads/main")
     # Use a non-existent merge_base that won't be found
     # The function should stop when it runs out of parents
     fake_base = b"0" * 40
@@ -23,62 +31,46 @@ def test_get_rebase_commits_no_parents(temp_repo: Repo) -> None:
         git.get_rebase_commits(temp_repo, head_sha, fake_base)
 
 
-def test_get_rebase_commits_rejects_merge_commit(temp_repo: Repo) -> None:
+def test_get_rebase_commits_rejects_merge_commit(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
     """Test get_rebase_commits rejects non-linear history with merge commits."""
-    head_sha = temp_repo.refs[b"refs/heads/main"]
-    head_commit = temp_repo[head_sha]
+    head_sha = get_ref(temp_repo, "refs/heads/main")
 
-    # Create two commits off main
-    c1 = Commit()
-    c1.tree = head_commit.tree
-    c1.parents = [head_sha]
-    c1.author = head_commit.author
-    c1.committer = head_commit.committer
-    c1.author_time = head_commit.author_time
-    c1.author_timezone = head_commit.author_timezone
-    c1.commit_time = head_commit.commit_time + 1
-    c1.commit_timezone = head_commit.commit_timezone
-    c1.message = b"C1"
-    c1.encoding = head_commit.encoding
-    temp_repo.object_store.add_object(c1)
+    # Create two branches from main
+    create_branch(temp_repo, "branch1", head_sha)
+    create_branch(temp_repo, "branch2", head_sha)
 
-    c2 = Commit()
-    c2.tree = head_commit.tree
-    c2.parents = [head_sha]
-    c2.author = head_commit.author
-    c2.committer = head_commit.committer
-    c2.author_time = head_commit.author_time
-    c2.author_timezone = head_commit.author_timezone
-    c2.commit_time = head_commit.commit_time + 2
-    c2.commit_timezone = head_commit.commit_timezone
-    c2.message = b"C2"
-    c2.encoding = head_commit.encoding
-    temp_repo.object_store.add_object(c2)
+    # Add commit on branch1
+    switch_branch(temp_repo, "branch1")
+    commit_files(
+        temp_repo,
+        {tmp_path / "file1.txt": "content1"},
+        "C1",
+    )
 
-    # Merge commit with two parents
-    merge = Commit()
-    merge.tree = head_commit.tree
-    merge.parents = [c1.id, c2.id]
-    merge.author = head_commit.author
-    merge.committer = head_commit.committer
-    merge.author_time = head_commit.author_time
-    merge.author_timezone = head_commit.author_timezone
-    merge.commit_time = head_commit.commit_time + 3
-    merge.commit_timezone = head_commit.commit_timezone
-    merge.message = b"Merge C1 and C2"
-    merge.encoding = head_commit.encoding
-    temp_repo.object_store.add_object(merge)
+    # Add commit on branch2
+    switch_branch(temp_repo, "branch2")
+    commit_files(
+        temp_repo,
+        {tmp_path / "file2.txt": "content2"},
+        "C2",
+    )
 
-    temp_repo.refs[b"refs/heads/main"] = merge.id
+    # Merge branch2 into branch1 (creates merge commit)
+    switch_branch(temp_repo, "branch1")
+    run_git(temp_repo, "merge", "--no-ff", "--no-edit", "branch2")
+
+    merge_sha = get_ref(temp_repo, "refs/heads/branch1")
 
     with pytest.raises(ValueError, match="Non-linear history"):
-        git.get_rebase_commits(temp_repo, merge.id, head_sha)
+        git.get_rebase_commits(temp_repo, merge_sha, head_sha)
 
 
 def test_get_rebase_commits_linear_chain(repo_with_feature: Repo) -> None:
     """Test get_rebase_commits returns commits walking the parent chain."""
-    head_sha = repo_with_feature.refs[b"refs/heads/feature"]
-    merge_base = repo_with_feature.refs[b"refs/heads/main"]
+    head_sha = get_ref(repo_with_feature, "refs/heads/feature")
+    merge_base = get_ref(repo_with_feature, "refs/heads/main")
     commits = git.get_rebase_commits(repo_with_feature, head_sha, merge_base)
     assert len(commits) == 1
     assert commits[0] == head_sha

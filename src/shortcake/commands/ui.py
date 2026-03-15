@@ -19,7 +19,7 @@ import typer
 from shortcake import _git as git
 
 if TYPE_CHECKING:
-    from dulwich.repo import Repo
+    from shortcake._git._core import Repo
 from shortcake._github import (
     BranchGitHubInfo,
     GitHubClient,
@@ -164,7 +164,7 @@ def _build_diff_payload(repo: Repo, branch: str) -> dict[str, Any]:
     if parent not in all_branches:
         raise ValueError(f"Parent branch '{parent}' does not exist locally")
 
-    patch = _git_diff_patch(Path(repo.path), parent, branch)
+    patch = _git_diff_patch(Path(repo.workdir), parent, branch)
     return {
         "branch": branch,
         "parent": parent,
@@ -189,7 +189,7 @@ def _git_working_diff(repo_path: Path) -> str:
 
 def _build_working_diff_payload(repo: Repo) -> dict[str, Any]:
     """Build payload for working tree diff endpoint."""
-    patch = _git_working_diff(Path(repo.path))
+    patch = _git_working_diff(Path(repo.workdir))
     return {"patch": patch}
 
 
@@ -198,7 +198,7 @@ def _build_suggestions_payload(
 ) -> dict[str, Any]:
     """Build payload for branch suggestion endpoint."""
     tracked = _tracked_branch_parents(repo)
-    repo_path = Path(repo.path)
+    repo_path = Path(repo.workdir)
 
     # Get source patch
     if mode == "working":
@@ -318,20 +318,20 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
 
             if parsed.path == "/api/stack":
                 try:
-                    with _open_repo() as repo:
-                        _write_json(self, 200, _build_stack_payload(repo))
+                    repo = _open_repo()
+                    _write_json(self, 200, _build_stack_payload(repo))
                 except Exception as exc:
                     _write_json(self, 500, {"error": str(exc)})
                 return
 
             if parsed.path == "/api/github-info":
                 try:
-                    with _open_repo() as repo:
-                        tracked = _tracked_branch_parents(repo)
-                        branch_names = list(tracked.keys())
-                        _write_json(
-                            self, 200, _build_github_info_payload(repo, branch_names)
-                        )
+                    repo = _open_repo()
+                    tracked = _tracked_branch_parents(repo)
+                    branch_names = list(tracked.keys())
+                    _write_json(
+                        self, 200, _build_github_info_payload(repo, branch_names)
+                    )
                 except Exception as exc:
                     _write_json(self, 500, {"error": str(exc)})
                 return
@@ -347,8 +347,8 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
                     return
 
                 try:
-                    with _open_repo() as repo:
-                        _write_json(self, 200, _build_diff_payload(repo, branch))
+                    repo = _open_repo()
+                    _write_json(self, 200, _build_diff_payload(repo, branch))
                 except ValueError as exc:
                     _write_json(self, 400, {"error": str(exc)})
                 except Exception as exc:
@@ -357,8 +357,8 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
 
             if parsed.path == "/api/diff/working":
                 try:
-                    with _open_repo() as repo:
-                        _write_json(self, 200, _build_working_diff_payload(repo))
+                    repo = _open_repo()
+                    _write_json(self, 200, _build_working_diff_payload(repo))
                 except Exception as exc:
                     _write_json(self, 500, {"error": str(exc)})
                 return
@@ -375,12 +375,12 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
                     return
                 source = qs.get("source", [None])[0]
                 try:
-                    with _open_repo() as repo:
-                        _write_json(
-                            self,
-                            200,
-                            _build_suggestions_payload(repo, mode, source),
-                        )
+                    repo = _open_repo()
+                    _write_json(
+                        self,
+                        200,
+                        _build_suggestions_payload(repo, mode, source),
+                    )
                 except ValueError as exc:
                     _write_json(self, 400, {"error": str(exc)})
                 except Exception as exc:
@@ -437,24 +437,24 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
 
                 with _move_lock:
                     try:
-                        with _open_repo() as repo:
-                            result = _move_hunks(
-                                repo,
-                                source_branch=body["sourceBranch"],
-                                target_branch=body["targetBranch"],
-                                hunks=hunk_selections,
-                                no_verify=True,
-                            )
-                            _write_json(
-                                self,
-                                200,
-                                {
-                                    "sourceBranch": result.source_branch,
-                                    "targetBranch": result.target_branch,
-                                    "filePaths": result.file_paths,
-                                    "restackedBranches": result.restacked_branches,
-                                },
-                            )
+                        repo = _open_repo()
+                        result = _move_hunks(
+                            repo,
+                            source_branch=body["sourceBranch"],
+                            target_branch=body["targetBranch"],
+                            hunks=hunk_selections,
+                            no_verify=True,
+                        )
+                        _write_json(
+                            self,
+                            200,
+                            {
+                                "sourceBranch": result.source_branch,
+                                "targetBranch": result.target_branch,
+                                "filePaths": result.file_paths,
+                                "restackedBranches": result.restacked_branches,
+                            },
+                        )
                     except MoveError as exc:
                         _write_json(self, 400, {"error": str(exc)})
                     except Exception as exc:
@@ -506,21 +506,21 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
 
                 with _move_lock:
                     try:
-                        with _open_repo() as repo:
-                            result = _accept_working_hunks(
-                                repo,
-                                target_branch=body["targetBranch"],
-                                hunks=hunk_selections,
-                            )
-                            _write_json(
-                                self,
-                                200,
-                                {
-                                    "targetBranch": result.target_branch,
-                                    "filePaths": result.file_paths,
-                                    "restackedBranches": result.restacked_branches,
-                                },
-                            )
+                        repo = _open_repo()
+                        result = _accept_working_hunks(
+                            repo,
+                            target_branch=body["targetBranch"],
+                            hunks=hunk_selections,
+                        )
+                        _write_json(
+                            self,
+                            200,
+                            {
+                                "targetBranch": result.target_branch,
+                                "filePaths": result.file_paths,
+                                "restackedBranches": result.restacked_branches,
+                            },
+                        )
                     except MoveError as exc:
                         _write_json(self, 400, {"error": str(exc)})
                     except Exception as exc:
@@ -581,26 +581,26 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
 
                 with _move_lock:
                     try:
-                        with _open_repo() as repo:
-                            result = _split_hunks(
-                                repo,
-                                source_branch=body["sourceBranch"],
-                                commit_message=body["commitMessage"],
-                                placement=placement,
-                                hunks=hunk_selections,
-                                no_verify=True,
-                            )
-                            _write_json(
-                                self,
-                                200,
-                                {
-                                    "sourceBranch": result.source_branch,
-                                    "newBranch": result.new_branch,
-                                    "placement": result.placement,
-                                    "filePaths": result.file_paths,
-                                    "restackedBranches": result.restacked_branches,
-                                },
-                            )
+                        repo = _open_repo()
+                        result = _split_hunks(
+                            repo,
+                            source_branch=body["sourceBranch"],
+                            commit_message=body["commitMessage"],
+                            placement=placement,
+                            hunks=hunk_selections,
+                            no_verify=True,
+                        )
+                        _write_json(
+                            self,
+                            200,
+                            {
+                                "sourceBranch": result.source_branch,
+                                "newBranch": result.new_branch,
+                                "placement": result.placement,
+                                "filePaths": result.file_paths,
+                                "restackedBranches": result.restacked_branches,
+                            },
+                        )
                     except MoveError as exc:
                         _write_json(self, 400, {"error": str(exc)})
                     except Exception as exc:
@@ -691,22 +691,22 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
 
                 with _move_lock:
                     try:
-                        with _open_repo() as repo:
-                            result = _split_lines_batch(
-                                repo,
-                                source_branch=body["sourceBranch"],
-                                chunks=split_chunks,
-                                no_verify=True,
-                            )
-                            _write_json(
-                                self,
-                                200,
-                                {
-                                    "sourceBranch": result.source_branch,
-                                    "newBranches": result.new_branches,
-                                    "restackedBranches": result.restacked_branches,
-                                },
-                            )
+                        repo = _open_repo()
+                        result = _split_lines_batch(
+                            repo,
+                            source_branch=body["sourceBranch"],
+                            chunks=split_chunks,
+                            no_verify=True,
+                        )
+                        _write_json(
+                            self,
+                            200,
+                            {
+                                "sourceBranch": result.source_branch,
+                                "newBranches": result.new_branches,
+                                "restackedBranches": result.restacked_branches,
+                            },
+                        )
                     except MoveError as exc:
                         _write_json(self, 400, {"error": str(exc)})
                     except Exception as exc:
@@ -897,8 +897,7 @@ def ui(
 ) -> None:
     """Launch stack diff UI (React + Vite) with a local API server."""
     repo = git.open_repo()
-    repo_path = Path(repo.path)
-    repo.close()
+    repo_path = Path(repo.workdir)
     frontend_dir = _resolve_frontend_dir(repo_path)
 
     if frontend_dir is None:

@@ -4,7 +4,7 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from dulwich.repo import Repo
+from shortcake._git._core import Repo
 
 
 @dataclass
@@ -20,7 +20,7 @@ class CachedPRInfo:
 
 def _get_cache_path(repo: Repo) -> Path:
     """Get path to PR cache file."""
-    git_dir = Path(repo.controldir())
+    git_dir = Path(repo.path)
     cache_dir = git_dir / "shortcake"
     cache_dir.mkdir(exist_ok=True)
     return cache_dir / "pr-cache.json"

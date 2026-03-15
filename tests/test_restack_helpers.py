@@ -20,7 +20,15 @@ from shortcake.commands.restack import (
     _restack,
     _show_conflict_message,
 )
-from tests._git_helpers import Repo, add_paths, commit, run_git, switch_branch
+from tests._git_helpers import (
+    Repo,
+    add_paths,
+    commit,
+    get_ref,
+    run_git,
+    set_ref,
+    switch_branch,
+)
 
 runner = CliRunner()
 
@@ -61,7 +69,7 @@ def test_show_conflict_message_no_files(capsys: pytest.CaptureFixture[str]) -> N
 def test_restack_git_rebase_in_progress(repo_with_stack: Repo, tmp_path: Path) -> None:
     """Test error when git rebase is in progress."""
     # Create fake rebase-merge directory
-    rebase_dir = Path(repo_with_stack.controldir()) / "rebase-merge"
+    rebase_dir = Path(repo_with_stack.path.rstrip("/")) / "rebase-merge"
     rebase_dir.mkdir()
 
     with pytest.raises(RestackError, match="Git rebase in progress"):
@@ -76,9 +84,9 @@ def test_get_stack_in_order_with_nonlocal_parent(
 ) -> None:
     """Test stack order when parent exists but not as local branch."""
     # Create branch_a with trailer pointing to non-existent local branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
+    temp_repo.set_head("refs/heads/branch_a")
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("content")
@@ -235,7 +243,7 @@ def test_abort_with_rebase_in_progress(
     original_a = git.get_branch_head(repo_with_stack_behind, "branch_a")
 
     # Create rebase-merge directory to simulate in-progress rebase
-    rebase_dir = Path(repo_with_stack_behind.controldir()) / "rebase-merge"
+    rebase_dir = Path(repo_with_stack_behind.path.rstrip("/")) / "rebase-merge"
     rebase_dir.mkdir()
 
     # Create state
@@ -263,8 +271,8 @@ def test_abort_with_rebase_in_progress(
 def test_plan_restack_with_untracked_branch(temp_repo: Repo, tmp_path: Path) -> None:
     """Test plan when branch has no parent trailer."""
     # Create branch without trailer
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/untracked"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/untracked", main_sha)
 
     plan = _plan_restack(temp_repo, ["untracked"])
     assert plan == []
@@ -273,9 +281,9 @@ def test_plan_restack_with_untracked_branch(temp_repo: Repo, tmp_path: Path) -> 
 def test_plan_restack_parent_not_exists(temp_repo: Repo, tmp_path: Path) -> None:
     """Test plan when parent branch doesn't exist."""
     # Create branch with trailer pointing to non-existent branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/orphan"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/orphan")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/orphan", main_sha)
+    temp_repo.set_head("refs/heads/orphan")
 
     file_o = tmp_path / "orphan.txt"
     file_o.write_text("content")
@@ -392,7 +400,7 @@ def test_continue_rebase_in_progress(
     branch_a_sha = git.get_branch_head(repo_with_stack, "branch_a")
 
     # Create rebase-merge directory to simulate in-progress rebase
-    rebase_dir = Path(repo_with_stack.controldir()) / "rebase-merge"
+    rebase_dir = Path(repo_with_stack.path.rstrip("/")) / "rebase-merge"
     rebase_dir.mkdir()
 
     # Create state
@@ -466,9 +474,9 @@ def test_restack_conflict_returns_conflict_branch(
 
     # Create a scenario that will cause a rebase conflict
     # Create branch_a from main with a file
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
+    temp_repo.set_head("refs/heads/branch_a")
 
     conflict_file = tmp_path / "conflict.txt"
     conflict_file.write_text("branch_a content")
@@ -501,26 +509,26 @@ def test_continue_conflict_in_remaining_branch(
     monkeypatch.chdir(tmp_path)
 
     # Create branch_a and branch_b with conflicting content
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # Branch A
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
+    temp_repo.set_head("refs/heads/branch_a")
     file_a = tmp_path / "file.txt"
     file_a.write_text("branch_a content")
     add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     commit(temp_repo, trailers_a.apply_to("feat: a"))
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # Branch B with conflicting content
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
+    temp_repo.set_head("refs/heads/branch_b")
     file_a.write_text("branch_b different content")
     add_paths(temp_repo, file_a)
     trailers_b = Trailers(parent_branch="branch_a")
     commit(temp_repo, trailers_b.apply_to("feat: b"))
-    branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
+    branch_b_sha = get_ref(temp_repo, "refs/heads/branch_b")
 
     # Modify branch_a to create conflict with branch_b
     switch_branch(temp_repo, "branch_a")
@@ -567,15 +575,14 @@ def test_integration_restack_continue_with_real_conflict(
     monkeypatch.chdir(tmp_path)
 
     # Ensure user identity is set
-    config = temp_repo.get_config()
-    config.set((b"user",), b"email", b"test@example.com")
-    config.set((b"user",), b"name", b"Test User")
-    config.write_to_path()
+    temp_repo.config["user.email"] = "test@example.com"
+
+    temp_repo.config["user.name"] = "Test User"
 
     # Create branch_a from main with a file
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
+    temp_repo.set_head("refs/heads/branch_a")
 
     conflict_file = tmp_path / "conflict.txt"
     conflict_file.write_text("branch_a content")
@@ -619,15 +626,14 @@ def test_integration_restack_abort_with_real_conflict(
     monkeypatch.chdir(tmp_path)
 
     # Ensure user identity is set
-    config = temp_repo.get_config()
-    config.set((b"user",), b"email", b"test@example.com")
-    config.set((b"user",), b"name", b"Test User")
-    config.write_to_path()
+    temp_repo.config["user.email"] = "test@example.com"
+
+    temp_repo.config["user.name"] = "Test User"
 
     # Create branch_a from main with a file
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
+    temp_repo.set_head("refs/heads/branch_a")
 
     conflict_file = tmp_path / "conflict.txt"
     conflict_file.write_text("branch_a content")
@@ -635,7 +641,7 @@ def test_integration_restack_abort_with_real_conflict(
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: branch a")
     commit(temp_repo, message)
-    original_branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    original_branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # Add conflicting commit to main
     switch_branch(temp_repo, "main")
@@ -661,4 +667,4 @@ def test_integration_restack_abort_with_real_conflict(
     assert not git.is_rebase_in_progress(temp_repo)
 
     # Verify branch_a was restored to original SHA
-    assert temp_repo.refs[b"refs/heads/branch_a"] == original_branch_a_sha
+    assert get_ref(temp_repo, "refs/heads/branch_a") == original_branch_a_sha

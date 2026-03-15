@@ -12,8 +12,11 @@ from tests._git_helpers import (
     Repo,
     add_paths,
     commit,
+    get_ref,
     reset_hard,
     run_git,
+    set_ref,
+    set_remote,
     switch_branch,
 )
 
@@ -48,7 +51,7 @@ def test_ls_current_highlighted(repo_with_feature: Repo) -> None:
 ◯ main""")
 
     # Switch to main and check
-    repo_with_feature.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    repo_with_feature.set_head("refs/heads/main")
     result = _ls(repo_with_feature)
     assert result == snapshot("""\
 ◯ feature
@@ -59,9 +62,9 @@ def test_ls_current_highlighted(repo_with_feature: Repo) -> None:
 def test_ls_multi_commit_branch(temp_repo: Repo, tmp_path: Path) -> None:
     """Test ls finds trailer in first commit of multi-commit branch."""
     # Create feature branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     # Add first commit
     file1 = tmp_path / "file1.txt"
@@ -88,9 +91,9 @@ def test_ls_multi_commit_branch(temp_repo: Repo, tmp_path: Path) -> None:
 def test_ls_chain_of_branches(temp_repo: Repo, tmp_path: Path) -> None:
     """Test ls with A → B → C chain."""
     # Create feature-a off main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature-a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature-a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature-a", main_sha)
+    temp_repo.set_head("refs/heads/feature-a")
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
@@ -100,9 +103,9 @@ def test_ls_chain_of_branches(temp_repo: Repo, tmp_path: Path) -> None:
     _adopt(temp_repo, branch="feature-a", parent="main")
 
     # Create feature-b off feature-a
-    feature_a_sha = temp_repo.refs[b"refs/heads/feature-a"]
-    temp_repo.refs[b"refs/heads/feature-b"] = feature_a_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature-b")
+    feature_a_sha = get_ref(temp_repo, "refs/heads/feature-a")
+    set_ref(temp_repo, "refs/heads/feature-b", feature_a_sha)
+    temp_repo.set_head("refs/heads/feature-b")
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
@@ -123,11 +126,11 @@ def test_ls_chain_of_branches(temp_repo: Repo, tmp_path: Path) -> None:
 
 def test_ls_parallel_stacks(temp_repo: Repo, tmp_path: Path) -> None:
     """Test ls with parallel stacks off main."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # Create stack-1-a off main
-    temp_repo.refs[b"refs/heads/stack-1-a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/stack-1-a")
+    set_ref(temp_repo, "refs/heads/stack-1-a", main_sha)
+    temp_repo.set_head("refs/heads/stack-1-a")
 
     file_1a = tmp_path / "stack1a.txt"
     file_1a.write_text("stack1a")
@@ -137,9 +140,9 @@ def test_ls_parallel_stacks(temp_repo: Repo, tmp_path: Path) -> None:
     _adopt(temp_repo, branch="stack-1-a", parent="main")
 
     # Create stack-1-b off stack-1-a
-    stack_1a_sha = temp_repo.refs[b"refs/heads/stack-1-a"]
-    temp_repo.refs[b"refs/heads/stack-1-b"] = stack_1a_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/stack-1-b")
+    stack_1a_sha = get_ref(temp_repo, "refs/heads/stack-1-a")
+    set_ref(temp_repo, "refs/heads/stack-1-b", stack_1a_sha)
+    temp_repo.set_head("refs/heads/stack-1-b")
 
     file_1b = tmp_path / "stack1b.txt"
     file_1b.write_text("stack1b")
@@ -149,8 +152,8 @@ def test_ls_parallel_stacks(temp_repo: Repo, tmp_path: Path) -> None:
     _adopt(temp_repo, branch="stack-1-b", parent="stack-1-a")
 
     # Create stack-2-a off main (parallel stack)
-    temp_repo.refs[b"refs/heads/stack-2-a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/stack-2-a")
+    set_ref(temp_repo, "refs/heads/stack-2-a", main_sha)
+    temp_repo.set_head("refs/heads/stack-2-a")
 
     file_2a = tmp_path / "stack2a.txt"
     file_2a.write_text("stack2a")
@@ -160,9 +163,9 @@ def test_ls_parallel_stacks(temp_repo: Repo, tmp_path: Path) -> None:
     _adopt(temp_repo, branch="stack-2-a", parent="main")
 
     # Create stack-2-b off stack-2-a
-    stack_2a_sha = temp_repo.refs[b"refs/heads/stack-2-a"]
-    temp_repo.refs[b"refs/heads/stack-2-b"] = stack_2a_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/stack-2-b")
+    stack_2a_sha = get_ref(temp_repo, "refs/heads/stack-2-a")
+    set_ref(temp_repo, "refs/heads/stack-2-b", stack_2a_sha)
+    temp_repo.set_head("refs/heads/stack-2-b")
 
     file_2b = tmp_path / "stack2b.txt"
     file_2b.write_text("stack2b")
@@ -206,7 +209,7 @@ def test_ls_detached_head(repo_with_feature: Repo, tmp_path: Path) -> None:
     _adopt(repo_with_feature)
 
     # Detach HEAD by writing SHA directly to HEAD file
-    head_sha = repo_with_feature.refs[b"refs/heads/feature"]
+    head_sha = get_ref(repo_with_feature, "refs/heads/feature")
     head_file = tmp_path / ".git" / "HEAD"
     head_file.write_text(head_sha.decode() + "\n")
 
@@ -237,9 +240,9 @@ def test_get_branch_parent_stops_at_other_branch_head(
     commit(temp_repo, b"Second commit on main")
 
     # Create develop branch from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/develop"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/develop")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/develop", main_sha)
+    temp_repo.set_head("refs/heads/develop")
 
     # Add commit to develop (now develop is ahead of main)
     file2 = tmp_path / "file2.txt"
@@ -334,9 +337,9 @@ def test_build_tree_excludes_trunk_after_ff_merge(
     from shortcake._trailers import Trailers
 
     # Create a tracked feature branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     test_file = tmp_path / "feature.txt"
     test_file.write_text("feature content")
@@ -344,11 +347,11 @@ def test_build_tree_excludes_trunk_after_ff_merge(
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add feature")
     commit(temp_repo, message)
-    feature_sha = temp_repo.refs[b"refs/heads/feature"]
+    feature_sha = get_ref(temp_repo, "refs/heads/feature")
 
     # Fast-forward main to feature (simulates merge)
-    temp_repo.refs[b"refs/heads/main"] = feature_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    set_ref(temp_repo, "refs/heads/main", feature_sha)
+    temp_repo.set_head("refs/heads/main")
     reset_hard(temp_repo)
 
     # Add a post-merge commit on main
@@ -378,9 +381,9 @@ def test_untracked_branches_not_tracked_after_ff_merge(
     from shortcake._trailers import Trailers
 
     # Create a tracked feature branch with a trailer
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     feature_file = tmp_path / "feature.txt"
     feature_file.write_text("feature content")
@@ -388,11 +391,11 @@ def test_untracked_branches_not_tracked_after_ff_merge(
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add feature")
     commit(temp_repo, message)
-    feature_sha = temp_repo.refs[b"refs/heads/feature"]
+    feature_sha = get_ref(temp_repo, "refs/heads/feature")
 
     # Fast-forward main to feature (simulates merge)
-    temp_repo.refs[b"refs/heads/main"] = feature_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    set_ref(temp_repo, "refs/heads/main", feature_sha)
+    temp_repo.set_head("refs/heads/main")
     reset_hard(temp_repo)
 
     # Add a post-merge commit on main so main is ahead of feature
@@ -400,11 +403,11 @@ def test_untracked_branches_not_tracked_after_ff_merge(
     post.write_text("post merge")
     add_paths(temp_repo, post)
     commit(temp_repo, b"chore: post merge")
-    new_main_sha = temp_repo.refs[b"refs/heads/main"]
+    new_main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # Create an untracked branch (e.g. dependabot) forked from new main
-    temp_repo.refs[b"refs/heads/dependabot/foo"] = new_main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/dependabot/foo")
+    set_ref(temp_repo, "refs/heads/dependabot/foo", new_main_sha)
+    temp_repo.set_head("refs/heads/dependabot/foo")
 
     untracked_file = tmp_path / "untracked.txt"
     untracked_file.write_text("untracked content")
@@ -412,7 +415,7 @@ def test_untracked_branches_not_tracked_after_ff_merge(
     commit(temp_repo, b"chore: untracked change")
 
     # Now delete the merged feature branch (as sync would)
-    del temp_repo.refs[b"refs/heads/feature"]
+    temp_repo.references.delete("refs/heads/feature")
 
     _tree, tracked = _build_tree(temp_repo)
 
@@ -438,9 +441,9 @@ def test_collect_nodes_flat(repo_with_feature: Repo) -> None:
 def test_collect_nodes_nested(temp_repo: Repo, tmp_path: Path) -> None:
     """Test _collect_nodes with nested branches."""
     # Create feature-a off main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature-a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature-a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature-a", main_sha)
+    temp_repo.set_head("refs/heads/feature-a")
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
@@ -450,9 +453,9 @@ def test_collect_nodes_nested(temp_repo: Repo, tmp_path: Path) -> None:
     _adopt(temp_repo, branch="feature-a", parent="main")
 
     # Create feature-b off feature-a
-    feature_a_sha = temp_repo.refs[b"refs/heads/feature-a"]
-    temp_repo.refs[b"refs/heads/feature-b"] = feature_a_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature-b")
+    feature_a_sha = get_ref(temp_repo, "refs/heads/feature-a")
+    set_ref(temp_repo, "refs/heads/feature-b", feature_a_sha)
+    temp_repo.set_head("refs/heads/feature-b")
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
@@ -478,9 +481,7 @@ def test_ls_fetches_pr_info(repo_with_feature: Repo) -> None:
     _adopt(repo_with_feature)
 
     # Set up origin remote
-    config = repo_with_feature.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(repo_with_feature, "origin", "git@github.com:owner/repo.git")
 
     # Mock API for open PR
     respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
@@ -527,9 +528,7 @@ def test_ls_fetches_draft_pr_info(repo_with_feature: Repo) -> None:
     _adopt(repo_with_feature)
 
     # Set up origin remote
-    config = repo_with_feature.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(repo_with_feature, "origin", "git@github.com:owner/repo.git")
 
     # Mock API for draft PR
     respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
@@ -574,9 +573,7 @@ def test_ls_fetches_merged_pr_info(repo_with_feature: Repo) -> None:
     _adopt(repo_with_feature)
 
     # Set up origin remote
-    config = repo_with_feature.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(repo_with_feature, "origin", "git@github.com:owner/repo.git")
 
     # Mock API - no open PR
     open_prs_route = respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
@@ -625,9 +622,7 @@ def test_ls_no_pr_for_branch(repo_with_feature: Repo) -> None:
     _adopt(repo_with_feature)
 
     # Set up origin remote
-    config = repo_with_feature.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(repo_with_feature, "origin", "git@github.com:owner/repo.git")
 
     # Mock API - no PRs
     respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
@@ -838,9 +833,7 @@ def test_ls_cli_refresh_fetches_pr(
     monkeypatch.setenv("GH_TOKEN", "fake-token")
 
     # Set up remote
-    config = repo_with_feature.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(repo_with_feature, "origin", "git@github.com:owner/repo.git")
 
     # Mock API with full PR response
     respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
@@ -880,9 +873,7 @@ def test_fetch_pr_info_updates_cache(repo_with_feature: Repo, monkeypatch: Any) 
     monkeypatch.setenv("GH_TOKEN", "fake-token")
 
     # Set up remote
-    config = repo_with_feature.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(repo_with_feature, "origin", "git@github.com:owner/repo.git")
 
     # Mock API with full PR response
     respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
@@ -924,9 +915,7 @@ def test_fetch_pr_info_merged_pr(repo_with_feature: Repo, monkeypatch: Any) -> N
     monkeypatch.setenv("GH_TOKEN", "fake-token")
 
     # Set up remote
-    config = repo_with_feature.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(repo_with_feature, "origin", "git@github.com:owner/repo.git")
 
     # Mock API - returns no PRs on first call (open), merged PR on second call (closed)
     respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
@@ -965,9 +954,7 @@ def test_fetch_pr_info_api_error(repo_with_feature: Repo, monkeypatch: Any) -> N
     monkeypatch.setenv("GH_TOKEN", "fake-token")
 
     # Set up remote
-    config = repo_with_feature.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(repo_with_feature, "origin", "git@github.com:owner/repo.git")
 
     # Mock API - error
     respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
@@ -992,9 +979,7 @@ def test_fetch_pr_info_client_exception(
     monkeypatch.setenv("GH_TOKEN", "fake-token")
 
     # Set up remote
-    config = repo_with_feature.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(repo_with_feature, "origin", "git@github.com:owner/repo.git")
 
     # Mock GitHubClient to raise an exception when creating client
     class MockGitHubClient:

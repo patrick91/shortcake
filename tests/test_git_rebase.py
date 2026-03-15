@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from shortcake import _git as git
-from tests._git_helpers import Repo, add_paths, commit, switch_branch
+from tests._git_helpers import Repo, add_paths, commit, get_ref, set_ref, switch_branch
 
 
 def test_rebase_failure_class() -> None:
@@ -23,7 +23,7 @@ def test_get_cherry_pick_head_none(temp_repo: Repo) -> None:
 
 def test_get_cherry_pick_head_empty_file(temp_repo: Repo, tmp_path: Path) -> None:
     """Test get_cherry_pick_head returns None for empty file."""
-    head_path = Path(temp_repo.controldir()) / "CHERRY_PICK_HEAD"
+    head_path = Path(temp_repo.path.rstrip("/")) / "CHERRY_PICK_HEAD"
     head_path.write_bytes(b"")
     result = git.get_cherry_pick_head(temp_repo)
     assert result is None
@@ -51,8 +51,8 @@ def test_rebase_abort_with_cherry_pick_in_progress(
 ) -> None:
     """Test rebase_abort succeeds when cherry-pick is in progress."""
     # Create a branch with a conflicting change
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
     switch_branch(temp_repo, "feature")
 
     readme = tmp_path / "README.md"
@@ -161,15 +161,15 @@ def test_rebase_abort_with_cherry_pick_head(temp_repo: Repo, tmp_path: Path) -> 
     """Test rebase_abort aborts cherry-pick when only CHERRY_PICK_HEAD exists."""
     import subprocess as sp
 
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
     switch_branch(temp_repo, "feature")
 
     readme = tmp_path / "README.md"
     readme.write_text("# Feature")
     add_paths(temp_repo, readme)
     commit(temp_repo, b"feat: feature change")
-    feature_sha = temp_repo.refs[b"refs/heads/feature"]
+    feature_sha = get_ref(temp_repo, "refs/heads/feature")
 
     switch_branch(temp_repo, "main")
     readme.write_text("# Main")
@@ -183,7 +183,7 @@ def test_rebase_abort_with_cherry_pick_head(temp_repo: Repo, tmp_path: Path) -> 
         capture_output=True,
     )
 
-    git_dir = Path(temp_repo.controldir())
+    git_dir = Path(temp_repo.path.rstrip("/"))
     assert (git_dir / "CHERRY_PICK_HEAD").exists()
     assert not (git_dir / "rebase-merge").exists()
 
@@ -193,7 +193,7 @@ def test_rebase_abort_with_cherry_pick_head(temp_repo: Repo, tmp_path: Path) -> 
 
 def test_rebase_abort_cherry_pick_abort_fails(temp_repo: Repo) -> None:
     """Test rebase_abort raises when git cherry-pick --abort fails."""
-    git_dir = Path(temp_repo.controldir())
+    git_dir = Path(temp_repo.path.rstrip("/"))
     (git_dir / "CHERRY_PICK_HEAD").write_text("a" * 40)
 
     mock_result = MagicMock(returncode=1, stderr="abort failed")
@@ -203,3 +203,18 @@ def test_rebase_abort_cherry_pick_abort_fails(temp_repo: Repo) -> None:
         pytest.raises(git.RebaseFailure, match="abort failed"),
     ):
         git.rebase_abort(temp_repo)
+
+
+def test_get_merge_base_git_error(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test get_merge_base returns None when pygit2 raises GitError."""
+    import pygit2
+
+    def failing_merge_base(oid1, oid2):
+        raise pygit2.GitError("merge base failed")
+
+    monkeypatch.setattr(temp_repo, "merge_base", failing_merge_base)
+
+    result = git.get_merge_base(temp_repo, b"a" * 40, b"b" * 40)
+    assert result is None

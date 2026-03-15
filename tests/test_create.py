@@ -1,4 +1,5 @@
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -17,7 +18,7 @@ from shortcake.commands.create import (
     _validate_branch_name,
 )
 from shortcake.commands.ls import _ls
-from tests._git_helpers import Repo, add_paths, switch_branch
+from tests._git_helpers import Repo, add_paths, get_ref, set_ref, switch_branch
 
 # Slugify tests
 
@@ -120,9 +121,9 @@ def test_create_with_staged_changes(temp_repo: Repo, tmp_path: Path) -> None:
     result = _create(temp_repo, message, branch_name)
 
     head = git.get_branch_head(temp_repo, result.branch)
-    commit = temp_repo[head]
-    tree = temp_repo[commit.tree]
-    assert b"new_feature.py" in [entry.path for entry in tree.items()]
+    commit = temp_repo.get(head.decode() if isinstance(head, bytes) else str(head))
+    tree = temp_repo.get(str(commit.tree_id))
+    assert b"new_feature.py" in [entry.name.encode() for entry in tree]
 
 
 def test_create_only_commits_staged_changes(temp_repo: Repo, tmp_path: Path) -> None:
@@ -142,9 +143,9 @@ def test_create_only_commits_staged_changes(temp_repo: Repo, tmp_path: Path) -> 
 
     # Verify staged file is in commit
     head = git.get_branch_head(temp_repo, result.branch)
-    commit = temp_repo[head]
-    tree = temp_repo[commit.tree]
-    committed_files = [entry.path for entry in tree.items()]
+    commit = temp_repo.get(head.decode() if isinstance(head, bytes) else str(head))
+    tree = temp_repo.get(str(commit.tree_id))
+    committed_files = [entry.name.encode() for entry in tree]
     assert b"staged.py" in committed_files
     assert b"unstaged.py" not in committed_files
 
@@ -167,8 +168,8 @@ def test_create_empty_commit(temp_repo: Repo) -> None:
 
 def test_create_branch_exists(temp_repo: Repo) -> None:
     """Test error when branch already exists."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feat-existing"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feat-existing", main_sha)
 
     with pytest.raises(BranchExistsError) as exc_info:
         _validate_branch_name(temp_repo, "feat-existing")
@@ -177,9 +178,8 @@ def test_create_branch_exists(temp_repo: Repo) -> None:
 
 def test_create_detached_head_asserts(temp_repo: Repo) -> None:
     """Test that _create asserts if called in detached HEAD state."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    del temp_repo.refs[b"HEAD"]
-    temp_repo.refs[b"HEAD"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", main_sha)
 
     with pytest.raises(AssertionError):
         _create(temp_repo, "feat: something", "feat-something")
@@ -204,7 +204,7 @@ def test_create_with_explicit_branch_name(temp_repo: Repo) -> None:
 
 def test_precommit_hook_passes(temp_repo: Repo, tmp_path: Path) -> None:
     """Test pre-commit hook that passes."""
-    hooks_dir = Path(temp_repo.controldir()) / "hooks"
+    hooks_dir = Path(temp_repo.path.rstrip("/")) / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_path = hooks_dir / "pre-commit"
     hook_path.write_text("#!/bin/sh\nexit 0\n")
@@ -221,7 +221,7 @@ def test_precommit_hook_passes(temp_repo: Repo, tmp_path: Path) -> None:
 
 def test_precommit_hook_fails(temp_repo: Repo, tmp_path: Path) -> None:
     """Test pre-commit hook that fails."""
-    hooks_dir = Path(temp_repo.controldir()) / "hooks"
+    hooks_dir = Path(temp_repo.path.rstrip("/")) / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_path = hooks_dir / "pre-commit"
     hook_path.write_text("#!/bin/sh\necho 'Hook failed!'\nexit 1\n")
@@ -238,7 +238,7 @@ def test_precommit_hook_fails(temp_repo: Repo, tmp_path: Path) -> None:
 
 def test_has_precommit_hook_exists(temp_repo: Repo) -> None:
     """Test detection of existing pre-commit hook."""
-    hooks_dir = Path(temp_repo.controldir()) / "hooks"
+    hooks_dir = Path(temp_repo.path.rstrip("/")) / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_path = hooks_dir / "pre-commit"
     hook_path.write_text("#!/bin/sh\nexit 0\n")
@@ -264,15 +264,27 @@ def test_run_precommit_hook_exception(temp_repo: Repo, tmp_path: Path) -> None:
     from unittest.mock import patch
 
     # Create a hook file so we get past the existence check
-    hooks_dir = Path(temp_repo.controldir()) / "hooks"
+    hooks_dir = Path(temp_repo.path.rstrip("/")) / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_path = hooks_dir / "pre-commit"
     hook_path.write_text("#!/bin/sh\nexit 0\n")
     hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
 
-    # Mock subprocess.Popen to raise an exception
-    with patch("shortcake._git._core.subprocess.Popen") as mock_popen:
-        mock_popen.side_effect = OSError("Permission denied")
+    # Mock subprocess.Popen to raise an exception.
+    # get_staged_files uses subprocess.run (which internally uses Popen),
+    # so we must let the first Popen call through and fail on the hook call.
+    original_popen = subprocess.Popen
+    call_count = 0
+
+    def popen_side_effect(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            # First call is from get_staged_files via subprocess.run
+            return original_popen(*args, **kwargs)
+        raise OSError("Permission denied")
+
+    with patch("shortcake._git._core.subprocess.Popen", side_effect=popen_side_effect):
         success, error = git.run_precommit_hook(temp_repo)
 
     assert success is False
@@ -455,9 +467,11 @@ def test_create_insert_before_with_staged_changes(
 
     # Verify the staged file is in the new branch's commit
     head = git.get_branch_head(repo_with_stack, "fix-with-staged")
-    commit = repo_with_stack[head]
-    tree = repo_with_stack[commit.tree]
-    assert b"new_feature.py" in [entry.path for entry in tree.items()]
+    commit = repo_with_stack.get(
+        head.decode() if isinstance(head, bytes) else str(head)
+    )
+    tree = repo_with_stack.get(str(commit.tree_id))
+    assert b"new_feature.py" in [entry.name.encode() for entry in tree]
 
 
 def test_create_insert_before_staged_changes_on_shared_file(
@@ -481,9 +495,11 @@ def test_create_insert_before_staged_changes_on_shared_file(
 
     # Verify the modified file is in the new branch's commit
     head = git.get_branch_head(repo_with_stack, "fix-shared-file")
-    commit = repo_with_stack[head]
-    tree = repo_with_stack[commit.tree]
-    assert b"b.txt" in [entry.path for entry in tree.items()]
+    commit = repo_with_stack.get(
+        head.decode() if isinstance(head, bytes) else str(head)
+    )
+    tree = repo_with_stack.get(str(commit.tree_id))
+    assert b"b.txt" in [entry.name.encode() for entry in tree]
 
 
 def test_create_insert_before_conflict(repo_with_stack: Repo, tmp_path: Path) -> None:

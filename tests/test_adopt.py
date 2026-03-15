@@ -124,7 +124,7 @@ def test_adopt_force_reparent_diverged_lineage(temp_repo: Repo, tmp_path: Path) 
     )
 
     # Delete parent-a (simulates the old parent being gone)
-    del temp_repo.refs[b"refs/heads/parent-a"]
+    temp_repo.references.delete("refs/heads/parent-a")
 
     # Re-parent child to parent-b
     result = _adopt(temp_repo, branch="child", parent="parent-b", force=True)

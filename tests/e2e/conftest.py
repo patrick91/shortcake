@@ -77,7 +77,6 @@ def e2e_repo(tmp_path_factory):
     )
 
     yield repo
-    repo.close()
 
 
 @pytest.fixture(scope="session")

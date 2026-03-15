@@ -13,7 +13,7 @@ from shortcake.cli import app
 from shortcake.commands.restack import (
     _get_stack_in_order,
 )
-from tests._git_helpers import Repo, add_paths, commit, switch_branch
+from tests._git_helpers import Repo, add_paths, commit, get_ref, set_ref, switch_branch
 
 runner = CliRunner()
 
@@ -56,9 +56,9 @@ def test_restack_non_conflict_failure(
     monkeypatch.chdir(tmp_path)
 
     # Create branch_a from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
+    temp_repo.set_head("refs/heads/branch_a")
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("content")
@@ -142,31 +142,31 @@ def test_continue_non_conflict_failure_in_remaining(
 def test_get_stack_in_order_finds_stack_root(temp_repo: Repo, tmp_path: Path) -> None:
     """Test _get_stack_in_order correctly identifies stack root via parent=None path."""
     # Create a deep stack: main → branch_a → branch_b → branch_c
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # branch_a
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
+    temp_repo.set_head("refs/heads/branch_a")
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
     add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     commit(temp_repo, trailers_a.apply_to("feat: a"))
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # branch_b
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
+    temp_repo.set_head("refs/heads/branch_b")
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
     add_paths(temp_repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
     commit(temp_repo, trailers_b.apply_to("feat: b"))
-    branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
+    branch_b_sha = get_ref(temp_repo, "refs/heads/branch_b")
 
     # branch_c
-    temp_repo.refs[b"refs/heads/branch_c"] = branch_b_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    set_ref(temp_repo, "refs/heads/branch_c", branch_b_sha)
+    temp_repo.set_head("refs/heads/branch_c")
     file_c = tmp_path / "c.txt"
     file_c.write_text("c")
     add_paths(temp_repo, file_c)
