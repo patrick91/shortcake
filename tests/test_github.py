@@ -986,6 +986,42 @@ def test_push_branch_disabled_force_with_lease(temp_repo: Repo) -> None:
     assert "push" in mock_run.call_args[0][0]
 
 
+def test_push_branch_ls_remote_failure(temp_repo: Repo) -> None:
+    """Test push aborts when ls-remote fails (network/auth error)."""
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
+
+    head_sha = str(temp_repo.head.target).encode()
+    set_ref(temp_repo, "refs/heads/feature", head_sha)
+    set_ref(temp_repo, "refs/remotes/origin/feature", head_sha)
+
+    with patch(
+        "shortcake._github.subprocess.run",
+        return_value=_make_subprocess_result(128, stderr="fatal: auth failed"),
+    ):
+        success, error = push_branch(temp_repo, "feature")
+
+    assert success is False
+    assert "ls-remote failed" in error
+
+
+def test_push_branch_push_failure(temp_repo: Repo) -> None:
+    """Test push returns error when git push fails."""
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
+
+    head_sha = str(temp_repo.head.target).encode()
+    set_ref(temp_repo, "refs/heads/feature", head_sha)
+
+    # No tracking ref → skips lease check, goes straight to push
+    with patch(
+        "shortcake._github.subprocess.run",
+        return_value=_make_subprocess_result(1, stderr="error: push rejected"),
+    ):
+        success, error = push_branch(temp_repo, "feature")
+
+    assert success is False
+    assert "push rejected" in error
+
+
 # Tests for repo identity resolution (renamed/transferred repos)
 
 REPO_RESPONSE = {

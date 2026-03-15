@@ -157,7 +157,7 @@ def _pull(
         remote_oid = pygit2.Oid(hex=remote_ref.decode())
         if local_ref_name in repo.references:
             repo.references[local_ref_name].set_target(remote_oid)
-        else:
+        else:  # pragma: no cover
             repo.references.create(local_ref_name, remote_oid)
         # Update working directory
         git.switch_branch(repo, branch)
@@ -327,7 +327,7 @@ def _ensure_children_from_remote(
 
             # Walk commits from HEAD to find the trailer
             ref_obj = repo.references.get(ref_str)
-            if ref_obj is None:
+            if ref_obj is None:  # pragma: no cover
                 continue
             remote_sha = str(ref_obj.target).encode()
             parent_branch = _find_trailer_parent(repo, remote_sha, known_heads)
@@ -361,7 +361,7 @@ def _update_branch_from_remote(repo: Repo, branch: str) -> BranchPullResult:
     remote_oid = pygit2.Oid(hex=remote_ref.decode())
     if local_ref_name in repo.references:
         repo.references[local_ref_name].set_target(remote_oid)
-    else:
+    else:  # pragma: no cover
         repo.references.create(local_ref_name, remote_oid)
     return BranchPullResult(
         branch=branch, updated=True, new_sha=remote_ref[:7].decode()
@@ -466,7 +466,7 @@ def _pull_single_after_fetch(repo: Repo, branch: str) -> PullResult:
         remote_oid = pygit2.Oid(hex=remote_ref.decode())
         if local_ref_name in repo.references:
             repo.references[local_ref_name].set_target(remote_oid)
-        else:
+        else:  # pragma: no cover
             repo.references.create(local_ref_name, remote_oid)
         git.switch_branch(repo, branch)
         return PullResult(

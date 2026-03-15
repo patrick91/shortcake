@@ -1,5 +1,5 @@
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -72,6 +72,25 @@ def test_get_default_branch_from_origin_head(temp_repo: Repo) -> None:
     temp_repo.references.create(
         "refs/remotes/origin/HEAD", "refs/remotes/origin/main", force=True
     )
+
+    default = git.get_default_branch(temp_repo)
+    assert default == "main"
+
+
+def test_get_default_branch_origin_head_error(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test get_default_branch falls back when origin/HEAD read raises."""
+    import pygit2 as _pygit2
+
+    original_get = temp_repo.references.get
+
+    def broken_get(name):
+        if "origin/HEAD" in name:
+            raise _pygit2.GitError("broken")
+        return original_get(name)
+
+    monkeypatch.setattr(temp_repo.references, "get", broken_get)
 
     default = git.get_default_branch(temp_repo)
     assert default == "main"
@@ -225,21 +244,13 @@ def test_fetch_and_fast_forward_trunk_falls_back_to_git_cli(
     # Re-open local repo
     local_repo = git.open_repo(local_path)
 
-    # Make pygit2 fetch fail (simulates SSH auth failure)
-    import pygit2
+    # Make pygit2's Remote.fetch fail, forcing git CLI fallback
+    import pygit2 as _pygit2
 
-    def failing_pygit2_fetch(repo, remote_name="origin"):
-        raise pygit2.GitError("authentication required but no callback set")
+    def failing_fetch(self, *args, **kwargs):
+        raise _pygit2.GitError("authentication required but no callback set")
 
-    with patch("shortcake._git._pygit2._pygit2_repo") as mock_pygit2:
-        mock_repo = MagicMock()
-        mock_repo.remotes.__getitem__.return_value.fetch.side_effect = pygit2.GitError(
-            "authentication required but no callback set"
-        )
-        mock_repo.workdir = local_repo.workdir
-        mock_repo.path = local_repo.path
-        mock_pygit2.return_value = mock_repo
-
+    with patch.object(_pygit2.Remote, "fetch", failing_fetch):
         success, new_sha = git.fetch_and_fast_forward_trunk(local_repo, "main")
 
     # Should still succeed by falling back to git CLI
@@ -248,3 +259,53 @@ def test_fetch_and_fast_forward_trunk_falls_back_to_git_cli(
         "when pygit2 fails"
     )
     assert new_sha is not None
+
+
+def test_get_branch_head_nonexistent(temp_repo: Repo) -> None:
+    """Test get_branch_head raises KeyError for nonexistent branch."""
+    with pytest.raises(KeyError):
+        git.get_branch_head(temp_repo, "nonexistent")
+
+
+def test_update_branch_creates_new(temp_repo: Repo) -> None:
+    """Test update_branch creates a branch if it doesn't exist."""
+    head_sha = git.get_branch_head(temp_repo, "main").decode()
+    git.update_branch(temp_repo, "new-branch", head_sha)
+    assert git.branch_exists(temp_repo, "new-branch")
+    assert git.get_branch_head(temp_repo, "new-branch").decode() == head_sha
+
+
+def test_create_commit_failure(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test create_commit raises ValueError on git commit failure."""
+    import subprocess
+
+    original_run = subprocess.run
+
+    def failing_run(*args, **kwargs):
+        cmd = args[0] if args else kwargs.get("cmd", [])
+        if cmd and cmd[0] == "git" and "commit" in cmd:
+            return subprocess.CompletedProcess(cmd, 1, "", "error: nothing to commit")
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", failing_run)
+    with pytest.raises(ValueError, match="Commit failed"):
+        git.create_commit(temp_repo, "test", allow_empty=False)
+
+
+def test_amend_commit_failure(temp_repo: Repo, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test amend_commit raises ValueError on failure."""
+    import subprocess
+
+    original_run = subprocess.run
+
+    def failing_run(*args, **kwargs):
+        cmd = args[0] if args else kwargs.get("cmd", [])
+        if cmd and cmd[0] == "git" and "--amend" in cmd:
+            return subprocess.CompletedProcess(cmd, 1, "", "error: amend failed")
+        return original_run(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", failing_run)
+    with pytest.raises(ValueError, match="Amend failed"):
+        git.amend_commit(temp_repo, "test", allow_empty=False)

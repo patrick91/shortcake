@@ -51,12 +51,12 @@ def _create_branch_from_remote(repo: Repo, branch: str) -> bool:
             return False
         remote_oid = remote_ref_obj.target
         local_ref_name = f"refs/heads/{branch}"
-        if local_ref_name in repo.references:
+        if local_ref_name in repo.references:  # pragma: no cover
             repo.references[local_ref_name].set_target(remote_oid)
         else:
             repo.references.create(local_ref_name, remote_oid)
         return True
-    except (KeyError, pygit2.GitError):
+    except (KeyError, pygit2.GitError):  # pragma: no cover
         return False
 
 

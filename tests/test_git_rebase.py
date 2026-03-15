@@ -203,3 +203,18 @@ def test_rebase_abort_cherry_pick_abort_fails(temp_repo: Repo) -> None:
         pytest.raises(git.RebaseFailure, match="abort failed"),
     ):
         git.rebase_abort(temp_repo)
+
+
+def test_get_merge_base_git_error(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test get_merge_base returns None when pygit2 raises GitError."""
+    import pygit2
+
+    def failing_merge_base(oid1, oid2):
+        raise pygit2.GitError("merge base failed")
+
+    monkeypatch.setattr(temp_repo, "merge_base", failing_merge_base)
+
+    result = git.get_merge_base(temp_repo, b"a" * 40, b"b" * 40)
+    assert result is None

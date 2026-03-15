@@ -1,36 +1,35 @@
-from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from pathlib import Path
 
-import pygit2
-
-from shortcake._git._pygit2 import fetch_remote
-from tests._git_helpers import Repo
+from shortcake._git._pygit2 import fetch_remote, get_remote_url
+from tests._git_helpers import Repo, commit_files, init_repo, set_remote
 
 
-def test_fetch_remote_success(temp_repo: Repo) -> None:
-    remote = MagicMock()
+def test_fetch_remote_success(tmp_path: Path) -> None:
+    """Test fetch succeeds with a real local remote."""
+    remote_path = tmp_path / "remote"
+    remote_repo = init_repo(remote_path)
+    commit_files(remote_repo, {remote_path / "README.md": "# Test"}, "init")
 
-    with patch(
-        "shortcake._git._pygit2._pygit2_repo",
-        return_value=SimpleNamespace(remotes={"origin": remote}),
-    ) as mock_open:
-        assert fetch_remote(temp_repo)
+    local_path = tmp_path / "local"
+    local_repo = init_repo(local_path)
+    commit_files(local_repo, {local_path / "README.md": "# Test"}, "init")
+    set_remote(local_repo, "origin", str(remote_path))
 
-    mock_open.assert_called_once_with(temp_repo)
-    remote.fetch.assert_called_once_with()
+    assert fetch_remote(local_repo)
 
 
 def test_fetch_remote_failure(temp_repo: Repo) -> None:
-    remote = MagicMock()
-    remote.fetch.side_effect = pygit2.GitError("fetch failed")
+    """Test fetch returns False when remote doesn't exist."""
+    set_remote(temp_repo, "origin", "file:///nonexistent/repo")
+    assert not fetch_remote(temp_repo)
 
-    mock_repo = SimpleNamespace(
-        remotes={"origin": remote},
-        workdir="/tmp/nonexistent",
-        path="/tmp/nonexistent/.git/",
-    )
-    with patch(
-        "shortcake._git._pygit2._pygit2_repo",
-        return_value=mock_repo,
-    ):
-        assert not fetch_remote(temp_repo)
+
+def test_get_remote_url_exists(temp_repo: Repo) -> None:
+    """Test get_remote_url returns URL when remote configured."""
+    set_remote(temp_repo, "origin", "https://github.com/test/test.git")
+    assert get_remote_url(temp_repo) == "https://github.com/test/test.git"
+
+
+def test_get_remote_url_missing(temp_repo: Repo) -> None:
+    """Test get_remote_url returns None when no remote."""
+    assert get_remote_url(temp_repo) is None
