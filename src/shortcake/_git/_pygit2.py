@@ -25,9 +25,28 @@ def get_remote_url(repo: Repo | Path, remote_name: str = "origin") -> str | None
 
 
 def fetch_remote(repo: Repo | Path, remote_name: str = "origin") -> bool:
-    """Fetch a remote and report whether it succeeded."""
+    """Fetch a remote and report whether it succeeded.
+
+    Tries pygit2 first, falls back to git CLI if pygit2 fails (e.g. SSH
+    auth not available to libgit2).
+    """
     try:
         open_pygit2_repo(repo).remotes[remote_name].fetch()
+        return True
     except (KeyError, pygit2.GitError):
+        pass
+
+    # Fallback: use git CLI which handles SSH agent, credential helpers, etc.
+    import subprocess
+
+    repo_path = repo if isinstance(repo, Path) else Path(repo.path)
+    try:
+        subprocess.run(
+            ["git", "fetch", remote_name],
+            cwd=repo_path,
+            check=True,
+            capture_output=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
         return False
     return True

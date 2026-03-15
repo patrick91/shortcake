@@ -125,3 +125,135 @@ def test_fetch_and_fast_forward_trunk_no_remote(temp_repo: Repo) -> None:
     success, new_sha = git.fetch_and_fast_forward_trunk(temp_repo, "main")
     assert success is True
     assert new_sha is None
+
+
+def test_fetch_and_fast_forward_trunk_with_new_remote_commits(
+    tmp_path: Path,
+) -> None:
+    """Test fast-forward works when remote has new commits."""
+    # Set up a "remote" repo
+    remote_path = tmp_path / "remote"
+    remote_repo = init_repo(remote_path)
+    commit_files(remote_repo, {remote_path / "README.md": "# Test"}, "Initial commit")
+
+    # Set up a "local" repo with the remote as origin
+    local_path = tmp_path / "local"
+    local_repo = init_repo(local_path)
+    commit_files(local_repo, {local_path / "README.md": "# Test"}, "Initial commit")
+
+    # Configure origin to point to the remote repo
+    config = local_repo.get_config()
+    config.set(
+        (b"remote", b"origin"),
+        b"url",
+        str(remote_path).encode(),
+    )
+    config.set(
+        (b"remote", b"origin"),
+        b"fetch",
+        b"+refs/heads/*:refs/remotes/origin/*",
+    )
+    config.write_to_path()
+
+    # Fetch once so local has origin/main and shares history
+    from shortcake._git._pygit2 import fetch_remote
+
+    fetch_remote(local_repo, "origin")
+
+    # Reset local main to origin/main so they share history
+    remote_main_sha = local_repo.refs[b"refs/remotes/origin/main"]
+    local_repo.refs[b"refs/heads/main"] = remote_main_sha
+
+    # Now add new commits to the remote (local is behind)
+    commit_files(
+        remote_repo,
+        {remote_path / "file1.txt": "content 1"},
+        "Remote commit 1",
+    )
+    commit_files(
+        remote_repo,
+        {remote_path / "file2.txt": "content 2"},
+        "Remote commit 2",
+    )
+
+    # Re-open local repo to simulate a fresh `sc sync` invocation
+    local_repo = git.open_repo(local_path)
+
+    # This should succeed: local main is ancestor of remote main
+    success, new_sha = git.fetch_and_fast_forward_trunk(local_repo, "main")
+    assert success is True
+    assert new_sha is not None
+
+
+def test_fetch_and_fast_forward_trunk_falls_back_to_git_cli(
+    tmp_path: Path,
+) -> None:
+    """Test fast-forward works even when pygit2 fetch fails.
+
+    Regression test: pygit2's remote.fetch() fails with
+    'authentication required but no callback set' for SSH remotes.
+    fetch_remote should fall back to `git fetch` via subprocess.
+    """
+    from unittest.mock import patch
+
+    # Set up a "remote" repo
+    remote_path = tmp_path / "remote"
+    remote_repo = init_repo(remote_path)
+    commit_files(remote_repo, {remote_path / "README.md": "# Test"}, "Initial commit")
+
+    # Set up a "local" repo with the remote as origin
+    local_path = tmp_path / "local"
+    local_repo = init_repo(local_path)
+    commit_files(local_repo, {local_path / "README.md": "# Test"}, "Initial commit")
+
+    # Configure origin
+    config = local_repo.get_config()
+    config.set(
+        (b"remote", b"origin"),
+        b"url",
+        str(remote_path).encode(),
+    )
+    config.set(
+        (b"remote", b"origin"),
+        b"fetch",
+        b"+refs/heads/*:refs/remotes/origin/*",
+    )
+    config.write_to_path()
+
+    # Fetch once and sync history
+    from shortcake._git._pygit2 import fetch_remote as real_fetch
+
+    real_fetch(local_repo, "origin")
+    remote_main_sha = local_repo.refs[b"refs/remotes/origin/main"]
+    local_repo.refs[b"refs/heads/main"] = remote_main_sha
+
+    # Add new commits to remote
+    commit_files(
+        remote_repo,
+        {remote_path / "file1.txt": "content 1"},
+        "Remote commit 1",
+    )
+
+    # Re-open local repo
+    local_repo = git.open_repo(local_path)
+
+    # Make pygit2 fetch fail (simulates SSH auth failure)
+    import pygit2
+
+    def failing_pygit2_fetch(repo, remote_name="origin"):
+        raise pygit2.GitError("authentication required but no callback set")
+
+    with patch("shortcake._git._pygit2.open_pygit2_repo") as mock_open:
+        mock_repo = mock_open.return_value
+        mock_repo.remotes.__getitem__.return_value.fetch.side_effect = pygit2.GitError(
+            "authentication required but no callback set"
+        )
+
+        success, new_sha = git.fetch_and_fast_forward_trunk(local_repo, "main")
+
+    # Should still succeed by falling back to git CLI
+    assert success is True, (
+        "Fast-forward failed — fetch_remote should fall back to git CLI "
+        "when pygit2 fails"
+    )
+    assert new_sha is not None
