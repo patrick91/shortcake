@@ -2051,3 +2051,105 @@ def test_submit_422_base_not_found_error_message(
     assert result.branch_results[0].error is not None
     assert "not found on GitHub" in result.branch_results[0].error
     assert "sc sync" in result.branch_results[0].error
+
+
+def test_submit_updates_moved_away_branch_prs(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit updates PR descriptions of branches that moved away.
+
+    Scenario: stack was main → branch_a → branch_b.
+    After `sc move branch_b -p main`, the stacks become:
+      main → branch_a  (stack 1)
+      main → branch_b  (stack 2)
+
+    When submitting from branch_a, the PR for branch_b should also be updated
+    to show its new (solo) stack, not the old stack that included branch_a.
+    """
+    from shortcake.commands.move import _move
+
+    setup_origin_remote(repo_with_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    # Move branch_b to have parent=main (splits the stack)
+    from tests._git_helpers import switch_branch
+
+    switch_branch(repo_with_stack, "branch_a")
+    _move(repo_with_stack, "branch_b", "main")
+
+    # Set up mock PRs with old stack body on branch_b
+    old_stack_body = (
+        f"{STACK_START_MARKER}\n"
+        "## Stack\n"
+        "\n"
+        "- **#20** (`branch_b`) <-- this PR\n"
+        "- #10 (`branch_a`)\n"
+        f"{STACK_END_MARKER}\n"
+        "\n"
+        "Original branch_b description"
+    )
+
+    old_stack_body_a = (
+        f"{STACK_START_MARKER}\n"
+        "## Stack\n"
+        "\n"
+        "- #20 (`branch_b`)\n"
+        "- **#10** (`branch_a`) <-- this PR\n"
+        f"{STACK_END_MARKER}\n"
+        "\n"
+        "branch_a body"
+    )
+
+    mock_pr_a = PRInfo(
+        number=10,
+        url="https://github.com/owner/repo/pull/10",
+        base="main",
+        title="feat: branch a",
+        body=old_stack_body_a,
+        state="open",
+        is_draft=False,
+    )
+    mock_pr_b = PRInfo(
+        number=20,
+        url="https://github.com/owner/repo/pull/20",
+        base="branch_a",  # Old base, before the move
+        title="feat: branch b",
+        body=old_stack_body,
+        state="open",
+        is_draft=False,
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.side_effect = lambda b: {
+        "branch_a": mock_pr_a,
+        "branch_b": mock_pr_b,
+    }.get(b)
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        _submit(repo_with_stack)
+
+    # Find update_pr calls for branch_b's PR (#20)
+    body_updates_for_b = [
+        call
+        for call in mock_client.update_pr.call_args_list
+        if call[0][0] == 20 and call[1].get("body") is not None
+    ]
+
+    assert len(body_updates_for_b) >= 1, (
+        "branch_b's PR body was not updated after it moved to a different stack"
+    )
+
+    # The new body for branch_b should NOT contain branch_a
+    new_body = body_updates_for_b[-1][1]["body"]
+    assert "branch_a" not in new_body, (
+        f"branch_b's PR body still references branch_a after move: {new_body}"
+    )
+    # It should contain branch_b
+    assert "branch_b" in new_body
+    # It should preserve the original description
+    assert "Original branch_b description" in new_body
