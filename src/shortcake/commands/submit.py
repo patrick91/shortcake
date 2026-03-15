@@ -592,9 +592,13 @@ def _submit(
             # Historical order is display order (top to bottom)
             # Reverse to get bottom to top order
             historical_bottom_to_top = list(reversed(historical_stack_order))
-            # Add historical branches that are no longer local (merged and deleted)
+            # Add historical branches that were deleted (merged and cleaned up).
+            # Skip branches that still exist locally (they moved to another stack).
             for hist_branch in historical_bottom_to_top:
-                if hist_branch not in full_stack_branches:
+                if (
+                    hist_branch not in full_stack_branches
+                    and hist_branch not in all_branches
+                ):
                     # Find position based on historical order
                     # Insert at the position it would have been
                     inserted = False
