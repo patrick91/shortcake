@@ -633,6 +633,62 @@ def _submit(
                 # Non-fatal: stack visualization update failed
                 pass
 
+        # Phase 4: Update PRs of branches that moved away from this stack.
+        # If the old stack section listed branches that are no longer in the
+        # current stack (e.g., after sc move/reorder), update those PRs with
+        # their new stack visualization.
+        current_stack_set = set(stack_branches)
+        all_local = set(git.get_all_local_branches(repo))
+        moved_away = [
+            b
+            for b in historical_stack_order
+            if b not in current_stack_set
+            and b in all_local
+            and b not in merged_pr_numbers
+        ]
+
+        for branch in moved_away:
+            try:
+                existing_pr = gh.get_pr_for_branch(branch)
+                if not existing_pr:  # pragma: no cover
+                    continue
+
+                # Compute this branch's new stack
+                new_stack = _get_stack_in_order(repo, branch)
+                if not new_stack:  # pragma: no cover
+                    # Branch is now untracked — clear the stack section
+                    new_body = _update_pr_body_with_stack(
+                        existing_pr.body,
+                        f"{STACK_START_MARKER}\n{STACK_END_MARKER}",
+                    )
+                    gh.update_pr(existing_pr.number, body=new_body)
+                    continue
+
+                # Collect PR numbers for the new stack
+                new_stack_pr_numbers: dict[str, int] = {}
+                for b in new_stack:
+                    try:
+                        pr = gh.get_pr_for_branch(b)
+                        if pr:
+                            new_stack_pr_numbers[b] = pr.number
+                    except (
+                        httpx.HTTPStatusError,
+                        httpx.RequestError,
+                    ):  # pragma: no cover
+                        pass
+
+                stack_section = _build_stack_section(
+                    new_stack,
+                    branch,
+                    new_stack_pr_numbers,
+                    owner,
+                )
+                new_body = _update_pr_body_with_stack(existing_pr.body, stack_section)
+                gh.update_pr(existing_pr.number, body=new_body)
+            except (httpx.HTTPStatusError, httpx.RequestError):  # pragma: no cover
+                # Non-fatal: moved branch PR update failed
+                pass
+
     return result
 
 
