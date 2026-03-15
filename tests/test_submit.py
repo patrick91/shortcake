@@ -2153,3 +2153,15 @@ def test_submit_updates_moved_away_branch_prs(
     assert "branch_b" in new_body
     # It should preserve the original description
     assert "Original branch_b description" in new_body
+
+    # branch_a's PR should NOT contain branch_b (it moved away)
+    body_updates_for_a = [
+        call
+        for call in mock_client.update_pr.call_args_list
+        if call[0][0] == 10 and call[1].get("body") is not None
+    ]
+    assert len(body_updates_for_a) >= 1
+    new_body_a = body_updates_for_a[-1][1]["body"]
+    assert "branch_b" not in new_body_a, (
+        f"branch_a's PR body still references branch_b after move: {new_body_a}"
+    )
