@@ -131,7 +131,7 @@ def test_move_onto_self(repo_with_stack: Repo) -> None:
 def test_move_circular_dependency(repo_with_stack: Repo) -> None:
     """MoveError when new parent is a descendant (would create cycle)."""
     switch_branch(repo_with_stack, "branch_a")
-    with pytest.raises(MoveError, match="descendant.*cycle"):
+    with pytest.raises(MoveError, match=r"descendant.*cycle"):
         _move(repo_with_stack, parent="branch_b")
 
 
