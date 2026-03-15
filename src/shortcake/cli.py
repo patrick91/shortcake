@@ -11,6 +11,7 @@ from shortcake.commands.fold import fold
 from shortcake.commands.log import log
 from shortcake.commands.ls import ls
 from shortcake.commands.modify import modify
+from shortcake.commands.move import move
 from shortcake.commands.pull import pull
 from shortcake.commands.reorder import reorder
 from shortcake.commands.restack import restack
@@ -41,6 +42,7 @@ app.command()(fold)
 app.command()(log)
 app.command()(ls)
 app.command()(modify)
+app.command()(move)
 app.command()(pull)
 app.command()(reorder)
 app.command()(restack)
