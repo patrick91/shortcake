@@ -300,7 +300,7 @@ def _write_json(
         handler.send_header("Content-Length", str(len(body)))
         handler.end_headers()
         handler.wfile.write(body)
-    except (BrokenPipeError, ConnectionError):
+    except (BrokenPipeError, ConnectionError):  # pragma: no cover
         pass
 
 
