@@ -30,9 +30,7 @@ def test_get_editor_git_config(
 ) -> None:
     """Test git config core.editor fallback."""
     # Set editor in git config
-    config = temp_repo.get_config()
-    config.set((b"core",), b"editor", b"emacs")
-    config.write_to_path()
+    temp_repo.config["core.editor"] = "emacs"
 
     # Clear env vars and change to repo dir
     monkeypatch.chdir(temp_repo.path)

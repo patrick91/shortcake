@@ -1,12 +1,12 @@
 from dataclasses import dataclass
 from typing import Annotated
 
+import pygit2
 import typer
-from dulwich.objects import Commit
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
+from shortcake._git._core import Repo
 from shortcake._trailers import Trailers
 
 
@@ -27,26 +27,24 @@ def _replay_commits(repo: Repo, commits: list[bytes], base: bytes) -> bytes:
     current_base = base
     # Commits are newest-first, so reverse to replay in order
     for commit_sha in reversed(commits):
-        old_commit = repo[commit_sha]
-        old_message = old_commit.message.decode()
-        new_sha = git.amend_commit_message(repo, commit_sha, old_message)
-        # Update the parent to point to current_base
-        new_commit = repo[new_sha]
+        old_commit = repo.get(commit_sha.decode())
+        new_sha = git.amend_commit_message(repo, commit_sha, old_commit.message)
+        new_commit = repo.get(new_sha.decode())
 
-        fixed_commit = Commit()
-        fixed_commit.tree = old_commit.tree
-        fixed_commit.parents = [current_base]
-        fixed_commit.author = old_commit.author
-        fixed_commit.committer = old_commit.committer
-        fixed_commit.author_time = old_commit.author_time
-        fixed_commit.author_timezone = old_commit.author_timezone
-        fixed_commit.commit_time = new_commit.commit_time
-        fixed_commit.commit_timezone = old_commit.commit_timezone
-        fixed_commit.encoding = old_commit.encoding
-        fixed_commit.message = old_commit.message
-
-        repo.object_store.add_object(fixed_commit)
-        current_base = fixed_commit.id
+        new_oid = repo.create_commit(
+            None,  # don't update any ref
+            old_commit.author,
+            pygit2.Signature(
+                new_commit.committer.name,
+                new_commit.committer.email,
+                new_commit.committer.time,
+                new_commit.committer.offset,
+            ),
+            old_commit.message,
+            old_commit.tree_id,
+            [pygit2.Oid(hex=current_base.decode())],
+        )
+        current_base = str(new_oid).encode()
 
     return current_base
 

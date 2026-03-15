@@ -7,11 +7,11 @@ from typing import Annotated
 
 import httpx
 import typer
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._cache import update_pr_cache
 from shortcake._exceptions import ShortcakeError
+from shortcake._git._core import Repo
 from shortcake._github import GitHubClient, get_github_token, get_repo_info, push_branch
 from shortcake.commands.restack import RestackError, _get_stack_in_order, _restack
 

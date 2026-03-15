@@ -1,8 +1,10 @@
 """Shortcake-specific stack operations: parent/children, tracked branches."""
 
-from dulwich.repo import Repo
+import pygit2
 
 from shortcake._git._core import (
+    Repo,
+    _oid,
     get_all_local_branches,
     get_branch_head,
     get_commit_message,
@@ -148,18 +150,18 @@ def get_branch_parent_info(
                 continue  # pragma: no cover
 
             # Found the first commit with trailer - return its parent as merge base
-            commit = repo[commit_sha]
-            if commit.parents:
-                return (trailers.parent_branch, commit.parents[0])
+            commit = repo.get(_oid(commit_sha))
+            if commit.parent_ids:
+                return (trailers.parent_branch, str(commit.parent_ids[0]).encode())
             # Orphan commit (no parents) - return None for merge_base
             return (trailers.parent_branch, None)
 
         # Follow first parent only to stay on the branch's own history.
         # Following all parents of merge commits would enter trunk's history
         # through the second parent, picking up stale trailers.
-        commit = repo[commit_sha]
-        if commit.parents:
-            first_parent = commit.parents[0]
+        commit = repo.get(_oid(commit_sha))
+        if commit.parent_ids:
+            first_parent = str(commit.parent_ids[0]).encode()
             if first_parent not in seen:
                 to_visit.append(first_parent)
 
@@ -242,66 +244,66 @@ def is_squash_merged(repo: Repo, branch: str, trunk: str) -> bool:
     detecting squash merges even when trunk has additional modifications after
     the merge.
     """
-    branch_head = get_branch_head(repo, branch)
-    trunk_head = get_branch_head(repo, trunk)
+    branch_head_bytes = get_branch_head(repo, branch)
+    trunk_head_bytes = get_branch_head(repo, trunk)
+
+    branch_head_oid = pygit2.Oid(hex=_oid(branch_head_bytes))
+    trunk_head_oid = pygit2.Oid(hex=_oid(trunk_head_bytes))
 
     # Find merge base
-    from dulwich.walk import Walker
-
     branch_ancestors = set()
-    for entry in Walker(repo.object_store, [branch_head]):
-        branch_ancestors.add(entry.commit.id)
+    for commit in repo.walk(branch_head_oid, pygit2.GIT_SORT_TOPOLOGICAL):
+        branch_ancestors.add(commit.id)
 
-    merge_base = None
-    for entry in Walker(repo.object_store, [trunk_head]):
-        if entry.commit.id in branch_ancestors:
-            merge_base = entry.commit.id
+    merge_base_oid = None
+    for commit in repo.walk(trunk_head_oid, pygit2.GIT_SORT_TOPOLOGICAL):
+        if commit.id in branch_ancestors:
+            merge_base_oid = commit.id
             break
 
-    if merge_base is None:
+    if merge_base_oid is None:
         return False  # No common ancestor
 
     # Get trees
-    merge_base_tree = repo[merge_base].tree
-    branch_tree = repo[branch_head].tree
-    trunk_tree = repo[trunk_head].tree
+    merge_base_tree = repo.get(merge_base_oid).tree
+    branch_tree = repo.get(branch_head_oid).tree
+    trunk_tree = repo.get(trunk_head_oid).tree
 
     # If branch tree equals merge base, branch has no changes
-    if branch_tree == merge_base_tree:
+    if branch_tree.id == merge_base_tree.id:
         return True
 
     # If branch tree equals trunk tree, all changes are in trunk
-    if branch_tree == trunk_tree:
+    if branch_tree.id == trunk_tree.id:
         return True
 
-    from dulwich.diff_tree import tree_changes
-    from dulwich.object_store import tree_lookup_path
-
-    # Build dict of {path: blob_sha} from branch changes relative to merge base.
-    # blob_sha is None for deletions (file removed by branch).
-    branch_changes: dict[bytes, bytes | None] = {}
-    for change in tree_changes(repo.object_store, merge_base_tree, branch_tree):
-        if change.new is None or change.new.sha is None:
-            # Deletion: file was removed by branch
-            branch_changes[change.old.path] = None
+    # Build dict of {path: blob_oid} from branch changes relative to merge base.
+    # blob_oid is None for deletions (file removed by branch).
+    branch_changes: dict[str, pygit2.Oid | None] = {}
+    diff = repo.diff(merge_base_tree, branch_tree)
+    for delta in diff.deltas:
+        if delta.new_file.id == pygit2.Oid(hex="0" * 40):
+            # Deletion
+            branch_changes[delta.old_file.path] = None
         else:
-            # Addition or modification
-            branch_changes[change.new.path] = change.new.sha
+            branch_changes[delta.new_file.path] = delta.new_file.id
 
     if not branch_changes:  # pragma: no cover
         return True
 
     # Walk trunk commits from trunk_head back to merge_base.
     # At each commit, check if ALL branch-changed files match the branch's blobs.
-    for entry in Walker(repo.object_store, [trunk_head], exclude=[merge_base]):
-        commit_tree = entry.commit.tree
+    for commit in repo.walk(trunk_head_oid, pygit2.GIT_SORT_TOPOLOGICAL):
+        if commit.id == merge_base_oid:
+            break
+        commit_tree = commit.tree
         all_match = True
 
         for path, expected_blob in branch_changes.items():
             if expected_blob is None:
                 # Branch deleted this file — check it's absent in this commit
                 try:
-                    tree_lookup_path(repo.__getitem__, commit_tree, path)
+                    commit_tree[path]
                     all_match = False
                     break
                 except KeyError:
@@ -309,11 +311,11 @@ def is_squash_merged(repo: Repo, branch: str, trunk: str) -> bool:
             else:
                 # Branch added/modified this file — check blob SHA matches
                 try:
-                    _, blob_sha = tree_lookup_path(repo.__getitem__, commit_tree, path)
+                    entry = commit_tree[path]
                 except KeyError:
                     all_match = False
                     break
-                if blob_sha != expected_blob:
+                if entry.id != expected_blob:
                     all_match = False
                     break
 

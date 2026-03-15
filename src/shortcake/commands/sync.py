@@ -3,13 +3,13 @@ from dataclasses import dataclass, field
 from typing import Annotated
 
 import httpx
+import pygit2
 import typer
-from dulwich.objects import Commit
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._cache import update_pr_cache
 from shortcake._exceptions import ShortcakeError
+from shortcake._git._core import Repo
 from shortcake._github import GitHubClient, get_github_token, get_repo_info
 from shortcake._trailers import Trailers
 from shortcake.commands.restack import RestackResult, _restack
@@ -67,26 +67,24 @@ def _replay_commits(repo: Repo, commits: list[bytes], base: bytes) -> bytes:
     current_base = base
     # Commits are newest-first, so reverse to replay in order
     for commit_sha in reversed(commits):
-        old_commit = repo[commit_sha]
-        old_message = old_commit.message.decode()
-        new_sha = git.amend_commit_message(repo, commit_sha, old_message)
-        # Update the parent to point to current_base
-        new_commit = repo[new_sha]
+        old_commit = repo.get(commit_sha.decode())
+        new_sha = git.amend_commit_message(repo, commit_sha, old_commit.message)
+        new_commit = repo.get(new_sha.decode())
 
-        fixed_commit = Commit()
-        fixed_commit.tree = old_commit.tree
-        fixed_commit.parents = [current_base]
-        fixed_commit.author = old_commit.author
-        fixed_commit.committer = old_commit.committer
-        fixed_commit.author_time = old_commit.author_time
-        fixed_commit.author_timezone = old_commit.author_timezone
-        fixed_commit.commit_time = new_commit.commit_time
-        fixed_commit.commit_timezone = old_commit.commit_timezone
-        fixed_commit.encoding = old_commit.encoding
-        fixed_commit.message = old_commit.message
-
-        repo.object_store.add_object(fixed_commit)
-        current_base = fixed_commit.id
+        new_oid = repo.create_commit(
+            None,  # don't update any ref
+            old_commit.author,
+            pygit2.Signature(
+                new_commit.committer.name,
+                new_commit.committer.email,
+                new_commit.committer.time,
+                new_commit.committer.offset,
+            ),
+            old_commit.message,
+            old_commit.tree_id,
+            [pygit2.Oid(hex=current_base.decode())],
+        )
+        current_base = str(new_oid).encode()
 
     return current_base
 
@@ -145,21 +143,23 @@ def _reparent_branch(repo: Repo, child: str, new_parent: str) -> None:
     new_first_sha = git.amend_commit_message(repo, first_commit_sha, new_message)
 
     # Fix parent of first commit to point to new_parent_head
-    old_first = repo[first_commit_sha]
-    fixed_first = Commit()
-    fixed_first.tree = old_first.tree
-    fixed_first.parents = [new_parent_head]
-    fixed_first.author = old_first.author
-    fixed_first.committer = old_first.committer
-    fixed_first.author_time = old_first.author_time
-    fixed_first.author_timezone = old_first.author_timezone
-    fixed_first.commit_time = repo[new_first_sha].commit_time
-    fixed_first.commit_timezone = old_first.commit_timezone
-    fixed_first.encoding = old_first.encoding
-    fixed_first.message = new_message.encode()
+    old_first = repo.get(first_commit_sha.decode())
+    new_first_commit = repo.get(new_first_sha.decode())
 
-    repo.object_store.add_object(fixed_first)
-    new_first_sha = fixed_first.id
+    new_oid = repo.create_commit(
+        None,  # don't update any ref
+        old_first.author,
+        pygit2.Signature(
+            new_first_commit.committer.name,
+            new_first_commit.committer.email,
+            new_first_commit.committer.time,
+            new_first_commit.committer.offset,
+        ),
+        new_message,
+        old_first.tree_id,
+        [pygit2.Oid(hex=new_parent_head.decode())],
+    )
+    new_first_sha = str(new_oid).encode()
 
     # Replay remaining commits
     if len(commits) > 1:

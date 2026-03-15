@@ -4,11 +4,11 @@ from dataclasses import dataclass, field
 from typing import Annotated
 
 import typer
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._editor import open_editor
 from shortcake._exceptions import ShortcakeError
+from shortcake._git._core import Repo
 from shortcake._gitmoji import pick_gitmoji
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 from shortcake._trailers import Trailers
@@ -163,7 +163,7 @@ def _create_insert_before(repo: Repo, message: str, branch_name: str) -> CreateR
         # falsely conflict when files differ between parent and current.
         subprocess.run(
             ["git", "checkout", temp_sha.decode(), "--", *staged_files],
-            cwd=repo.path,
+            cwd=repo.workdir,
             capture_output=True,
             check=True,
         )
@@ -420,7 +420,7 @@ def create(
         raise typer.Exit(1)
 
     # Run pre-commit hooks FIRST (before user writes message)
-    # We handle hooks ourselves, dulwich always skips them
+    # We handle hooks ourselves, pygit2 always skips them
     if not no_verify and has_staged and git.has_precommit_hook(repo):
         typer.echo("Running pre-commit hooks...")
         success, error = git.run_precommit_hook(repo)

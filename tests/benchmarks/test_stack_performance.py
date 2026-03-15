@@ -9,7 +9,15 @@ import pytest
 
 from shortcake import _git as git
 from shortcake._trailers import Trailers
-from tests._git_helpers import Repo, add_paths, commit, init_repo, reset_hard
+from tests._git_helpers import (
+    Repo,
+    add_paths,
+    commit,
+    get_ref,
+    init_repo,
+    reset_hard,
+    set_ref,
+)
 
 
 @pytest.fixture
@@ -31,9 +39,9 @@ def repo_with_many_branches(tmp_path: Path) -> Repo:
     parent_branch = "main"
     for i in range(100):
         branch_name = f"branch_{i}"
-        parent_sha = repo.refs[f"refs/heads/{parent_branch}".encode()]
-        repo.refs[f"refs/heads/{branch_name}".encode()] = parent_sha
-        repo.refs.set_symbolic_ref(b"HEAD", f"refs/heads/{branch_name}".encode())
+        parent_sha = get_ref(repo, f"refs/heads/{parent_branch}")
+        set_ref(repo, f"refs/heads/{branch_name}", parent_sha)
+        repo.set_head(f"refs/heads/{branch_name}")
 
         # Add a file and commit with trailer
         file_path = tmp_path / f"file_{i}.txt"
@@ -47,7 +55,7 @@ def repo_with_many_branches(tmp_path: Path) -> Repo:
         parent_branch = branch_name
 
     # Switch back to main
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    repo.set_head("refs/heads/main")
     reset_hard(repo)
 
     return repo
@@ -67,13 +75,13 @@ def repo_with_wide_branches(tmp_path: Path) -> Repo:
     readme.write_text("# Test")
     add_paths(repo, readme)
     commit(repo, b"Initial commit")
-    main_sha = repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(repo, "refs/heads/main")
 
     # Create 100 branches all from main
     for i in range(100):
         branch_name = f"branch_{i}"
-        repo.refs[f"refs/heads/{branch_name}".encode()] = main_sha
-        repo.refs.set_symbolic_ref(b"HEAD", f"refs/heads/{branch_name}".encode())
+        set_ref(repo, f"refs/heads/{branch_name}", main_sha)
+        repo.set_head(f"refs/heads/{branch_name}")
 
         # Add a file and commit with trailer
         file_path = tmp_path / f"file_{i}.txt"
@@ -85,7 +93,7 @@ def repo_with_wide_branches(tmp_path: Path) -> Repo:
         commit(repo, message)
 
     # Switch back to main
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    repo.set_head("refs/heads/main")
     reset_hard(repo)
 
     return repo
@@ -172,7 +180,7 @@ class TestUpCommandPerformance:
     def test_up_command_flow(self, benchmark, repo_with_many_branches: Repo) -> None:
         """Benchmark the full up command flow (what actually runs)."""
         # Switch to branch_50
-        repo_with_many_branches.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_50")
+        repo_with_many_branches.set_head("refs/heads/branch_50")
 
         def run():
             current = git.get_current_branch(repo_with_many_branches)
@@ -190,7 +198,7 @@ class TestDownCommandPerformance:
     def test_down_command_flow(self, benchmark, repo_with_many_branches: Repo) -> None:
         """Benchmark the full down command flow."""
         # Switch to branch_50
-        repo_with_many_branches.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_50")
+        repo_with_many_branches.set_head("refs/heads/branch_50")
 
         def run():
             current = git.get_current_branch(repo_with_many_branches)

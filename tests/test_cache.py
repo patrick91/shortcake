@@ -91,14 +91,14 @@ def test_cache_file_location(temp_repo: Repo) -> None:
     """Test cache file is created in .git/shortcake/."""
     update_pr_cache(temp_repo, "feature", 123)
 
-    # repo.controldir() is the .git directory
-    cache_path = Path(temp_repo.controldir()) / "shortcake" / "pr-cache.json"
+    # repo.path.rstrip("/") is the .git directory
+    cache_path = Path(temp_repo.path.rstrip("/")) / "shortcake" / "pr-cache.json"
     assert cache_path.exists()
 
 
 def test_load_cache_invalid_json(temp_repo: Repo) -> None:
     """Test loading cache handles invalid JSON gracefully."""
-    cache_dir = Path(temp_repo.controldir()) / "shortcake"
+    cache_dir = Path(temp_repo.path.rstrip("/")) / "shortcake"
     cache_dir.mkdir(parents=True)
     cache_file = cache_dir / "pr-cache.json"
     cache_file.write_text("not valid json")
@@ -109,7 +109,7 @@ def test_load_cache_invalid_json(temp_repo: Repo) -> None:
 
 def test_load_cache_invalid_structure(temp_repo: Repo) -> None:
     """Test loading cache handles invalid structure gracefully."""
-    cache_dir = Path(temp_repo.controldir()) / "shortcake"
+    cache_dir = Path(temp_repo.path.rstrip("/")) / "shortcake"
     cache_dir.mkdir(parents=True)
     cache_file = cache_dir / "pr-cache.json"
     cache_file.write_text('{"feature": "not a dict"}')

@@ -18,7 +18,14 @@ from shortcake.commands.checkout import (
     checkout,  # noqa: F401 - imported for coverage
     co,  # noqa: F401 - imported for coverage
 )
-from tests._git_helpers import Repo, add_paths, switch_branch
+from tests._git_helpers import (
+    Repo,
+    add_paths,
+    get_ref,
+    set_ref,
+    set_remote,
+    switch_branch,
+)
 
 # Tests for _checkout with local branches
 
@@ -35,7 +42,7 @@ def test_checkout_local_branch_exists(repo_with_feature: Repo) -> None:
     assert result.pr_number is None
 
     # Verify we're on feature branch (HEAD points to feature)
-    assert repo_with_feature.refs.read_ref(b"HEAD") == b"ref: refs/heads/feature"
+    assert repo_with_feature.head.shorthand == "feature"
 
 
 # Tests for _checkout with remote branches
@@ -44,9 +51,7 @@ def test_checkout_local_branch_exists(repo_with_feature: Repo) -> None:
 def test_checkout_remote_branch_fetch_fails(temp_repo: Repo) -> None:
     """Test error when fetch fails."""
     # Set up origin remote
-    config = temp_repo.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
 
     # Mock fetch to fail
     with (
@@ -59,9 +64,7 @@ def test_checkout_remote_branch_fetch_fails(temp_repo: Repo) -> None:
 def test_checkout_remote_branch_not_on_remote(temp_repo: Repo) -> None:
     """Test error when fetch succeeds but branch not found on remote."""
     # Set up origin remote
-    config = temp_repo.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
 
     # Mock fetch to succeed, but don't add the remote ref
     # so get_remote_ref returns None
@@ -81,13 +84,11 @@ def test_checkout_branch_no_remote(temp_repo: Repo) -> None:
 def test_checkout_from_remote_creates_local(temp_repo: Repo, tmp_path: Path) -> None:
     """Test checkout creates local branch from remote."""
     # Set up origin remote
-    config = temp_repo.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
 
     # Simulate remote ref exists
-    remote_sha = temp_repo.head()
-    temp_repo.refs[b"refs/remotes/origin/remote-feature"] = remote_sha
+    remote_sha = str(temp_repo.head.target).encode()
+    set_ref(temp_repo, "refs/remotes/origin/remote-feature", remote_sha)
 
     with patch("shortcake.commands.checkout._fetch_branch", return_value=True):
         result = _checkout(temp_repo, "remote-feature")
@@ -96,18 +97,20 @@ def test_checkout_from_remote_creates_local(temp_repo: Repo, tmp_path: Path) -> 
     assert result.from_remote is True
 
     # Verify local branch was created
-    assert b"refs/heads/remote-feature" in temp_repo.refs
+    assert "refs/heads/remote-feature" in temp_repo.references
 
 
 def test_checkout_from_remote_create_branch_fails(temp_repo: Repo) -> None:
     """Test error when _create_branch_from_remote fails."""
     # Set up origin remote
-    config = temp_repo.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
 
     # Simulate remote ref exists
-    temp_repo.refs[b"refs/remotes/origin/remote-feature"] = temp_repo.head()
+    set_ref(
+        temp_repo,
+        "refs/remotes/origin/remote-feature",
+        str(temp_repo.head.target).encode(),
+    )
 
     with (
         patch("shortcake.commands.checkout._fetch_branch", return_value=True),
@@ -128,15 +131,13 @@ def test_checkout_by_pr_number(
 ) -> None:
     """Test checkout by PR number resolves branch name."""
     # Set up origin remote
-    config = temp_repo.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
 
     # Set up GitHub token
     monkeypatch.setenv("GH_TOKEN", "test-token")
 
     # Create the branch locally
-    temp_repo.refs[b"refs/heads/pr-feature"] = temp_repo.head()
+    set_ref(temp_repo, "refs/heads/pr-feature", str(temp_repo.head.target).encode())
 
     # Mock GitHub API
     respx.get("https://api.github.com/repos/owner/repo/pulls/42").mock(
@@ -167,9 +168,7 @@ def test_checkout_by_pr_number_not_found(
 ) -> None:
     """Test error when PR number doesn't exist."""
     # Set up origin remote
-    config = temp_repo.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
 
     monkeypatch.setenv("GH_TOKEN", "test-token")
 
@@ -217,9 +216,7 @@ def test_checkout_by_pr_number_no_head_ref(
 ) -> None:
     """Test error when PR has no head branch (fork)."""
     # Set up origin remote
-    config = temp_repo.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
 
     monkeypatch.setenv("GH_TOKEN", "test-token")
 
@@ -249,9 +246,7 @@ def test_checkout_by_pr_number_api_error(
 ) -> None:
     """Test error handling for GitHub API errors."""
     # Set up origin remote
-    config = temp_repo.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
 
     monkeypatch.setenv("GH_TOKEN", "test-token")
 
@@ -290,12 +285,14 @@ def test_fetch_branch_failure(temp_repo: Repo) -> None:
 def test_create_branch_from_remote_success(temp_repo: Repo) -> None:
     """Test _create_branch_from_remote creates local branch."""
     # Create remote tracking ref
-    temp_repo.refs[b"refs/remotes/origin/feature"] = temp_repo.head()
+    set_ref(
+        temp_repo, "refs/remotes/origin/feature", str(temp_repo.head.target).encode()
+    )
 
     result = _create_branch_from_remote(temp_repo, "feature")
 
     assert result is True
-    assert b"refs/heads/feature" in temp_repo.refs
+    assert "refs/heads/feature" in temp_repo.references
 
 
 def test_create_branch_from_remote_no_remote_ref(temp_repo: Repo) -> None:
@@ -374,14 +371,12 @@ def test_checkout_cli_pr_output(
     import os
 
     # Set up origin remote
-    config = temp_repo.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
 
     monkeypatch.setenv("GH_TOKEN", "test-token")
 
     # Create the branch locally
-    temp_repo.refs[b"refs/heads/pr-feature"] = temp_repo.head()
+    set_ref(temp_repo, "refs/heads/pr-feature", str(temp_repo.head.target).encode())
 
     respx.get("https://api.github.com/repos/owner/repo/pulls/42").mock(
         return_value=httpx.Response(
@@ -411,13 +406,11 @@ def test_checkout_cli_remote_output(temp_repo: Repo, tmp_path: Path) -> None:
     import os
 
     # Set up origin remote
-    config = temp_repo.get_config()
-    config.set((b"remote", b"origin"), b"url", b"git@github.com:owner/repo.git")
-    config.write_to_path()
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
 
     # Simulate remote ref exists
-    remote_sha = temp_repo.head()
-    temp_repo.refs[b"refs/remotes/origin/remote-feature"] = remote_sha
+    remote_sha = str(temp_repo.head.target).encode()
+    set_ref(temp_repo, "refs/remotes/origin/remote-feature", remote_sha)
 
     os.chdir(tmp_path)
     with patch("shortcake.commands.checkout._fetch_branch", return_value=True):
@@ -430,8 +423,8 @@ def test_checkout_cli_remote_output(temp_repo: Repo, tmp_path: Path) -> None:
 def test_checkout_no_remote_works(temp_repo: Repo, tmp_path: Path) -> None:
     """Test checkout works without a remote configured."""
     # Create a feature branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
 
     os.chdir(tmp_path)
     result = runner.invoke(app, ["checkout", "feature"])

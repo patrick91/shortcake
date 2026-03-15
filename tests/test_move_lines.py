@@ -21,7 +21,7 @@ from shortcake.commands.move_lines import (
     _split_lines_batch,
     _stage_patch_files,
 )
-from tests._git_helpers import Repo, add_paths, commit, switch_branch
+from tests._git_helpers import Repo, add_paths, commit, get_ref, set_ref, switch_branch
 
 
 def _git_diff_patch(repo_path: Path, parent: str, branch: str) -> str:
@@ -60,9 +60,9 @@ def repo_for_move(temp_repo: Repo, tmp_path: Path) -> Repo:
     child_b adds file 'utils.py'.
     """
     # Create child_a from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/child_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/child_a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/child_a", main_sha)
+    temp_repo.set_head("refs/heads/child_a")
 
     # Write app.py with multiple functions
     app_py = tmp_path / "app.py"
@@ -73,11 +73,11 @@ def repo_for_move(temp_repo: Repo, tmp_path: Path) -> Repo:
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: add app functions")
     commit(temp_repo, message_a)
-    child_a_sha = temp_repo.refs[b"refs/heads/child_a"]
+    child_a_sha = get_ref(temp_repo, "refs/heads/child_a")
 
     # Create child_b from child_a
-    temp_repo.refs[b"refs/heads/child_b"] = child_a_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/child_b")
+    set_ref(temp_repo, "refs/heads/child_b", child_a_sha)
+    temp_repo.set_head("refs/heads/child_b")
 
     utils_py = tmp_path / "utils.py"
     utils_py.write_text("def util():\n    return 'util'\n")
@@ -98,9 +98,9 @@ def repo_for_move_parent_to_child(temp_repo: Repo, tmp_path: Path) -> Repo:
 
     main → parent_branch (adds shared.py) → child_branch (adds child.py)
     """
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/parent_branch"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/parent_branch")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/parent_branch", main_sha)
+    temp_repo.set_head("refs/heads/parent_branch")
 
     shared_py = tmp_path / "shared.py"
     shared_py.write_text(
@@ -110,10 +110,10 @@ def repo_for_move_parent_to_child(temp_repo: Repo, tmp_path: Path) -> Repo:
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add shared functions")
     commit(temp_repo, message)
-    parent_sha = temp_repo.refs[b"refs/heads/parent_branch"]
+    parent_sha = get_ref(temp_repo, "refs/heads/parent_branch")
 
-    temp_repo.refs[b"refs/heads/child_branch"] = parent_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/child_branch")
+    set_ref(temp_repo, "refs/heads/child_branch", parent_sha)
+    temp_repo.set_head("refs/heads/child_branch")
 
     child_py = tmp_path / "child.py"
     child_py.write_text("def child_func():\n    return 'child'\n")
@@ -253,8 +253,8 @@ def test_error_source_equals_target(repo_for_move: Repo) -> None:
 def test_error_branch_not_tracked(temp_repo: Repo, tmp_path: Path) -> None:
     """Error when branch is not tracked by Shortcake."""
     # Create an untracked branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/untracked"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/untracked", main_sha)
 
     with pytest.raises(MoveError, match="not tracked"):
         _move_lines(
@@ -457,7 +457,7 @@ def test_error_empty_patch(repo_for_move: Repo) -> None:
 def test_error_rebase_in_progress(repo_for_move: Repo) -> None:
     """Error when rebase is in progress."""
     repo = repo_for_move
-    rebase_dir = Path(repo.controldir()) / "rebase-merge"
+    rebase_dir = Path(repo.path.rstrip("/")) / "rebase-merge"
     rebase_dir.mkdir(exist_ok=True)
 
     try:
@@ -482,8 +482,8 @@ def test_move_restacks_target_descendants(temp_repo: Repo, tmp_path: Path) -> No
     repo_path = Path(repo.path)
 
     # Build: main → branch_a → branch_b → branch_c
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
     switch_branch(repo, "branch_a")
 
     a_py = tmp_path / "a.py"
@@ -492,9 +492,9 @@ def test_move_restacks_target_descendants(temp_repo: Repo, tmp_path: Path) -> No
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: branch a")
     commit(repo, msg_a)
-    a_sha = repo.refs[b"refs/heads/branch_a"]
+    a_sha = get_ref(repo, "refs/heads/branch_a")
 
-    repo.refs[b"refs/heads/branch_b"] = a_sha
+    set_ref(repo, "refs/heads/branch_b", a_sha)
     switch_branch(repo, "branch_b")
 
     b_py = tmp_path / "b.py"
@@ -503,9 +503,9 @@ def test_move_restacks_target_descendants(temp_repo: Repo, tmp_path: Path) -> No
     trailers_b = Trailers(parent_branch="branch_a")
     msg_b = trailers_b.apply_to("feat: branch b")
     commit(repo, msg_b)
-    b_sha = repo.refs[b"refs/heads/branch_b"]
+    b_sha = get_ref(repo, "refs/heads/branch_b")
 
-    repo.refs[b"refs/heads/branch_c"] = b_sha
+    set_ref(repo, "refs/heads/branch_c", b_sha)
     switch_branch(repo, "branch_c")
 
     c_py = tmp_path / "c.py"
@@ -555,8 +555,8 @@ def test_move_deletions(temp_repo: Repo, tmp_path: Path) -> None:
     git.amend_commit(repo, "init with shared.py")
 
     # Create parent_branch from main, delete func_c
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/parent_branch"] = main_sha
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/parent_branch", main_sha)
     switch_branch(repo, "parent_branch")
 
     shared_py.write_text(
@@ -566,10 +566,10 @@ def test_move_deletions(temp_repo: Repo, tmp_path: Path) -> None:
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: remove func_c")
     commit(repo, message)
-    parent_sha = repo.refs[b"refs/heads/parent_branch"]
+    parent_sha = get_ref(repo, "refs/heads/parent_branch")
 
     # Create child_branch from parent_branch
-    repo.refs[b"refs/heads/child_branch"] = parent_sha
+    set_ref(repo, "refs/heads/child_branch", parent_sha)
     switch_branch(repo, "child_branch")
 
     child_py = tmp_path / "child.py"
@@ -688,7 +688,7 @@ def test_move_hunks_error_branch_not_tracked(repo_for_move: Repo) -> None:
 def test_move_hunks_error_rebase_in_progress(repo_for_move: Repo) -> None:
     """Error when rebase is in progress."""
     repo = repo_for_move
-    rebase_dir = Path(repo.controldir()) / "rebase-merge"
+    rebase_dir = Path(repo.path.rstrip("/")) / "rebase-merge"
     rebase_dir.mkdir(exist_ok=True)
 
     try:
@@ -748,9 +748,9 @@ def test_move_hunks_restacks_target_children(
     repo_path = Path(repo.path)
 
     # Extend stack: main → child_a → child_b → child_c
-    child_b_sha = repo.refs[b"refs/heads/child_b"]
-    repo.refs[b"refs/heads/child_c"] = child_b_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/child_c")
+    child_b_sha = get_ref(repo, "refs/heads/child_b")
+    set_ref(repo, "refs/heads/child_c", child_b_sha)
+    repo.set_head("refs/heads/child_c")
 
     extra = tmp_path / "extra.py"
     extra.write_text("def extra():\n    return 'extra'\n")
@@ -798,9 +798,9 @@ def repo_for_split(temp_repo: Repo, tmp_path: Path) -> Repo:
     child_a adds file 'app.py' with two functions (hello + goodbye).
     child_b adds file 'utils.py'.
     """
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/child_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/child_a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/child_a", main_sha)
+    temp_repo.set_head("refs/heads/child_a")
 
     app_py = tmp_path / "app.py"
     app_py.write_text(
@@ -810,10 +810,10 @@ def repo_for_split(temp_repo: Repo, tmp_path: Path) -> Repo:
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: add app functions")
     commit(temp_repo, message_a)
-    child_a_sha = temp_repo.refs[b"refs/heads/child_a"]
+    child_a_sha = get_ref(temp_repo, "refs/heads/child_a")
 
-    temp_repo.refs[b"refs/heads/child_b"] = child_a_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/child_b")
+    set_ref(temp_repo, "refs/heads/child_b", child_a_sha)
+    temp_repo.set_head("refs/heads/child_b")
 
     utils_py = tmp_path / "utils.py"
     utils_py.write_text("def util():\n    return 'util'\n")
@@ -905,9 +905,9 @@ def test_split_hunks_after_basic(repo_for_split: Repo, tmp_path: Path) -> None:
 def test_split_hunks_after_no_child(temp_repo: Repo, tmp_path: Path) -> None:
     """Split 'after' when source has no children works fine (no reparenting)."""
     repo = temp_repo
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/leaf"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/leaf")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/leaf", main_sha)
+    repo.set_head("refs/heads/leaf")
 
     f = tmp_path / "leaf.py"
     f.write_text("def a():\n    return 'a'\n\ndef b():\n    return 'b'\n")
@@ -944,22 +944,22 @@ def test_split_hunks_after_multiple_children_error(
 ) -> None:
     """Split 'after' fails when source has multiple children."""
     repo = temp_repo
-    main_sha = repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(repo, "refs/heads/main")
 
     # Create parent branch
-    repo.refs[b"refs/heads/parent_br"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/parent_br")
+    set_ref(repo, "refs/heads/parent_br", main_sha)
+    repo.set_head("refs/heads/parent_br")
     f = tmp_path / "p.py"
     f.write_text("def p():\n    return 'p'\n")
     add_paths(repo, f)
     trailers = Trailers(parent_branch="main")
     commit(repo, trailers.apply_to("feat: parent"))
-    parent_sha = repo.refs[b"refs/heads/parent_br"]
+    parent_sha = get_ref(repo, "refs/heads/parent_br")
 
     # Create two children
     for name in ["child_x", "child_y"]:
-        repo.refs[f"refs/heads/{name}".encode()] = parent_sha
-        repo.refs.set_symbolic_ref(b"HEAD", f"refs/heads/{name}".encode())
+        set_ref(repo, f"refs/heads/{name}", parent_sha)
+        repo.set_head(f"refs/heads/{name}")
         cf = tmp_path / f"{name}.py"
         cf.write_text(f"def {name}():\n    return '{name}'\n")
         add_paths(repo, cf)
@@ -1017,8 +1017,8 @@ def test_split_hunks_error_branch_exists(repo_for_split: Repo, tmp_path: Path) -
     """Error when generated branch name already exists."""
     repo = repo_for_split
     # Create a branch that conflicts with the generated name
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/feat-split-attempt"] = main_sha
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/feat-split-attempt", main_sha)
 
     repo_path = Path(repo.path)
     full_patch = _git_diff_patch(repo_path, "main", "child_a")
@@ -1039,9 +1039,9 @@ def test_split_hunks_error_branch_exists(repo_for_split: Repo, tmp_path: Path) -
 def test_split_hunks_multiple_hunks(temp_repo: Repo, tmp_path: Path) -> None:
     """Split multiple hunks across files into a new branch."""
     repo = temp_repo
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/multi"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/multi")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/multi", main_sha)
+    repo.set_head("refs/heads/multi")
 
     # Create two files
     f1 = tmp_path / "alpha.py"
@@ -1092,7 +1092,7 @@ def test_split_hunks_rebase_in_progress_error(
 ) -> None:
     """Error when rebase is in progress."""
     repo = repo_for_split
-    rebase_dir = Path(repo.controldir()) / "rebase-merge"
+    rebase_dir = Path(repo.path.rstrip("/")) / "rebase-merge"
     rebase_dir.mkdir(exist_ok=True)
     try:
         with pytest.raises(MoveError, match="rebase in progress"):
@@ -1299,8 +1299,8 @@ def test_split_hunks_invalid_placement_error(repo_for_split: Repo) -> None:
 
 def test_split_hunks_source_not_tracked_error(temp_repo: Repo) -> None:
     """Error when source branch exists but is not tracked by Shortcake."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/untracked"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/untracked", main_sha)
     hunks = [HunkSelection(file_path="app.py", file_patch="x", hunk_index=0)]
     with pytest.raises(MoveError, match="not tracked"):
         _split_hunks(
@@ -1321,9 +1321,9 @@ def repo_for_split_lines(temp_repo: Repo, tmp_path: Path) -> Repo:
 
     work adds 'app.py' with 3 functions (6 added lines, one big hunk).
     """
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/work"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/work")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/work", main_sha)
+    temp_repo.set_head("refs/heads/work")
 
     app_py = tmp_path / "app.py"
     app_py.write_text(
@@ -1521,8 +1521,8 @@ def test_split_lines_dirty_tree_error(
 
 def test_split_lines_branch_not_tracked_error(temp_repo: Repo, tmp_path: Path) -> None:
     """Error when branch is not tracked by Shortcake."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/untracked"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/untracked", main_sha)
 
     chunks = [
         SplitChunk(
@@ -1556,8 +1556,8 @@ def test_split_lines_rollback_on_failure(
 
     # Create a branch that will collide with the second chunk's name
     # (validation catches this before phase 1, so state should be unchanged)
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/feat-extract-bar"] = main_sha
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/feat-extract-bar", main_sha)
 
     chunks = [
         SplitChunk(
@@ -1605,9 +1605,9 @@ def test_split_lines_restacks_source_descendants(
     repo_path = Path(repo.path)
 
     # Add a non-conflicting child to work
-    work_sha = repo.refs[b"refs/heads/work"]
-    repo.refs[b"refs/heads/work-child"] = work_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/work-child")
+    work_sha = get_ref(repo, "refs/heads/work")
+    set_ref(repo, "refs/heads/work-child", work_sha)
+    repo.set_head("refs/heads/work-child")
 
     extra = tmp_path / "extra.py"
     extra.write_text("def extra():\n    return 'extra'\n")
@@ -1708,7 +1708,7 @@ def test_split_lines_invalid_patch_error(repo_for_split_lines: Repo) -> None:
 def test_split_lines_rebase_in_progress_error(repo_for_split_lines: Repo) -> None:
     """Error when rebase is in progress."""
     repo = repo_for_split_lines
-    rebase_dir = Path(repo.controldir()) / "rebase-merge"
+    rebase_dir = Path(repo.path.rstrip("/")) / "rebase-merge"
     rebase_dir.mkdir(exist_ok=True)
 
     chunks = [
@@ -1798,9 +1798,9 @@ def test_split_lines_restack_failure_triggers_rollback(
     repo_path = Path(repo.path)
 
     # Add a child of work so Phase 3 has a branch to restack
-    work_sha = repo.refs[b"refs/heads/work"]
-    repo.refs[b"refs/heads/work-child"] = work_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/work-child")
+    work_sha = get_ref(repo, "refs/heads/work")
+    set_ref(repo, "refs/heads/work-child", work_sha)
+    repo.set_head("refs/heads/work-child")
     extra = tmp_path / "extra.py"
     extra.write_text("x = 1\n")
     add_paths(repo, extra)

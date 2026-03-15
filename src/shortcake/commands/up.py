@@ -2,10 +2,10 @@ from dataclasses import dataclass
 from typing import Annotated
 
 import typer
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
+from shortcake._git._core import Repo
 
 
 class UpError(ShortcakeError):

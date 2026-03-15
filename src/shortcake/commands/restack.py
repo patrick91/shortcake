@@ -3,10 +3,10 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
+from shortcake._git._core import Repo
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 from shortcake._trailers import Trailers
 
@@ -157,7 +157,7 @@ def _restore_trailer(repo: Repo, branch: str, parent: str) -> None:
     """
     import time
 
-    from dulwich.objects import Commit
+    import pygit2
 
     from shortcake.commands.adopt import _replay_commits
 
@@ -170,21 +170,22 @@ def _restore_trailer(repo: Repo, branch: str, parent: str) -> None:
         new_trailers = Trailers(parent_branch=parent)
         message = new_trailers.apply_to(f"chore: track {branch}")
 
-        parent_commit = repo[parent_head]
-        new_commit = Commit()
-        new_commit.tree = parent_commit.tree
-        new_commit.parents = [parent_head]
-        new_commit.author = parent_commit.author
-        new_commit.committer = parent_commit.committer
-        new_commit.author_time = int(time.time())
-        new_commit.author_timezone = parent_commit.author_timezone
-        new_commit.commit_time = int(time.time())
-        new_commit.commit_timezone = parent_commit.commit_timezone
-        new_commit.encoding = parent_commit.encoding
-        new_commit.message = message.encode()
-
-        repo.object_store.add_object(new_commit)
-        git.update_branch(repo, branch, new_commit.id.decode())
+        parent_commit = repo.get(parent_head.decode())
+        now = int(time.time())
+        new_oid = repo.create_commit(
+            None,  # don't update any ref
+            parent_commit.author,
+            pygit2.Signature(
+                parent_commit.committer.name,
+                parent_commit.committer.email,
+                now,
+                parent_commit.committer.offset,
+            ),
+            message,
+            parent_commit.tree_id,
+            [pygit2.Oid(hex=parent_head.decode())],
+        )
+        git.update_branch(repo, branch, str(new_oid))
         return
 
     # The oldest commit is last in list (walker returns newest-first)
@@ -209,9 +210,9 @@ def _restore_trailer(repo: Repo, branch: str, parent: str) -> None:
 def _get_conflict_files(repo: Repo | str) -> list[str]:
     """Get list of files with conflicts."""
     try:
-        if isinstance(repo, Repo):
-            return git.get_conflict_files(repo)
-        return git.get_conflict_files(git.open_repo(Path(repo)))
+        if isinstance(repo, str):
+            return git.get_conflict_files(git.open_repo(Path(repo)))
+        return git.get_conflict_files(repo)
     except (*git.DULWICH_IO_ERRORS, ValueError):
         return []
 
@@ -292,7 +293,7 @@ def _restack(repo: Repo, dry_run: bool = False) -> RestackResult:
     # Save original refs for rollback
     original_refs = {}
     for step in plan:
-        # dulwich returns SHA as 40 ASCII hex bytes, decode to string
+        # SHA is stored as 40 ASCII hex bytes, decode to string
         original_refs[step.branch] = git.get_branch_head(repo, step.branch).decode()
 
     # Save initial state

@@ -1,11 +1,11 @@
 from dataclasses import dataclass
 
 import typer
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
 from shortcake._git import RebaseFailure
+from shortcake._git._core import Repo
 from shortcake._restack_state import RestackState
 
 

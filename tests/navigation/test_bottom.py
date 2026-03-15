@@ -16,14 +16,16 @@ from tests._git_helpers import (
     commit_files,
     create_branch,
     get_branch_head,
+    get_ref,
     init_repo,
+    set_ref,
     switch_branch,
 )
 
 
 def test_bottom_jumps_to_base(repo_with_stack: Repo) -> None:
     """Test jumping from branch_c to branch_a (bottom of stack)."""
-    repo_with_stack.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    repo_with_stack.set_head("refs/heads/branch_c")
 
     result = _bottom(repo_with_stack)
 
@@ -71,9 +73,8 @@ def test_bottom_not_tracked(tmp_path: Path) -> None:
 
 def test_bottom_detached_head(repo_with_stack: Repo) -> None:
     """Test error when in detached HEAD state."""
-    main_sha = repo_with_stack.refs[b"refs/heads/main"]
-    del repo_with_stack.refs[b"HEAD"]
-    repo_with_stack.refs[b"HEAD"] = main_sha
+    main_sha = get_ref(repo_with_stack, "refs/heads/main")
+    set_ref(repo_with_stack, "HEAD", main_sha)
 
     with pytest.raises(DetachedHeadError):
         _bottom(repo_with_stack)
@@ -95,7 +96,7 @@ def test_bottom_updates_working_directory(repo_with_stack: Repo) -> None:
     """Test that navigation updates working directory, not just HEAD."""
     # repo_with_stack has: main → branch_a (a.txt) → branch_b (b.txt) → branch_c (c.txt)
     # Fixture ends on branch_c, so c.txt exists in working directory
-    tmp_path = Path(repo_with_stack.path)
+    tmp_path = Path(repo_with_stack.workdir)
 
     # Verify we're on branch_c with c.txt present
     assert git.get_current_branch(repo_with_stack) == "branch_c"

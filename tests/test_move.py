@@ -10,40 +10,48 @@ from shortcake._restack_state import RestackState
 from shortcake._trailers import Trailers
 from shortcake.cli import app
 from shortcake.commands.move import MoveError, _move
-from tests._git_helpers import Repo, add_paths, commit, reset_hard, switch_branch
+from tests._git_helpers import (
+    Repo,
+    add_paths,
+    commit,
+    get_ref,
+    reset_hard,
+    set_ref,
+    switch_branch,
+)
 
 runner = CliRunner()
 
 
 def _create_stack_3(repo: Repo, tmp_path: Path) -> None:
     """Create a 3-branch linear stack: main -> branch_a -> branch_b -> branch_c."""
-    main_sha = repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(repo, "refs/heads/main")
 
     # branch_a
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
     reset_hard(repo)
 
     (tmp_path / "a.txt").write_text("branch a content")
     add_paths(repo, tmp_path / "a.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: branch a")
     commit(repo, msg_a)
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
 
     # branch_b
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
     reset_hard(repo)
 
     (tmp_path / "b.txt").write_text("branch b content")
     add_paths(repo, tmp_path / "b.txt")
     msg_b = Trailers(parent_branch="branch_a").apply_to("feat: branch b")
     commit(repo, msg_b)
-    branch_b_sha = repo.refs[b"refs/heads/branch_b"]
+    branch_b_sha = get_ref(repo, "refs/heads/branch_b")
 
     # branch_c
-    repo.refs[b"refs/heads/branch_c"] = branch_b_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    set_ref(repo, "refs/heads/branch_c", branch_b_sha)
+    repo.set_head("refs/heads/branch_c")
     reset_hard(repo)
 
     (tmp_path / "c.txt").write_text("branch c content")
@@ -57,9 +65,8 @@ def _create_stack_3(repo: Repo, tmp_path: Path) -> None:
 
 def test_move_detached_head(temp_repo: Repo) -> None:
     """MoveError when HEAD is detached."""
-    head_sha = temp_repo.refs[b"refs/heads/main"]
-    del temp_repo.refs[b"HEAD"]
-    temp_repo.refs[b"HEAD"] = head_sha
+    head_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", head_sha)
     with pytest.raises(MoveError, match="detached HEAD"):
         _move(temp_repo, branch="main", parent="other")
 
@@ -101,9 +108,9 @@ def test_move_no_parent_option(repo_with_stack: Repo) -> None:
 
 def test_move_untracked_branch(temp_repo: Repo, tmp_path: Path) -> None:
     """MoveError when branch is not tracked."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
     reset_hard(temp_repo)
 
     (tmp_path / "feature.txt").write_text("feature")
@@ -198,8 +205,8 @@ def test_move_with_children(temp_repo: Repo, tmp_path: Path) -> None:
     _create_stack_3(temp_repo, tmp_path)
 
     # Create a new branch from main to be the new parent
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/new_parent"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/new_parent", main_sha)
     switch_branch(temp_repo, "new_parent")
     (tmp_path / "np.txt").write_text("new parent content")
     add_paths(temp_repo, tmp_path / "np.txt")
@@ -334,8 +341,8 @@ def test_move_cli_with_children_message(
     monkeypatch.chdir(tmp_path)
 
     # Create new_parent from main
-    main_sha = repo_with_stack.refs[b"refs/heads/main"]
-    repo_with_stack.refs[b"refs/heads/new_parent"] = main_sha
+    main_sha = get_ref(repo_with_stack, "refs/heads/main")
+    set_ref(repo_with_stack, "refs/heads/new_parent", main_sha)
     switch_branch(repo_with_stack, "new_parent")
     (tmp_path / "np.txt").write_text("np content")
     add_paths(repo_with_stack, tmp_path / "np.txt")
@@ -366,26 +373,26 @@ def test_move_cli_conflict_exit_code(
 ) -> None:
     """CLI: conflict returns exit code 1."""
     monkeypatch.chdir(tmp_path)
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # Create shared.txt on main
     switch_branch(temp_repo, "main")
     (tmp_path / "shared.txt").write_text("original")
     add_paths(temp_repo, tmp_path / "shared.txt")
     commit(temp_repo, b"add shared.txt")
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # branch_a: parent of branch_b, modifies shared.txt
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "shared.txt").write_text("content from A")
     add_paths(temp_repo, tmp_path / "shared.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: branch a")
     commit(temp_repo, msg_a)
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # branch_b on top of branch_a (modifies shared.txt differently)
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "shared.txt").write_text("content from B")
     add_paths(temp_repo, tmp_path / "shared.txt")
@@ -393,7 +400,7 @@ def test_move_cli_conflict_exit_code(
     commit(temp_repo, msg_b)
 
     # new_target: diverges from main, also modifies shared.txt
-    temp_repo.refs[b"refs/heads/new_target"] = main_sha
+    set_ref(temp_repo, "refs/heads/new_target", main_sha)
     switch_branch(temp_repo, "new_target")
     (tmp_path / "shared.txt").write_text("content from new_target")
     add_paths(temp_repo, tmp_path / "shared.txt")

@@ -1,9 +1,9 @@
 from dataclasses import dataclass
 
 import typer
-from dulwich.repo import Repo
 
 from shortcake import _git as git
+from shortcake._git._core import Repo
 
 
 @dataclass
@@ -22,7 +22,7 @@ def _log(repo: Repo) -> LogResult:
     all_branches = set(git.get_all_local_branches(repo))
     parent = git.get_branch_parent(repo, current, all_branches)
 
-    head_sha = repo.head()
+    head_sha = str(repo.head.target).encode()
     if parent:
         parent_sha = git.get_branch_head(repo, parent)
         commit_shas = git.get_commits_between(repo, head_sha, parent_sha)

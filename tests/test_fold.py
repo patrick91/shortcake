@@ -9,7 +9,7 @@ from shortcake import _git as git
 from shortcake._trailers import Trailers
 from shortcake.cli import app
 from shortcake.commands.fold import FoldError, _fold
-from tests._git_helpers import Repo, add_paths, commit, switch_branch
+from tests._git_helpers import Repo, add_paths, commit, get_ref, set_ref, switch_branch
 
 runner = CliRunner()
 
@@ -19,9 +19,8 @@ runner = CliRunner()
 
 def test_fold_detached_head(repo_with_stack: Repo) -> None:
     """FoldError when HEAD is detached."""
-    main_sha = repo_with_stack.refs[b"refs/heads/branch_b"]
-    del repo_with_stack.refs[b"HEAD"]
-    repo_with_stack.refs[b"HEAD"] = main_sha
+    main_sha = get_ref(repo_with_stack, "refs/heads/branch_b")
+    set_ref(repo_with_stack, "HEAD", main_sha)
     with pytest.raises(FoldError, match="detached HEAD"):
         _fold(repo_with_stack)
 
@@ -49,9 +48,9 @@ def test_fold_rebase_in_progress(repo_with_stack: Repo, tmp_path: Path) -> None:
 def test_fold_untracked_branch(temp_repo: Repo, tmp_path: Path) -> None:
     """FoldError when current branch is not tracked."""
     # Create untracked feature branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     file = tmp_path / "feature.txt"
     file.write_text("feature")
@@ -133,28 +132,28 @@ def test_fold_with_into_flag(repo_with_stack: Repo, tmp_path: Path) -> None:
 def test_fold_reparents_single_child(temp_repo: Repo, tmp_path: Path) -> None:
     """Stack A→B→C, fold B: C should be re-parented to A."""
     # Create A → B → C stack
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # branch_a
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a content")
     add_paths(temp_repo, tmp_path / "a.txt")
     trailers_a = Trailers(parent_branch="main")
     commit(temp_repo, trailers_a.apply_to("feat: branch a"))
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # branch_b
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b content")
     add_paths(temp_repo, tmp_path / "b.txt")
     trailers_b = Trailers(parent_branch="branch_a")
     commit(temp_repo, trailers_b.apply_to("feat: branch b"))
-    branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
+    branch_b_sha = get_ref(temp_repo, "refs/heads/branch_b")
 
     # branch_c
-    temp_repo.refs[b"refs/heads/branch_c"] = branch_b_sha
+    set_ref(temp_repo, "refs/heads/branch_c", branch_b_sha)
     switch_branch(temp_repo, "branch_c")
     (tmp_path / "c.txt").write_text("c content")
     add_paths(temp_repo, tmp_path / "c.txt")
@@ -201,28 +200,28 @@ def test_fold_reparents_multiple_children(repo_with_fork: Repo, tmp_path: Path) 
 
 def test_fold_restacks_after_reparent(temp_repo: Repo, tmp_path: Path) -> None:
     """Stack A→B→C, fold B: after reparent, C is restacked onto A."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # branch_a
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a content")
     add_paths(temp_repo, tmp_path / "a.txt")
     trailers_a = Trailers(parent_branch="main")
     commit(temp_repo, trailers_a.apply_to("feat: branch a"))
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # branch_b
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b content")
     add_paths(temp_repo, tmp_path / "b.txt")
     trailers_b = Trailers(parent_branch="branch_a")
     commit(temp_repo, trailers_b.apply_to("feat: branch b"))
-    branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
+    branch_b_sha = get_ref(temp_repo, "refs/heads/branch_b")
 
     # branch_c
-    temp_repo.refs[b"refs/heads/branch_c"] = branch_b_sha
+    set_ref(temp_repo, "refs/heads/branch_c", branch_b_sha)
     switch_branch(temp_repo, "branch_c")
     (tmp_path / "c.txt").write_text("c content")
     add_paths(temp_repo, tmp_path / "c.txt")
@@ -248,28 +247,28 @@ def test_fold_reparents_child_with_multiple_commits(
     temp_repo: Repo, tmp_path: Path
 ) -> None:
     """Stack A→B→C where C has 2 commits: fold B, C is re-parented with replay."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # branch_a
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a content")
     add_paths(temp_repo, tmp_path / "a.txt")
     trailers_a = Trailers(parent_branch="main")
     commit(temp_repo, trailers_a.apply_to("feat: branch a"))
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # branch_b
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b content")
     add_paths(temp_repo, tmp_path / "b.txt")
     trailers_b = Trailers(parent_branch="branch_a")
     commit(temp_repo, trailers_b.apply_to("feat: branch b"))
-    branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
+    branch_b_sha = get_ref(temp_repo, "refs/heads/branch_b")
 
     # branch_c with TWO commits
-    temp_repo.refs[b"refs/heads/branch_c"] = branch_b_sha
+    set_ref(temp_repo, "refs/heads/branch_c", branch_b_sha)
     switch_branch(temp_repo, "branch_c")
     (tmp_path / "c1.txt").write_text("c1 content")
     add_paths(temp_repo, tmp_path / "c1.txt")
@@ -300,10 +299,10 @@ def test_fold_reparents_child_with_multiple_commits(
 
 def test_fold_empty_diff(temp_repo: Repo, tmp_path: Path) -> None:
     """Fold a branch with no unique diff: just delete + reparent."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # branch_a: tracked but same tree as main (empty diff)
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     trailers_a = Trailers(parent_branch="main")
     # Create a commit with trailer but no file changes - use amend_commit_message
@@ -314,10 +313,10 @@ def test_fold_empty_diff(temp_repo: Repo, tmp_path: Path) -> None:
     (tmp_path / "a.txt").write_text("a content")
     add_paths(temp_repo, tmp_path / "a.txt")
     commit(temp_repo, trailers_a.apply_to("feat: branch a"))
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # branch_b: has the same file content as branch_a (empty diff relative to parent)
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
     switch_branch(temp_repo, "branch_b")
     trailers_b = Trailers(parent_branch="branch_a")
     # Make a commit with trailer but no file changes - we need at least a commit
@@ -336,19 +335,19 @@ def test_fold_empty_diff(temp_repo: Repo, tmp_path: Path) -> None:
 
 def test_fold_rollback_on_patch_failure(temp_repo: Repo, tmp_path: Path) -> None:
     """Rollback when patch can't be applied to target."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # branch_a: create a file
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "shared.txt").write_text("original from a")
     add_paths(temp_repo, tmp_path / "shared.txt")
     trailers_a = Trailers(parent_branch="main")
     commit(temp_repo, trailers_a.apply_to("feat: branch a"))
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # branch_b: modifies shared.txt
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "shared.txt").write_text("modified by b")
     add_paths(temp_repo, tmp_path / "shared.txt")
@@ -372,19 +371,19 @@ def test_fold_rollback_on_patch_failure(temp_repo: Repo, tmp_path: Path) -> None
 
 def test_fold_after_parent_rebased(temp_repo: Repo, tmp_path: Path) -> None:
     """Fold works when parent branch was rebased (stale merge base)."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # branch_a: create a file
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a content")
     add_paths(temp_repo, tmp_path / "a.txt")
     trailers_a = Trailers(parent_branch="main")
     commit(temp_repo, trailers_a.apply_to("feat: branch a"))
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # branch_b: child of branch_a, adds its own file
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b content")
     add_paths(temp_repo, tmp_path / "b.txt")
@@ -413,19 +412,19 @@ def test_fold_after_parent_rebased(temp_repo: Repo, tmp_path: Path) -> None:
 
 def test_fold_ignores_untracked_files(temp_repo: Repo, tmp_path: Path) -> None:
     """Fold should not stage or commit untracked files."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # branch_a: create a.txt
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a content")
     add_paths(temp_repo, tmp_path / "a.txt")
     trailers_a = Trailers(parent_branch="main")
     commit(temp_repo, trailers_a.apply_to("feat: branch a"))
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # branch_b: create b.txt
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b content")
     add_paths(temp_repo, tmp_path / "b.txt")
@@ -444,8 +443,9 @@ def test_fold_ignores_untracked_files(temp_repo: Repo, tmp_path: Path) -> None:
 
     # Verify it's still untracked (not in the commit tree)
     branch_a_head = git.get_branch_head(temp_repo, "branch_a")
-    tree = temp_repo[temp_repo[branch_a_head].tree]
-    tree_files = [entry.path.decode() for entry in tree.items()]
+    commit_obj = temp_repo.get(branch_a_head.decode())
+    tree = temp_repo.get(str(commit_obj.tree_id))
+    tree_files = [entry.name for entry in tree]
     assert "untracked.txt" not in tree_files
 
 
@@ -454,19 +454,19 @@ def test_fold_ignores_untracked_files(temp_repo: Repo, tmp_path: Path) -> None:
 
 def test_fold_no_verify(temp_repo: Repo, tmp_path: Path) -> None:
     """_fold() with no_verify=True succeeds despite failing pre-commit hook."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # branch_a
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a content")
     add_paths(temp_repo, tmp_path / "a.txt")
     trailers_a = Trailers(parent_branch="main")
     commit(temp_repo, trailers_a.apply_to("feat: branch a"))
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # branch_b
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b content")
     add_paths(temp_repo, tmp_path / "b.txt")
@@ -474,7 +474,7 @@ def test_fold_no_verify(temp_repo: Repo, tmp_path: Path) -> None:
     commit(temp_repo, trailers_b.apply_to("feat: branch b"))
 
     # Create a failing pre-commit hook
-    hooks_dir = Path(temp_repo.controldir()) / "hooks"
+    hooks_dir = Path(temp_repo.path.rstrip("/")) / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_path = hooks_dir / "pre-commit"
     hook_path.write_text("#!/bin/sh\nexit 1\n")
@@ -540,28 +540,28 @@ def test_fold_cli_error(repo_with_stack: Repo, tmp_path: Path) -> None:
 
 def test_fold_cli_with_reparent(temp_repo: Repo, tmp_path: Path) -> None:
     """CLI: shows re-parenting message."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # branch_a
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a content")
     add_paths(temp_repo, tmp_path / "a.txt")
     trailers_a = Trailers(parent_branch="main")
     commit(temp_repo, trailers_a.apply_to("feat: branch a"))
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # branch_b
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b content")
     add_paths(temp_repo, tmp_path / "b.txt")
     trailers_b = Trailers(parent_branch="branch_a")
     commit(temp_repo, trailers_b.apply_to("feat: branch b"))
-    branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
+    branch_b_sha = get_ref(temp_repo, "refs/heads/branch_b")
 
     # branch_c
-    temp_repo.refs[b"refs/heads/branch_c"] = branch_b_sha
+    set_ref(temp_repo, "refs/heads/branch_c", branch_b_sha)
     switch_branch(temp_repo, "branch_c")
     (tmp_path / "c.txt").write_text("c content")
     add_paths(temp_repo, tmp_path / "c.txt")
@@ -584,7 +584,7 @@ def test_fold_cli_no_verify(repo_with_stack: Repo, tmp_path: Path) -> None:
     os.chdir(tmp_path)
 
     # Create a failing pre-commit hook
-    hooks_dir = Path(repo_with_stack.controldir()) / "hooks"
+    hooks_dir = Path(repo_with_stack.path.rstrip("/")) / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_path = hooks_dir / "pre-commit"
     hook_path.write_text("#!/bin/sh\nexit 1\n")
@@ -602,7 +602,7 @@ def test_fold_cli_no_verify_short(repo_with_stack: Repo, tmp_path: Path) -> None
     os.chdir(tmp_path)
 
     # Create a failing pre-commit hook
-    hooks_dir = Path(repo_with_stack.controldir()) / "hooks"
+    hooks_dir = Path(repo_with_stack.path.rstrip("/")) / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_path = hooks_dir / "pre-commit"
     hook_path.write_text("#!/bin/sh\nexit 1\n")

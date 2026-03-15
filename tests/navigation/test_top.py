@@ -11,7 +11,7 @@ from shortcake.commands.top import (
     TopResult,
     _top,
 )
-from tests._git_helpers import Repo, switch_branch
+from tests._git_helpers import Repo, get_ref, set_ref, switch_branch
 
 
 def test_top_jumps_to_leaf(repo_with_stack: Repo) -> None:
@@ -29,7 +29,7 @@ def test_top_jumps_to_leaf(repo_with_stack: Repo) -> None:
 
 def test_top_already_at_top(repo_with_stack: Repo) -> None:
     """Test when already at top of stack."""
-    repo_with_stack.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    repo_with_stack.set_head("refs/heads/branch_c")
 
     result = _top(repo_with_stack)
 
@@ -63,9 +63,8 @@ def test_top_multiple_children(repo_with_fork: Repo) -> None:
 
 def test_top_detached_head(repo_with_stack: Repo) -> None:
     """Test error when in detached HEAD state."""
-    main_sha = repo_with_stack.refs[b"refs/heads/main"]
-    del repo_with_stack.refs[b"HEAD"]
-    repo_with_stack.refs[b"HEAD"] = main_sha
+    main_sha = get_ref(repo_with_stack, "refs/heads/main")
+    set_ref(repo_with_stack, "HEAD", main_sha)
 
     with pytest.raises(DetachedHeadError):
         _top(repo_with_stack)
@@ -74,7 +73,7 @@ def test_top_detached_head(repo_with_stack: Repo) -> None:
 def test_top_updates_working_directory(repo_with_stack: Repo) -> None:
     """Test that navigation updates working directory, not just HEAD."""
     # repo_with_stack has: main → branch_a (a.txt) → branch_b (b.txt) → branch_c (c.txt)
-    tmp_path = Path(repo_with_stack.path)
+    tmp_path = Path(repo_with_stack.workdir)
 
     # Switch to main (only has README.md, no a.txt/b.txt/c.txt)
     switch_branch(repo_with_stack, "main")

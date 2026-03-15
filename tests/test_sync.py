@@ -31,10 +31,12 @@ from tests._git_helpers import (
     Repo,
     add_paths,
     commit,
+    get_ref,
     init_repo,
     remove_paths,
     reset_hard,
     run_git,
+    set_ref,
     switch_branch,
 )
 
@@ -75,9 +77,9 @@ def test_is_squash_merged_true(temp_repo: Repo, tmp_path: Path) -> None:
     to main, without making the branch an ancestor of main.
     """
     # Create feature branch from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     # Add a commit on feature
     feature_file = tmp_path / "feature.txt"
@@ -88,7 +90,7 @@ def test_is_squash_merged_true(temp_repo: Repo, tmp_path: Path) -> None:
     commit(temp_repo, message)
 
     # Simulate squash merge: add same file to main directly
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    temp_repo.set_head("refs/heads/main")
     reset_hard(temp_repo)
     # Create same file with same content on main
     feature_file.write_text("feature content")
@@ -109,8 +111,8 @@ def test_is_squash_merged_false(repo_with_tracked_feature: Repo) -> None:
 def test_is_squash_merged_branch_no_changes(temp_repo: Repo, tmp_path: Path) -> None:
     """Test is_squash_merged when branch tree equals merge base (no changes)."""
     # Create feature branch at same commit as main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
 
     # Branch has no changes - tree equals merge base
     assert is_squash_merged(temp_repo, "feature", "main")
@@ -125,9 +127,9 @@ def test_is_squash_merged_with_deletion(temp_repo: Repo, tmp_path: Path) -> None
     commit(temp_repo, b"Add file to delete")
 
     # Create feature branch from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
     reset_hard(temp_repo)
 
     # Delete the file on feature branch
@@ -138,7 +140,7 @@ def test_is_squash_merged_with_deletion(temp_repo: Repo, tmp_path: Path) -> None
     commit(temp_repo, message)
 
     # Simulate squash merge: delete same file on main
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    temp_repo.set_head("refs/heads/main")
     reset_hard(temp_repo)
     delete_me.unlink()
     remove_paths(temp_repo, delete_me)
@@ -156,9 +158,9 @@ def test_is_squash_merged_with_extra_trunk_changes(
     This tests the case where branch changes are a subset of trunk changes.
     """
     # Create feature branch from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     # Add a commit on feature
     feature_file = tmp_path / "feature.txt"
@@ -170,7 +172,7 @@ def test_is_squash_merged_with_extra_trunk_changes(
 
     # Simulate squash merge with extra changes:
     # Add same file to main PLUS an additional file
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    temp_repo.set_head("refs/heads/main")
     reset_hard(temp_repo)
     # Create same file with same content on main
     feature_file.write_text("feature content")
@@ -204,9 +206,9 @@ def test_is_squash_merged_with_extra_trunk_deletions(
     commit(temp_repo, b"Add files to delete later")
 
     # Create feature branch from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     # On feature: delete one file AND add a new file
     branch_deletes.unlink()
@@ -220,7 +222,7 @@ def test_is_squash_merged_with_extra_trunk_deletions(
 
     # Simulate squash merge with extra deletion:
     # Apply same changes as branch (delete + add) AND delete another file
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    temp_repo.set_head("refs/heads/main")
     reset_hard(temp_repo)
     # Delete same file branch deleted
     branch_deletes.unlink()
@@ -256,9 +258,9 @@ def test_is_squash_merged_trunk_modified_same_files_further(
     commit(temp_repo, b"Add shared file")
 
     # Create feature branch from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     # Modify the shared file on feature
     shared_file.write_text("modified by feature")
@@ -268,7 +270,7 @@ def test_is_squash_merged_trunk_modified_same_files_further(
     commit(temp_repo, message)
 
     # Simulate squash merge into main, then additional changes to same file
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    temp_repo.set_head("refs/heads/main")
     reset_hard(temp_repo)
     # Apply branch's changes (simulating squash merge)
     shared_file.write_text("modified by feature")
@@ -300,9 +302,9 @@ def test_is_squash_merged_false_positive_independent_changes(
     commit(temp_repo, b"Add shared file")
 
     # Create feature branch from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     # Modify shared file on feature
     shared_file.write_text("modified by feature")
@@ -312,7 +314,7 @@ def test_is_squash_merged_false_positive_independent_changes(
     commit(temp_repo, message)
 
     # Independently modify same file on main with DIFFERENT content
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    temp_repo.set_head("refs/heads/main")
     reset_hard(temp_repo)
     shared_file.write_text("independently modified on main")
     add_paths(temp_repo, shared_file)
@@ -337,9 +339,9 @@ def test_is_squash_merged_deletion_not_applied(temp_repo: Repo, tmp_path: Path) 
     commit(temp_repo, b"Add file to delete")
 
     # Create feature branch from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     # Delete the file on feature branch
     to_delete.unlink()
@@ -349,7 +351,7 @@ def test_is_squash_merged_deletion_not_applied(temp_repo: Repo, tmp_path: Path) 
     commit(temp_repo, message)
 
     # On main, modify the file instead of deleting it
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    temp_repo.set_head("refs/heads/main")
     reset_hard(temp_repo)
     to_delete.write_text("modified on trunk, not deleted")
     add_paths(temp_repo, to_delete)
@@ -388,9 +390,9 @@ def test_get_merged_branches_detects_squash_merge(
 ) -> None:
     """Test get_merged_branches detects squash-merged branches."""
     # Create feature branch from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     # Add a commit on feature with trailer
     feature_file = tmp_path / "feature.txt"
@@ -401,7 +403,7 @@ def test_get_merged_branches_detects_squash_merge(
     commit(temp_repo, message)
 
     # Simulate squash merge: add same file to main
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    temp_repo.set_head("refs/heads/main")
     reset_hard(temp_repo)
     feature_file.write_text("feature content")
     add_paths(temp_repo, feature_file)
@@ -466,9 +468,9 @@ def test_reparent_branch_when_parent_diverged(temp_repo: Repo, tmp_path: Path) -
     correctly update branch_b's trailer.
     """
     # Create branch_a from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
+    temp_repo.set_head("refs/heads/branch_a")
 
     # Commit on branch_a
     file_a = tmp_path / "a.txt"
@@ -476,11 +478,11 @@ def test_reparent_branch_when_parent_diverged(temp_repo: Repo, tmp_path: Path) -
     add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     commit(temp_repo, trailers_a.apply_to("feat: branch a"))
-    old_branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    old_branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # Create branch_b from branch_a
-    temp_repo.refs[b"refs/heads/branch_b"] = old_branch_a_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(temp_repo, "refs/heads/branch_b", old_branch_a_sha)
+    temp_repo.set_head("refs/heads/branch_b")
 
     # Commit on branch_b
     file_b = tmp_path / "b.txt"
@@ -490,14 +492,14 @@ def test_reparent_branch_when_parent_diverged(temp_repo: Repo, tmp_path: Path) -
     commit(temp_repo, trailers_b.apply_to("feat: branch b"))
 
     # Now simulate branch_a being rebased (new commit with different SHA)
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    temp_repo.set_head("refs/heads/branch_a")
     reset_hard(temp_repo, treeish=main_sha)
     file_a.write_text("branch a content rebased")
     add_paths(temp_repo, file_a)
     commit(temp_repo, trailers_a.apply_to("feat: branch a rebased").encode())
     # branch_a now has a different head than what branch_b was based on
 
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    temp_repo.set_head("refs/heads/branch_b")
     reset_hard(temp_repo)
 
     # Reparent branch_b to main (as if branch_a was merged and deleted)
@@ -611,29 +613,29 @@ def test_sync_deletes_current_branch_switches_to_trunk(
 def test_sync_chain_deletion(temp_repo: Repo, tmp_path: Path) -> None:
     """Test sync deletes chain of merged branches in correct order."""
     # Create chain: main → branch_a → branch_b, both merged
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
+    temp_repo.set_head("refs/heads/branch_a")
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("a")
     add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     commit(temp_repo, trailers_a.apply_to("feat: a"))
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
+    temp_repo.set_head("refs/heads/branch_b")
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("b")
     add_paths(temp_repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
     commit(temp_repo, trailers_b.apply_to("feat: b"))
-    branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
+    branch_b_sha = get_ref(temp_repo, "refs/heads/branch_b")
 
     # Merge both into main (fast-forward to branch_b)
-    temp_repo.refs[b"refs/heads/main"] = branch_b_sha
+    set_ref(temp_repo, "refs/heads/main", branch_b_sha)
 
     # Add commit to main so it's ahead
     switch_branch(temp_repo, "main")
@@ -764,9 +766,9 @@ def test_sync_error_no_default_branch(tmp_path: Path) -> None:
 def test_reparent_branch_untracked(temp_repo: Repo, tmp_path: Path) -> None:
     """Test _reparent_branch does nothing for untracked branch."""
     # Create an untracked feature branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     # Add commit without trailer
     file_a = tmp_path / "feature.txt"
@@ -801,24 +803,24 @@ def test_reparent_branch_orphan_commit(tmp_path: Path) -> None:
     orphan_file.write_text("orphan content")
     run_git(repo, "add", "-A")
     commit(repo, message)
-    feature_sha = repo.refs[b"refs/heads/feature"]
+    feature_sha = get_ref(repo, "refs/heads/feature")
 
     # Reparent should return early (orphan commit, merge_base is None)
     _reparent_branch(repo, "feature", "main")
 
     # Branch should still exist and be unchanged
     assert git.branch_exists(repo, "feature")
-    assert repo.refs[b"refs/heads/feature"] == feature_sha
+    assert get_ref(repo, "refs/heads/feature") == feature_sha
 
 
 def test_reparent_branch_no_commits(temp_repo: Repo, tmp_path: Path) -> None:
     """Test _reparent_branch when branch has no commits relative to parent."""
     # Create tracked feature branch at same commit as main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
 
     # Create a commit with trailer but no file changes
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    temp_repo.set_head("refs/heads/feature")
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: empty feature")
 
@@ -829,8 +831,8 @@ def test_reparent_branch_no_commits(temp_repo: Repo, tmp_path: Path) -> None:
     commit(temp_repo, message)
 
     # Now fast-forward main to feature so they're at the same commit
-    feature_sha = temp_repo.refs[b"refs/heads/feature"]
-    temp_repo.refs[b"refs/heads/main"] = feature_sha
+    feature_sha = get_ref(temp_repo, "refs/heads/feature")
+    set_ref(temp_repo, "refs/heads/main", feature_sha)
 
     # Reparent should handle this gracefully (no commits between them now)
     # This tests the "if not commits: return" branch
@@ -927,9 +929,9 @@ def test_cli_sync_conflict_exit(
 def test_reparent_branch_same_commit(temp_repo: Repo, tmp_path: Path) -> None:
     """Test _reparent_branch returns early when no commits to replay."""
     # Create two branches pointing to same commit with feature having a trailer
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     # Add commit to feature
     file_a = tmp_path / "feature.txt"
@@ -939,9 +941,9 @@ def test_reparent_branch_same_commit(temp_repo: Repo, tmp_path: Path) -> None:
     commit(temp_repo, trailers.apply_to("feat: feature"))
 
     # Create a "child" branch that points to the same commit as its "parent"
-    feature_sha = temp_repo.refs[b"refs/heads/feature"]
-    temp_repo.refs[b"refs/heads/child"] = feature_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/child")
+    feature_sha = get_ref(temp_repo, "refs/heads/feature")
+    set_ref(temp_repo, "refs/heads/child", feature_sha)
+    temp_repo.set_head("refs/heads/child")
 
     # Add trailer to child pointing to feature
     child_file = tmp_path / "child.txt"
@@ -951,8 +953,8 @@ def test_reparent_branch_same_commit(temp_repo: Repo, tmp_path: Path) -> None:
     commit(temp_repo, child_trailers.apply_to("feat: child"))
 
     # Fast-forward feature to child's commit so they're the same
-    child_sha = temp_repo.refs[b"refs/heads/child"]
-    temp_repo.refs[b"refs/heads/feature"] = child_sha
+    child_sha = get_ref(temp_repo, "refs/heads/child")
+    set_ref(temp_repo, "refs/heads/feature", child_sha)
 
     # Now try to reparent child to main - there are no commits between
     # child and feature (they're the same), so this should return early
@@ -962,20 +964,20 @@ def test_reparent_branch_same_commit(temp_repo: Repo, tmp_path: Path) -> None:
 def test_reparent_branch_multiple_commits(temp_repo: Repo, tmp_path: Path) -> None:
     """Test _reparent_branch replays all commits when branch has multiple."""
     # Create parent branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/parent"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/parent")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/parent", main_sha)
+    temp_repo.set_head("refs/heads/parent")
 
     file_p = tmp_path / "parent.txt"
     file_p.write_text("parent content")
     add_paths(temp_repo, file_p)
     parent_trailers = Trailers(parent_branch="main")
     commit(temp_repo, parent_trailers.apply_to("feat: parent").encode())
-    parent_sha = temp_repo.refs[b"refs/heads/parent"]
+    parent_sha = get_ref(temp_repo, "refs/heads/parent")
 
     # Create child branch with TWO commits on top of parent
-    temp_repo.refs[b"refs/heads/child"] = parent_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/child")
+    set_ref(temp_repo, "refs/heads/child", parent_sha)
+    temp_repo.set_head("refs/heads/child")
 
     file_c1 = tmp_path / "child1.txt"
     file_c1.write_text("child commit 1")
@@ -997,11 +999,12 @@ def test_reparent_branch_multiple_commits(temp_repo: Repo, tmp_path: Path) -> No
     assert new_parent == "main"
 
     # Verify child still has both commits (check files exist in tree)
-    child_head = temp_repo.refs[b"refs/heads/child"]
-    child_tree = temp_repo[temp_repo[child_head].tree]
-    tree_entries = {entry.path for entry in child_tree.items()}
-    assert b"child1.txt" in tree_entries
-    assert b"child2.txt" in tree_entries
+    child_head = get_ref(temp_repo, "refs/heads/child")
+    child_commit = temp_repo.get(child_head.decode())
+    child_tree = temp_repo.get(str(child_commit.tree_id))
+    tree_entries = {entry.name for entry in child_tree}
+    assert "child1.txt" in tree_entries
+    assert "child2.txt" in tree_entries
 
 
 # Tests for _detect_github_stale_branches
@@ -1344,9 +1347,9 @@ def test_sync_reparents_branch_with_deleted_parent(
 ) -> None:
     """Test sync reparents a branch whose parent was deleted locally."""
     # Create a branch with trailer pointing to non-existent parent
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     test_file = tmp_path / "feature.txt"
     test_file.write_text("feature content")
@@ -1373,9 +1376,9 @@ def test_sync_reparents_branch_with_deleted_parent(
 
 def test_sync_reparents_branch_dry_run(temp_repo: Repo, tmp_path: Path) -> None:
     """Test sync dry run shows reparent without executing."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     test_file = tmp_path / "feature.txt"
     test_file.write_text("feature content")
@@ -1404,9 +1407,9 @@ def test_sync_skips_reparent_when_resolve_returns_none(
     temp_repo: Repo, tmp_path: Path
 ) -> None:
     """Test sync skips reparent when parent can't be resolved."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     test_file = tmp_path / "feature.txt"
     test_file.write_text("feature content")
@@ -1486,13 +1489,13 @@ def test_sync_never_deletes_trunk(temp_repo: Repo, tmp_path: Path) -> None:
     """
 
     def _switch(repo, branch):
-        repo.refs.set_symbolic_ref(b"HEAD", f"refs/heads/{branch}".encode())
+        repo.set_head(f"refs/heads/{branch}")
         reset_hard(repo)
 
     # Create a tracked feature branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     test_file = tmp_path / "feature.txt"
     test_file.write_text("feature content")
@@ -1500,11 +1503,11 @@ def test_sync_never_deletes_trunk(temp_repo: Repo, tmp_path: Path) -> None:
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add feature")
     commit(temp_repo, message)
-    feature_sha = temp_repo.refs[b"refs/heads/feature"]
+    feature_sha = get_ref(temp_repo, "refs/heads/feature")
 
     # Fast-forward main to feature (simulates merge)
     _switch(temp_repo, "main")
-    temp_repo.refs[b"refs/heads/main"] = feature_sha
+    set_ref(temp_repo, "refs/heads/main", feature_sha)
 
     # Add a post-merge commit on main
     _switch(temp_repo, "main")
@@ -1535,35 +1538,35 @@ def test_delete_and_reparent_grandparent_already_deleted(
     """
 
     def _switch(repo, branch):
-        repo.refs.set_symbolic_ref(b"HEAD", f"refs/heads/{branch}".encode())
+        repo.set_head(f"refs/heads/{branch}")
         reset_hard(repo)
 
     # Create branch_a from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
+    temp_repo.set_head("refs/heads/branch_a")
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a")
     add_paths(temp_repo, file_a)
     trailers_a = Trailers(parent_branch="main")
     commit(temp_repo, trailers_a.apply_to("feat: a"))
-    a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # Create branch_b from branch_a
-    temp_repo.refs[b"refs/heads/branch_b"] = a_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(temp_repo, "refs/heads/branch_b", a_sha)
+    temp_repo.set_head("refs/heads/branch_b")
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b")
     add_paths(temp_repo, file_b)
     trailers_b = Trailers(parent_branch="branch_a")
     commit(temp_repo, trailers_b.apply_to("feat: b"))
-    b_sha = temp_repo.refs[b"refs/heads/branch_b"]
+    b_sha = get_ref(temp_repo, "refs/heads/branch_b")
 
     # Create branch_c from branch_b (unmerged, should be reparented)
-    temp_repo.refs[b"refs/heads/branch_c"] = b_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    set_ref(temp_repo, "refs/heads/branch_c", b_sha)
+    temp_repo.set_head("refs/heads/branch_c")
 
     file_c = tmp_path / "c.txt"
     file_c.write_text("branch c")

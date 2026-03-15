@@ -7,7 +7,7 @@ from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 from shortcake._trailers import Trailers
 from shortcake.commands.continue_ import _continue
 from shortcake.commands.restack import _restack
-from tests._git_helpers import Repo, add_paths, commit, switch_branch
+from tests._git_helpers import Repo, add_paths, commit, get_ref, set_ref, switch_branch
 
 
 def test_restack_preserves_trailer_when_commit_becomes_empty(
@@ -23,9 +23,9 @@ def test_restack_preserves_trailer_when_commit_becomes_empty(
     5. With the fix, the trailer is restored on the remaining/new first commit
     """
     # Create branch_a from main with a single commit that has trailer + file changes
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
+    temp_repo.set_head("refs/heads/branch_a")
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
@@ -72,9 +72,9 @@ def test_restack_preserves_trailer_multi_commit_branch(
     the surviving commit.
     """
     # Create branch_a from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
+    temp_repo.set_head("refs/heads/branch_a")
 
     # First commit: trailer + file changes that will become empty
     file_a = tmp_path / "a.txt"
@@ -119,8 +119,9 @@ def test_restack_preserves_trailer_multi_commit_branch(
 
     # The surviving commit should have the unique content
     branch_a_head = git.get_branch_head(temp_repo, "branch_a")
-    tree = temp_repo[temp_repo[branch_a_head].tree]
-    file_names = [item.path.decode() for item in tree.items()]
+    commit_obj = temp_repo.get(branch_a_head.decode())
+    tree = temp_repo.get(str(commit_obj.tree_id))
+    file_names = [item.name for item in tree]
     assert "unique.txt" in file_names
 
 
@@ -134,9 +135,9 @@ def test_restack_preserves_trailer_in_stack_with_empty_commit(
     After restack, both branches should still be tracked.
     """
     # Create branch_a from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
+    temp_repo.set_head("refs/heads/branch_a")
 
     # Commit on branch_a with trailer
     file_a = tmp_path / "a.txt"
@@ -145,11 +146,11 @@ def test_restack_preserves_trailer_in_stack_with_empty_commit(
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
     commit(temp_repo, message_a)
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # Create branch_b from branch_a
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
+    temp_repo.set_head("refs/heads/branch_b")
 
     # Commit on branch_b with trailer
     file_b = tmp_path / "b.txt"
@@ -198,9 +199,9 @@ def test_restack_preserves_trailer_replays_multiple_surviving_commits(
     should be on the new first commit and both surviving commits are replayed.
     """
     # Create branch_a from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
+    temp_repo.set_head("refs/heads/branch_a")
 
     # First commit: trailer + file changes that will become empty
     file_a = tmp_path / "a.txt"
@@ -250,8 +251,9 @@ def test_restack_preserves_trailer_replays_multiple_surviving_commits(
     assert len(commits) == 2
 
     # Both unique files should be in the tree
-    tree = temp_repo[temp_repo[branch_a_head].tree]
-    file_names = [item.path.decode() for item in tree.items()]
+    commit_obj = temp_repo.get(branch_a_head.decode())
+    tree = temp_repo.get(str(commit_obj.tree_id))
+    file_names = [item.name for item in tree]
     assert "unique1.txt" in file_names
     assert "unique2.txt" in file_names
 
@@ -264,9 +266,9 @@ def test_continue_preserves_trailer_current_step(
     Covers continue_.py line 93.
     """
     # Create branch_a with trailer + changes
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
+    temp_repo.set_head("refs/heads/branch_a")
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
@@ -293,7 +295,7 @@ def test_continue_preserves_trailer_current_step(
     branch_a_head = git.get_branch_head(temp_repo, "branch_a")
 
     # Create branch_b with trailer + changes that will become empty
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_head
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_head)
     switch_branch(temp_repo, "branch_b")
 
     file_b = tmp_path / "b.txt"
@@ -357,9 +359,9 @@ def test_continue_preserves_trailer_remaining_steps(
     Covers continue_.py line 154.
     """
     # Create branch_a from main
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
+    temp_repo.set_head("refs/heads/branch_a")
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
@@ -367,10 +369,10 @@ def test_continue_preserves_trailer_remaining_steps(
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
     commit(temp_repo, message_a)
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # Create branch_b from branch_a with changes that will become empty
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
     switch_branch(temp_repo, "branch_b")
 
     file_b = tmp_path / "b.txt"
@@ -379,7 +381,7 @@ def test_continue_preserves_trailer_remaining_steps(
     trailers_b = Trailers(parent_branch="branch_a")
     message_b = trailers_b.apply_to("feat: branch b")
     commit(temp_repo, message_b)
-    branch_b_sha = temp_repo.refs[b"refs/heads/branch_b"]
+    branch_b_sha = get_ref(temp_repo, "refs/heads/branch_b")
 
     # Add b.txt to branch_a so branch_b's commit becomes empty during rebase
     switch_branch(temp_repo, "branch_a")

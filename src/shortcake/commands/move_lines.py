@@ -9,10 +9,9 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from dulwich.repo import Repo
-
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
+from shortcake._git._core import Repo
 from shortcake._git._patch import EmptyPatchError, Side, extract_sub_patch
 from shortcake.commands.restack import _plan_restack, _rebase_branch
 
@@ -209,7 +208,7 @@ def _move_lines(
 
     Raises MoveError on any failure (with rollback of modified refs).
     """
-    repo_path = Path(repo.path)
+    repo_path = Path(repo.workdir)
 
     # --- Preconditions ---
     if source_branch == target_branch:
@@ -380,7 +379,7 @@ def _split_hunks(
     from shortcake.commands.create import _slugify, _validate_branch_name
     from shortcake.commands.reorder import _update_branch_trailer
 
-    repo_path = Path(repo.path)
+    repo_path = Path(repo.workdir)
 
     # --- Preconditions ---
     if not hunks:
@@ -739,7 +738,7 @@ def _accept_working_hunks(
 
     Raises MoveError on any failure (with rollback of modified refs).
     """
-    repo_path = Path(repo.path)
+    repo_path = Path(repo.workdir)
 
     # --- Preconditions ---
     if not hunks:
@@ -933,7 +932,7 @@ def _split_lines_batch(
     """
     from shortcake.commands.create import _slugify, _validate_branch_name
 
-    repo_path = Path(repo.path)
+    repo_path = Path(repo.workdir)
 
     # --- Preconditions ---
     if not chunks:
@@ -1209,7 +1208,7 @@ def _move_hunks(
 
     Raises MoveError on any failure (with rollback of modified refs).
     """
-    repo_path = Path(repo.path)
+    repo_path = Path(repo.workdir)
 
     # --- Preconditions ---
     if not hunks:

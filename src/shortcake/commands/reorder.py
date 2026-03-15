@@ -4,11 +4,11 @@ from dataclasses import dataclass, field
 from typing import Annotated
 
 import typer
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._editor import open_editor
 from shortcake._exceptions import ShortcakeError
+from shortcake._git._core import Repo
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 from shortcake._trailers import Trailers
 from shortcake.commands.adopt import _replay_commits
@@ -110,16 +110,21 @@ def _get_linear_stack(repo: Repo, current_branch: str) -> tuple[str, list[str]]:
 
 
 def _update_branch_trailer(repo: Repo, branch: str, new_parent: str) -> None:
-    """Update the Shortcake-Parent trailer on a branch after it has been rebased.
+    """Update the Shortcake-Parent trailer on a branch.
 
-    The branch is already sitting on new_parent's head, so we use the new_parent
-    head as the base for get_commits_between.
+    Works whether the branch is already rebased onto new_parent or not.
+    Uses the merge base to find only the branch's own commits.
     """
     branch_head = git.get_branch_head(repo, branch)
     new_parent_head = git.get_branch_head(repo, new_parent)
 
+    # Use merge base to find the boundary — works even when branch
+    # hasn't been rebased onto new_parent yet.
+    merge_base = git.get_merge_base(repo, branch_head, new_parent_head)
+    base = merge_base if merge_base is not None else new_parent_head
+
     # Get all commits on this branch (newest-first)
-    commits = git.get_commits_between(repo, branch_head, new_parent_head)
+    commits = git.get_commits_between(repo, branch_head, base)
     if not commits:
         return  # pragma: no cover
 

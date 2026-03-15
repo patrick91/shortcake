@@ -11,12 +11,18 @@ type Repo = Any
 
 
 def _repo_path(repo: Repo | Path) -> Path:
+    """Get working directory path (resolved to handle macOS /var → /private/var)."""
     if isinstance(repo, Path):
-        return repo
-    return Path(repo.path)
+        return repo.resolve()
+    # pygit2.Repository: .workdir is the working directory
+    if hasattr(repo, "workdir") and repo.workdir:
+        return Path(repo.workdir).resolve()
+    return Path(repo.path).resolve()
 
 
 def _libgit_repo(repo: Repo | Path) -> pygit2.Repository:
+    if isinstance(repo, pygit2.Repository):
+        return repo
     repo_path = _repo_path(repo)
     git_dir = repo_path / ".git"
     return pygit2.Repository(git_dir if git_dir.exists() else repo_path)
@@ -83,6 +89,36 @@ def init_repo(path: Path, *, default_branch: str = "main") -> Repo:
 def get_branch_head(repo: Repo, branch: str) -> bytes:
     """Return the SHA of a local branch head."""
     return git.get_branch_head(repo, branch)
+
+
+def get_ref(repo: Repo, ref_name: str | bytes) -> bytes:
+    """Get ref SHA as bytes. Works with both dulwich and pygit2 repos."""
+    name = ref_name.decode() if isinstance(ref_name, bytes) else ref_name
+    ref = repo.references.get(name)
+    if ref is None:
+        raise KeyError(ref_name)
+    return str(ref.target).encode()
+
+
+def set_ref(repo: Repo, ref_name: str | bytes, sha: bytes | str) -> None:
+    """Set ref to SHA. Works with both dulwich and pygit2 repos."""
+    name = ref_name.decode() if isinstance(ref_name, bytes) else ref_name
+    sha_hex = sha.decode() if isinstance(sha, bytes) else sha
+    if name == "HEAD":
+        # To detach HEAD, write the SHA directly to the HEAD file
+        head_path = Path(repo.path.rstrip("/")) / "HEAD"
+        head_path.write_text(sha_hex + "\n")
+        return
+    oid = pygit2.Oid(hex=sha_hex)
+    if name in repo.references:
+        repo.references[name].set_target(oid)
+    else:
+        repo.references.create(name, oid)
+
+
+def set_remote(repo: Repo, remote_name: str, url: str) -> None:
+    """Configure a remote in the repo config."""
+    repo.remotes.create(remote_name, url)
 
 
 def update_branch(repo: Repo, branch: str, sha: bytes) -> None:

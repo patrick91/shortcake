@@ -1,6 +1,5 @@
 """GitHub API client for PR management."""
 
-import io
 import os
 import re
 import subprocess
@@ -9,9 +8,8 @@ from pathlib import Path
 
 import httpx
 import yaml
-from dulwich import porcelain
-from dulwich.repo import Repo
 
+from shortcake._git._core import Repo
 from shortcake._git._pygit2 import get_remote_url
 
 
@@ -389,7 +387,7 @@ def push_branch(
 ) -> tuple[bool, str | None]:
     """Push a branch to origin with force-with-lease semantics.
 
-    Uses dulwich for pushing. When force_with_lease is True, checks that
+    Uses git CLI for pushing. When force_with_lease is True, checks that
     the remote ref hasn't changed since we last fetched before force pushing.
 
     Args:
@@ -406,22 +404,41 @@ def push_branch(
     try:
         if force_with_lease:
             # Get our local tracking ref - what we expect remote to be
-            tracking_ref_name = f"refs/remotes/origin/{branch}".encode()
-            try:
-                expected_remote_sha = repo.refs[tracking_ref_name]
-            except KeyError:
-                # No tracking ref means this is a new branch, allow push
-                expected_remote_sha = None
+            tracking_ref_name = f"refs/remotes/origin/{branch}"
+            tracking_ref_obj = repo.references.get(tracking_ref_name)
+            expected_remote_sha = (
+                str(tracking_ref_obj.target).encode() if tracking_ref_obj else None
+            )
 
             if expected_remote_sha is not None:
                 # Get origin URL for ls_remote
-                config = repo.get_config()
-                origin_url = config.get((b"remote", b"origin"), b"url").decode()
+                origin_url = get_remote_url(repo, "origin")
+                if origin_url is None:  # pragma: no cover
+                    return (False, "No origin remote configured")
 
-                # Check current remote ref (quiet=True suppresses server messages)
-                remote_result = porcelain.ls_remote(origin_url, quiet=True)
-                remote_ref_name = f"refs/heads/{branch}".encode()
-                actual_remote_sha = remote_result.refs.get(remote_ref_name)
+                # Check current remote ref via git ls-remote
+                ls_result = subprocess.run(
+                    [
+                        "git",
+                        "ls-remote",
+                        "--heads",
+                        "--quiet",
+                        origin_url,
+                        f"refs/heads/{branch}",
+                    ],
+                    capture_output=True,
+                    text=True,
+                )
+                if ls_result.returncode != 0:
+                    return (
+                        False,
+                        "failed to check remote ref (ls-remote failed)",
+                    )
+
+                actual_remote_sha = None
+                if ls_result.stdout.strip():
+                    # Format: "<sha>\trefs/heads/<branch>"
+                    actual_remote_sha = ls_result.stdout.split()[0].encode()
 
                 # If remote exists and differs from our expectation, abort
                 if (
@@ -433,15 +450,15 @@ def push_branch(
                         "remote has diverged (use --force to overwrite)",
                     )
 
-        # Proceed with force push (suppress server messages)
-        porcelain.push(
-            repo,
-            "origin",
-            refspecs=[f"refs/heads/{branch}"],
-            force=True,
-            outstream=io.BytesIO(),
-            errstream=io.BytesIO(),
+        # Proceed with force push via git CLI
+        result = subprocess.run(
+            ["git", "push", "origin", f"refs/heads/{branch}", "--force"],
+            cwd=repo.workdir,
+            capture_output=True,
+            text=True,
         )
+        if result.returncode != 0:
+            return (False, result.stderr.strip() or "Push failed")
         return (True, None)
     except Exception as e:  # pragma: no cover
         return (False, str(e))
