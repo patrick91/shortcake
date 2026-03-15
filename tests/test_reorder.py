@@ -17,7 +17,15 @@ from shortcake.commands.reorder import (
     _reorder,
     _update_branch_trailer,
 )
-from tests._git_helpers import Repo, add_paths, commit, reset_hard, switch_branch
+from tests._git_helpers import (
+    Repo,
+    add_paths,
+    commit,
+    get_ref,
+    reset_hard,
+    set_ref,
+    switch_branch,
+)
 
 runner = CliRunner()
 
@@ -27,33 +35,33 @@ def _create_stack_3(repo: Repo, tmp_path: Path) -> None:
 
     Each branch adds a unique file so reorder is conflict-free.
     """
-    main_sha = repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(repo, "refs/heads/main")
 
     # branch_a
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
     reset_hard(repo)
 
     (tmp_path / "a.txt").write_text("branch a content")
     add_paths(repo, tmp_path / "a.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: branch a")
     commit(repo, msg_a)
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
 
     # branch_b
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
     reset_hard(repo)
 
     (tmp_path / "b.txt").write_text("branch b content")
     add_paths(repo, tmp_path / "b.txt")
     msg_b = Trailers(parent_branch="branch_a").apply_to("feat: branch b")
     commit(repo, msg_b)
-    branch_b_sha = repo.refs[b"refs/heads/branch_b"]
+    branch_b_sha = get_ref(repo, "refs/heads/branch_b")
 
     # branch_c
-    repo.refs[b"refs/heads/branch_c"] = branch_b_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    set_ref(repo, "refs/heads/branch_c", branch_b_sha)
+    repo.set_head("refs/heads/branch_c")
     reset_hard(repo)
 
     (tmp_path / "c.txt").write_text("branch c content")
@@ -67,9 +75,8 @@ def _create_stack_3(repo: Repo, tmp_path: Path) -> None:
 
 def test_reorder_detached_head(temp_repo: Repo) -> None:
     """ReorderError when HEAD is detached."""
-    head_sha = temp_repo.refs[b"refs/heads/main"]
-    del temp_repo.refs[b"HEAD"]
-    temp_repo.refs[b"HEAD"] = head_sha
+    head_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", head_sha)
     with pytest.raises(ReorderError, match="detached HEAD"):
         _reorder(temp_repo, new_order=["a", "b"])
 
@@ -105,9 +112,9 @@ def test_reorder_restack_in_progress(repo_with_stack: Repo, tmp_path: Path) -> N
 def test_reorder_untracked_branch(temp_repo: Repo, tmp_path: Path) -> None:
     """ReorderError when current branch is not tracked."""
     # Create an untracked feature branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     (tmp_path / "feature.txt").write_text("feature")
     add_paths(temp_repo, tmp_path / "feature.txt")
@@ -126,28 +133,28 @@ def test_reorder_fork_in_stack(repo_with_fork: Repo) -> None:
 
 def test_reorder_fork_below_current(temp_repo: Repo, tmp_path: Path) -> None:
     """ReorderError when fork is below current branch (downward walk)."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # A (tracked, 1 child B)
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a")
     add_paths(temp_repo, tmp_path / "a.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: a")
     commit(temp_repo, msg_a)
-    sha_a = temp_repo.refs[b"refs/heads/branch_a"]
+    sha_a = get_ref(temp_repo, "refs/heads/branch_a")
 
     # B (tracked, child of A, will have 2 children C and D)
-    temp_repo.refs[b"refs/heads/branch_b"] = sha_a
+    set_ref(temp_repo, "refs/heads/branch_b", sha_a)
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b")
     add_paths(temp_repo, tmp_path / "b.txt")
     msg_b = Trailers(parent_branch="branch_a").apply_to("feat: b")
     commit(temp_repo, msg_b)
-    sha_b = temp_repo.refs[b"refs/heads/branch_b"]
+    sha_b = get_ref(temp_repo, "refs/heads/branch_b")
 
     # C (child of B)
-    temp_repo.refs[b"refs/heads/branch_c"] = sha_b
+    set_ref(temp_repo, "refs/heads/branch_c", sha_b)
     switch_branch(temp_repo, "branch_c")
     (tmp_path / "c.txt").write_text("c")
     add_paths(temp_repo, tmp_path / "c.txt")
@@ -155,7 +162,7 @@ def test_reorder_fork_below_current(temp_repo: Repo, tmp_path: Path) -> None:
     commit(temp_repo, msg_c)
 
     # D (also child of B -> fork at B)
-    temp_repo.refs[b"refs/heads/branch_d"] = sha_b
+    set_ref(temp_repo, "refs/heads/branch_d", sha_b)
     switch_branch(temp_repo, "branch_d")
     (tmp_path / "d.txt").write_text("d")
     add_paths(temp_repo, tmp_path / "d.txt")
@@ -445,8 +452,8 @@ def test_update_branch_trailer(repo_with_tracked_feature: Repo) -> None:
     # should work. Let's verify it can change the trailer value even when
     # the parent ref name changes (not the actual base).
     # We need to test it in context: create a new branch name pointing at main
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/trunk2"] = main_sha
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/trunk2", main_sha)
 
     _update_branch_trailer(repo, "feature", "trunk2")
 
@@ -456,10 +463,10 @@ def test_update_branch_trailer(repo_with_tracked_feature: Repo) -> None:
 
 def test_reorder_multi_commit_branch(temp_repo: Repo, tmp_path: Path) -> None:
     """Reorder works with branches that have multiple commits."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # branch_a: 2 commits
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a1.txt").write_text("a1")
     add_paths(temp_repo, tmp_path / "a1.txt")
@@ -468,10 +475,10 @@ def test_reorder_multi_commit_branch(temp_repo: Repo, tmp_path: Path) -> None:
     (tmp_path / "a2.txt").write_text("a2")
     add_paths(temp_repo, tmp_path / "a2.txt")
     commit(temp_repo, b"feat: branch a commit 2")
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # branch_b: 1 commit
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b")
     add_paths(temp_repo, tmp_path / "b.txt")
@@ -534,19 +541,19 @@ def test_reorder_editor_abort(
 
 def test_reorder_conflict(temp_repo: Repo, tmp_path: Path) -> None:
     """Reorder that causes a conflict saves state for sc continue."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # branch_a: modifies shared.txt
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "shared.txt").write_text("content from A")
     add_paths(temp_repo, tmp_path / "shared.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: branch a")
     commit(temp_repo, msg_a)
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # branch_b: modifies same file differently
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "shared.txt").write_text("content from B")
     add_paths(temp_repo, tmp_path / "shared.txt")
@@ -565,26 +572,26 @@ def test_reorder_conflict(temp_repo: Repo, tmp_path: Path) -> None:
 
 def test_reorder_conflict_abort(temp_repo: Repo, tmp_path: Path) -> None:
     """After a conflict, sc abort restores original state."""
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # branch_a: modifies shared.txt
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "shared.txt").write_text("content from A")
     add_paths(temp_repo, tmp_path / "shared.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: branch a")
     commit(temp_repo, msg_a)
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
-    original_a = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
+    original_a = get_ref(temp_repo, "refs/heads/branch_a")
 
     # branch_b: modifies same file differently
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "shared.txt").write_text("content from B")
     add_paths(temp_repo, tmp_path / "shared.txt")
     msg_b = Trailers(parent_branch="branch_a").apply_to("feat: branch b")
     commit(temp_repo, msg_b)
-    original_b = temp_repo.refs[b"refs/heads/branch_b"]
+    original_b = get_ref(temp_repo, "refs/heads/branch_b")
 
     # Reorder causing conflict
     _reorder(temp_repo, new_order=["branch_b", "branch_a"])
@@ -598,8 +605,8 @@ def test_reorder_conflict_abort(temp_repo: Repo, tmp_path: Path) -> None:
     assert not RestackState.exists(temp_repo)
 
     # Original refs restored
-    assert temp_repo.refs[b"refs/heads/branch_a"] == original_a
-    assert temp_repo.refs[b"refs/heads/branch_b"] == original_b
+    assert get_ref(temp_repo, "refs/heads/branch_a") == original_a
+    assert get_ref(temp_repo, "refs/heads/branch_b") == original_b
 
 
 def _resolve_conflict_and_continue_rebase(
@@ -628,27 +635,27 @@ def test_reorder_conflict_continue(temp_repo: Repo, tmp_path: Path) -> None:
     """
     from shortcake.commands.continue_ import _continue
 
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # Create shared.txt on main so both branches can conflict on it
     switch_branch(temp_repo, "main")
     (tmp_path / "shared.txt").write_text("original")
     add_paths(temp_repo, tmp_path / "shared.txt")
     commit(temp_repo, b"add shared.txt")
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # branch_a: modifies shared.txt
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "shared.txt").write_text("content from A")
     (tmp_path / "a.txt").write_text("a")
     add_paths(temp_repo, tmp_path / "shared.txt", tmp_path / "a.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: branch a")
     commit(temp_repo, msg_a)
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
     # branch_b: modifies shared.txt differently
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "shared.txt").write_text("content from B")
     (tmp_path / "b.txt").write_text("b")
@@ -698,35 +705,35 @@ def test_reorder_conflict_continue_remaining_steps(
     """
     from shortcake.commands.continue_ import _continue
 
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # shared.txt on main
     switch_branch(temp_repo, "main")
     (tmp_path / "shared.txt").write_text("original")
     add_paths(temp_repo, tmp_path / "shared.txt")
     commit(temp_repo, b"add shared.txt")
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
     # branch_a: only adds a.txt (no conflict risk)
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "a.txt").write_text("a")
     add_paths(temp_repo, tmp_path / "a.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: branch a")
     commit(temp_repo, msg_a)
-    sha_a = temp_repo.refs[b"refs/heads/branch_a"]
+    sha_a = get_ref(temp_repo, "refs/heads/branch_a")
 
     # branch_b: only adds b.txt (no conflict risk)
-    temp_repo.refs[b"refs/heads/branch_b"] = sha_a
+    set_ref(temp_repo, "refs/heads/branch_b", sha_a)
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "b.txt").write_text("b")
     add_paths(temp_repo, tmp_path / "b.txt")
     msg_b = Trailers(parent_branch="branch_a").apply_to("feat: branch b")
     commit(temp_repo, msg_b)
-    sha_b = temp_repo.refs[b"refs/heads/branch_b"]
+    sha_b = get_ref(temp_repo, "refs/heads/branch_b")
 
     # branch_c: modifies shared.txt (will conflict when rebased onto main)
-    temp_repo.refs[b"refs/heads/branch_c"] = sha_b
+    set_ref(temp_repo, "refs/heads/branch_c", sha_b)
     switch_branch(temp_repo, "branch_c")
     (tmp_path / "shared.txt").write_text("content from C")
     add_paths(temp_repo, tmp_path / "shared.txt")
@@ -813,17 +820,17 @@ def test_reorder_cli_conflict_exit_code(
 ) -> None:
     """CLI: conflict returns exit code 1."""
     monkeypatch.chdir(tmp_path)
-    main_sha = temp_repo.refs[b"refs/heads/main"]
+    main_sha = get_ref(temp_repo, "refs/heads/main")
 
-    temp_repo.refs[b"refs/heads/branch_a"] = main_sha
+    set_ref(temp_repo, "refs/heads/branch_a", main_sha)
     switch_branch(temp_repo, "branch_a")
     (tmp_path / "shared.txt").write_text("content from A")
     add_paths(temp_repo, tmp_path / "shared.txt")
     msg_a = Trailers(parent_branch="main").apply_to("feat: branch a")
     commit(temp_repo, msg_a)
-    branch_a_sha = temp_repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(temp_repo, "refs/heads/branch_a")
 
-    temp_repo.refs[b"refs/heads/branch_b"] = branch_a_sha
+    set_ref(temp_repo, "refs/heads/branch_b", branch_a_sha)
     switch_branch(temp_repo, "branch_b")
     (tmp_path / "shared.txt").write_text("content from B")
     add_paths(temp_repo, tmp_path / "shared.txt")

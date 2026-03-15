@@ -7,10 +7,10 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
+from shortcake._git._core import Repo
 from shortcake._trailers import Trailers
 from shortcake.commands.adopt import _replay_commits
 from shortcake.commands.move_lines import (
@@ -108,7 +108,7 @@ def _fold(repo: Repo, into: str | None = None, no_verify: bool = False) -> FoldR
 
     Raises FoldError on failure (with rollback), returns FoldResult on success.
     """
-    repo_path = Path(repo.path)
+    repo_path = Path(repo.workdir)
 
     # --- Preconditions ---
     source_branch = git.get_current_branch(repo)

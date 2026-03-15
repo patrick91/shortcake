@@ -1,6 +1,7 @@
 """Tests for restack execution."""
 
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -13,7 +14,7 @@ from shortcake.commands.restack import (
     _needs_restack,
     _restack,
 )
-from tests._git_helpers import Repo, add_paths
+from tests._git_helpers import Repo, add_paths, get_ref, set_ref
 
 runner = CliRunner()
 
@@ -73,10 +74,9 @@ def test_restack_linear_stack(repo_with_stack_behind: Repo, tmp_path: Path) -> N
 def test_restack_detached_head(temp_repo: Repo) -> None:
     """Error in detached HEAD state."""
     # Detach HEAD by removing the symbolic ref
-    head_sha = temp_repo.refs[b"refs/heads/main"]
+    head_sha = get_ref(temp_repo, "refs/heads/main")
     # Remove symbolic ref and set HEAD directly to SHA
-    temp_repo.refs.remove_if_equals(b"HEAD", temp_repo.refs.read_ref(b"HEAD"))
-    temp_repo.refs.add_if_new(b"HEAD", head_sha)
+    set_ref(temp_repo, "HEAD", head_sha)
 
     with pytest.raises(RestackError, match="detached HEAD"):
         _restack(temp_repo)
@@ -129,16 +129,18 @@ def test_restack_after_parent_amend_preserves_content(
     # branch_a has a.txt, branch_b has b.txt
 
     # Record original content
-    original_a_content = repo_with_stack[
-        git.get_branch_head(repo_with_stack, "branch_a")
-    ].tree
-    original_b_content = repo_with_stack[
-        git.get_branch_head(repo_with_stack, "branch_b")
-    ].tree
+    a_commit = repo_with_stack.get(
+        git.get_branch_head(repo_with_stack, "branch_a").decode()
+    )
+    original_a_tree_id = a_commit.tree_id
+    b_commit = repo_with_stack.get(
+        git.get_branch_head(repo_with_stack, "branch_b").decode()
+    )
+    original_b_tree_id = b_commit.tree_id
 
     # Verify initial state - branch_b should have both a.txt and b.txt
-    branch_b_tree = repo_with_stack[original_b_content]
-    file_names = [item.path.decode() for item in branch_b_tree.items()]
+    branch_b_tree = repo_with_stack.get(str(original_b_tree_id))
+    file_names = [item.name for item in branch_b_tree]
     assert "a.txt" in file_names
     assert "b.txt" in file_names
 
@@ -150,11 +152,23 @@ def test_restack_after_parent_amend_preserves_content(
     git.amend_commit(repo_with_stack, "feat: branch a (amended)")
 
     # Verify branch_a was actually modified
-    new_a_tree = repo_with_stack[git.get_branch_head(repo_with_stack, "branch_a")].tree
-    assert new_a_tree != original_a_content
+    new_a_commit = repo_with_stack.get(
+        git.get_branch_head(repo_with_stack, "branch_a").decode()
+    )
+    assert new_a_commit.tree_id != original_a_tree_id
 
     # Switch to branch_b and run restack
-    git.switch_branch(repo_with_stack, "branch_b")
+    # Use git reset --hard to ensure clean working tree after pygit2 index operations
+    subprocess.run(
+        ["git", "checkout", "branch_b"],
+        cwd=repo_with_stack.workdir,
+        capture_output=True,
+    )
+    subprocess.run(
+        ["git", "reset", "--hard", "HEAD"],
+        cwd=repo_with_stack.workdir,
+        capture_output=True,
+    )
     result = _restack(repo_with_stack)
 
     # Should restack only branch_b (branch_a doesn't need rebasing)
@@ -163,28 +177,29 @@ def test_restack_after_parent_amend_preserves_content(
 
     # CRITICAL: Verify branch_b still has its own content (b.txt)
     new_b_head = git.get_branch_head(repo_with_stack, "branch_b")
-    new_b_tree = repo_with_stack[repo_with_stack[new_b_head].tree]
-    new_file_names = [item.path.decode() for item in new_b_tree.items()]
+    new_b_commit = repo_with_stack.get(new_b_head.decode())
+    new_b_tree = repo_with_stack.get(str(new_b_commit.tree_id))
+    new_file_names = [item.name for item in new_b_tree]
     assert "b.txt" in new_file_names, "branch_b should still have b.txt after restack"
     assert "a.txt" in new_file_names, "branch_b should have a.txt from parent"
 
     # Verify b.txt content is preserved
-    b_txt_sha = None
-    for item in new_b_tree.items():
-        if item.path == b"b.txt":
-            b_txt_sha = item.sha
+    b_txt_oid = None
+    for item in new_b_tree:
+        if item.name == "b.txt":
+            b_txt_oid = item.id
             break
-    assert b_txt_sha is not None
-    assert repo_with_stack[b_txt_sha].data == b"branch b content"
+    assert b_txt_oid is not None
+    assert repo_with_stack.get(str(b_txt_oid)).data == b"branch b content"
 
     # Verify a.txt has the amended content
-    a_txt_sha = None
-    for item in new_b_tree.items():
-        if item.path == b"a.txt":
-            a_txt_sha = item.sha
+    a_txt_oid = None
+    for item in new_b_tree:
+        if item.name == "a.txt":
+            a_txt_oid = item.id
             break
-    assert a_txt_sha is not None
-    assert b"modified content" in repo_with_stack[a_txt_sha].data
+    assert a_txt_oid is not None
+    assert b"modified content" in repo_with_stack.get(str(a_txt_oid)).data
 
     # Verify only 1 commit on branch_b since branch_a (not 2)
     branch_a_head = git.get_branch_head(repo_with_stack, "branch_a")

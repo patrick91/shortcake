@@ -11,7 +11,7 @@ def test_fetch_remote_success(temp_repo: Repo) -> None:
     remote = MagicMock()
 
     with patch(
-        "shortcake._git._pygit2.open_pygit2_repo",
+        "shortcake._git._pygit2._pygit2_repo",
         return_value=SimpleNamespace(remotes={"origin": remote}),
     ) as mock_open:
         assert fetch_remote(temp_repo)
@@ -24,8 +24,13 @@ def test_fetch_remote_failure(temp_repo: Repo) -> None:
     remote = MagicMock()
     remote.fetch.side_effect = pygit2.GitError("fetch failed")
 
+    mock_repo = SimpleNamespace(
+        remotes={"origin": remote},
+        workdir="/tmp/nonexistent",
+        path="/tmp/nonexistent/.git/",
+    )
     with patch(
-        "shortcake._git._pygit2.open_pygit2_repo",
-        return_value=SimpleNamespace(remotes={"origin": remote}),
+        "shortcake._git._pygit2._pygit2_repo",
+        return_value=mock_repo,
     ):
         assert not fetch_remote(temp_repo)

@@ -12,7 +12,7 @@ from shortcake.commands.modify import (
     _modify_target,
     _modify_with_new_commit,
 )
-from tests._git_helpers import Repo, add_paths, commit, switch_branch
+from tests._git_helpers import Repo, add_paths, commit, get_ref, set_ref, switch_branch
 
 # strip_trailers tests
 
@@ -76,7 +76,7 @@ def test_strip_trailers_whitespace_only() -> None:
 
 def test_amend_commit_changes_message(temp_repo: Repo) -> None:
     """Test amend_commit changes the commit message."""
-    old_sha = temp_repo.head()
+    old_sha = str(temp_repo.head.target).encode()
     old_message = git.get_commit_message(temp_repo, old_sha)
     assert old_message.strip() == "Initial commit"
 
@@ -97,22 +97,28 @@ def test_amend_commit_includes_staged_changes(temp_repo: Repo, tmp_path: Path) -
     new_sha = git.amend_commit(temp_repo, "Amended with new file")
 
     # Verify file is in the new commit
-    commit = temp_repo[new_sha]
-    tree = temp_repo[commit.tree]
-    files = [entry.path for entry in tree.items()]
+    commit = temp_repo.get(
+        new_sha.decode() if isinstance(new_sha, bytes) else str(new_sha)
+    )
+    tree = temp_repo.get(str(commit.tree_id))
+    files = [entry.name.encode() for entry in tree]
     assert b"new_file.txt" in files
 
 
 def test_amend_commit_preserves_parents(temp_repo: Repo) -> None:
     """Test amend_commit preserves commit parents."""
-    old_sha = temp_repo.head()
-    old_commit = temp_repo[old_sha]
-    old_parents = old_commit.parents
+    old_sha = str(temp_repo.head.target).encode()
+    old_commit = temp_repo.get(
+        old_sha.decode() if isinstance(old_sha, bytes) else str(old_sha)
+    )
+    old_parents = old_commit.parent_ids
 
     new_sha = git.amend_commit(temp_repo, "Amended message")
 
-    new_commit = temp_repo[new_sha]
-    assert new_commit.parents == old_parents
+    new_commit = temp_repo.get(
+        new_sha.decode() if isinstance(new_sha, bytes) else str(new_sha)
+    )
+    assert new_commit.parent_ids == old_parents
 
 
 # _modify_amend tests
@@ -123,7 +129,7 @@ def test_modify_message_only(repo_with_feature: Repo, tmp_path: Path) -> None:
     # First adopt the branch so it has a trailer
     _adopt(repo_with_feature)
 
-    old_sha = repo_with_feature.head()
+    old_sha = str(repo_with_feature.head.target).encode()
 
     result = _modify_amend(repo_with_feature, "feat: updated message")
 
@@ -138,7 +144,7 @@ def test_modify_preserves_trailer(repo_with_feature: Repo, tmp_path: Path) -> No
     _adopt(repo_with_feature)
 
     # Verify trailer exists before modify
-    old_sha = repo_with_feature.head()
+    old_sha = str(repo_with_feature.head.target).encode()
     old_message = git.get_commit_message(repo_with_feature, old_sha)
     old_trailers = Trailers.from_message(old_message)
     assert old_trailers.parent_branch == "main"
@@ -165,9 +171,13 @@ def test_modify_with_staged_changes(repo_with_feature: Repo, tmp_path: Path) -> 
     result = _modify_amend(repo_with_feature, "feat: with staged changes")
 
     # Verify file is in the new commit
-    commit = repo_with_feature[result.new_sha]
-    tree = repo_with_feature[commit.tree]
-    files = [entry.path for entry in tree.items()]
+    commit = repo_with_feature.get(
+        result.new_sha.decode()
+        if isinstance(result.new_sha, bytes)
+        else str(result.new_sha)
+    )
+    tree = repo_with_feature.get(str(commit.tree_id))
+    files = [entry.name.encode() for entry in tree]
     assert b"staged_file.txt" in files
 
 
@@ -187,7 +197,7 @@ def test_modify_no_verify(repo_with_feature: Repo, tmp_path: Path) -> None:
     _adopt(repo_with_feature)
 
     # Create a failing pre-commit hook
-    hooks_dir = Path(repo_with_feature.controldir()) / "hooks"
+    hooks_dir = Path(repo_with_feature.path.rstrip("/")) / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_path = hooks_dir / "pre-commit"
     hook_path.write_text("#!/bin/sh\nexit 1\n")
@@ -212,7 +222,7 @@ def test_modify_with_new_commit_creates_commit(
     """Test _modify_with_new_commit creates a new commit on top of HEAD."""
     _adopt(repo_with_feature)
 
-    old_sha = repo_with_feature.head()
+    old_oid = repo_with_feature.head.target
 
     # Stage a new file
     new_file = tmp_path / "new_feature.txt"
@@ -221,9 +231,13 @@ def test_modify_with_new_commit_creates_commit(
 
     result = _modify_with_new_commit(repo_with_feature, "feat: new commit")
 
-    # New commit should have old_sha as parent
-    new_commit = repo_with_feature[result.new_sha]
-    assert old_sha in new_commit.parents
+    # New commit should have old_oid as parent
+    new_commit = repo_with_feature.get(
+        result.new_sha.decode()
+        if isinstance(result.new_sha, bytes)
+        else str(result.new_sha)
+    )
+    assert old_oid in new_commit.parent_ids
     assert result.is_amend is False
 
 
@@ -234,7 +248,7 @@ def test_modify_with_new_commit_preserves_trailer(
     _adopt(repo_with_feature)
 
     # Verify trailer exists before modify
-    old_sha = repo_with_feature.head()
+    old_sha = str(repo_with_feature.head.target).encode()
     old_message = git.get_commit_message(repo_with_feature, old_sha)
     old_trailers = Trailers.from_message(old_message)
     assert old_trailers.parent_branch == "main"
@@ -286,7 +300,7 @@ def test_modify_cli_with_precommit_hook_success(
     _adopt(repo_with_feature)
 
     # Create a passing pre-commit hook
-    hooks_dir = Path(repo_with_feature.controldir()) / "hooks"
+    hooks_dir = Path(repo_with_feature.path.rstrip("/")) / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_path = hooks_dir / "pre-commit"
     hook_path.write_text("#!/bin/sh\nexit 0\n")
@@ -313,9 +327,9 @@ def test_modify_target_basic(temp_repo: Repo, tmp_path: Path) -> None:
     repo = temp_repo
 
     # Create tracked branch_a from main
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
@@ -323,11 +337,11 @@ def test_modify_target_basic(temp_repo: Repo, tmp_path: Path) -> None:
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
     commit(repo, message_a)
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
 
     # Create tracked branch_b from branch_a
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b content")
@@ -360,9 +374,9 @@ def test_modify_target_preserves_trailer(temp_repo: Repo, tmp_path: Path) -> Non
     repo = temp_repo
 
     # Create tracked branch_a
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
@@ -370,11 +384,11 @@ def test_modify_target_preserves_trailer(temp_repo: Repo, tmp_path: Path) -> Non
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
     commit(repo, message_a)
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
 
     # Create tracked branch_b
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b content")
@@ -404,9 +418,9 @@ def test_modify_target_preserves_working_changes(
     repo = temp_repo
 
     # Create tracked branch_a
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
@@ -414,11 +428,11 @@ def test_modify_target_preserves_working_changes(
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
     commit(repo, message_a)
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
 
     # Create tracked branch_b
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b content")
@@ -450,9 +464,9 @@ def test_modify_target_restacks_downstream(temp_repo: Repo, tmp_path: Path) -> N
     repo = temp_repo
 
     # Create branch_a
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
@@ -460,11 +474,11 @@ def test_modify_target_restacks_downstream(temp_repo: Repo, tmp_path: Path) -> N
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
     commit(repo, message_a)
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
 
     # Create branch_b
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b content")
@@ -472,11 +486,11 @@ def test_modify_target_restacks_downstream(temp_repo: Repo, tmp_path: Path) -> N
     trailers_b = Trailers(parent_branch="branch_a")
     message_b = trailers_b.apply_to("feat: branch b")
     commit(repo, message_b)
-    branch_b_sha = repo.refs[b"refs/heads/branch_b"]
+    branch_b_sha = get_ref(repo, "refs/heads/branch_b")
 
     # Create branch_c
-    repo.refs[b"refs/heads/branch_c"] = branch_b_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    set_ref(repo, "refs/heads/branch_c", branch_b_sha)
+    repo.set_head("refs/heads/branch_c")
 
     file_c = tmp_path / "c.txt"
     file_c.write_text("branch c content")
@@ -508,9 +522,9 @@ def test_modify_target_no_staged_changes(temp_repo: Repo, tmp_path: Path) -> Non
     repo = temp_repo
 
     # Create tracked branch
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
@@ -541,9 +555,9 @@ def test_modify_target_branch_not_tracked(temp_repo: Repo, tmp_path: Path) -> No
     repo = temp_repo
 
     # Create an untracked branch (no Shortcake-Parent trailer)
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/untracked"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/untracked")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/untracked", main_sha)
+    repo.set_head("refs/heads/untracked")
 
     untracked_file = tmp_path / "untracked.txt"
     untracked_file.write_text("content")
@@ -564,9 +578,9 @@ def test_modify_target_rebase_in_progress(temp_repo: Repo, tmp_path: Path) -> No
     repo = temp_repo
 
     # Create tracked branch_a
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
@@ -574,11 +588,11 @@ def test_modify_target_rebase_in_progress(temp_repo: Repo, tmp_path: Path) -> No
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
     commit(repo, message_a)
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
 
     # Create tracked branch_b
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b content")
@@ -593,7 +607,7 @@ def test_modify_target_rebase_in_progress(temp_repo: Repo, tmp_path: Path) -> No
     add_paths(repo, new_file)
 
     # Simulate rebase in progress
-    rebase_dir = Path(repo.controldir()) / "rebase-merge"
+    rebase_dir = Path(repo.path.rstrip("/")) / "rebase-merge"
     rebase_dir.mkdir(exist_ok=True)
 
     try:
@@ -626,9 +640,9 @@ def test_modify_target_rollback_on_restack_failure(
     #                         → branch_c (where we fold from)
     # branch_b modifies shared.txt, so when branch_a is amended to also modify
     # shared.txt, restacking branch_b will conflict.
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
 
     shared = tmp_path / "shared.txt"
     shared.write_text("original line 1\noriginal line 2\n")
@@ -636,11 +650,11 @@ def test_modify_target_rollback_on_restack_failure(
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
     commit(repo, message_a)
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
 
     # branch_b: child of branch_a, rewrites shared.txt
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
 
     shared.write_text("COMPLETELY DIFFERENT\nFOR CONFLICT\n")
     add_paths(repo, shared)
@@ -650,7 +664,7 @@ def test_modify_target_rollback_on_restack_failure(
 
     # branch_c: also child of branch_a (sibling of branch_b)
     # shared.txt on branch_c has branch_a's content ("original line 1\n...")
-    repo.refs[b"refs/heads/branch_c"] = branch_a_sha
+    set_ref(repo, "refs/heads/branch_c", branch_a_sha)
     switch_branch(repo, "branch_c")  # reset working tree to branch_a's content
 
     file_c = tmp_path / "c.txt"
@@ -756,9 +770,9 @@ def test_modify_cli_target_success(temp_repo: Repo, tmp_path: Path) -> None:
     repo = temp_repo
 
     # Create tracked branch_a
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
 
     file_a = tmp_path / "a.txt"
     file_a.write_text("branch a content")
@@ -766,11 +780,11 @@ def test_modify_cli_target_success(temp_repo: Repo, tmp_path: Path) -> None:
     trailers_a = Trailers(parent_branch="main")
     message_a = trailers_a.apply_to("feat: branch a")
     commit(repo, message_a)
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
 
     # Create tracked branch_b
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
 
     file_b = tmp_path / "b.txt"
     file_b.write_text("branch b content")
@@ -984,7 +998,7 @@ def test_modify_cli_precommit_hook_failure(
     _adopt(repo_with_feature)
 
     # Create a failing pre-commit hook
-    hooks_dir = Path(repo_with_feature.controldir()) / "hooks"
+    hooks_dir = Path(repo_with_feature.path.rstrip("/")) / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_path = hooks_dir / "pre-commit"
     hook_path.write_text("#!/bin/sh\necho 'hook failed' >&2\nexit 1\n")

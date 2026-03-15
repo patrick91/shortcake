@@ -5,10 +5,10 @@ from typing import Annotated
 
 import httpx
 import typer
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
+from shortcake._git._core import Repo
 from shortcake._git._pygit2 import fetch_remote
 from shortcake._github import GitHubClient, get_github_token, get_repo_info
 
@@ -42,13 +42,21 @@ def _create_branch_from_remote(repo: Repo, branch: str) -> bool:
 
     Returns True if successful, False otherwise.
     """
-    remote_ref = f"refs/remotes/origin/{branch}".encode()
+    import pygit2
+
+    remote_ref_name = f"refs/remotes/origin/{branch}"
     try:
-        remote_sha = repo.refs[remote_ref]
-        local_ref = f"refs/heads/{branch}".encode()
-        repo.refs[local_ref] = remote_sha
+        remote_ref_obj = repo.references.get(remote_ref_name)
+        if remote_ref_obj is None:
+            return False
+        remote_oid = remote_ref_obj.target
+        local_ref_name = f"refs/heads/{branch}"
+        if local_ref_name in repo.references:
+            repo.references[local_ref_name].set_target(remote_oid)
+        else:
+            repo.references.create(local_ref_name, remote_oid)
         return True
-    except KeyError:
+    except (KeyError, pygit2.GitError):
         return False
 
 

@@ -10,7 +10,7 @@ from shortcake.commands.move_lines import (
     MoveError,
     _accept_working_hunks,
 )
-from tests._git_helpers import Repo, add_paths, commit, switch_branch
+from tests._git_helpers import Repo, add_paths, commit, get_ref, set_ref, switch_branch
 
 
 def _git_diff_working(repo_path: Path) -> str:
@@ -42,9 +42,9 @@ def repo_with_tracked_and_working(temp_repo: Repo, tmp_path: Path) -> Repo:
     Current branch is tracked_branch with uncommitted changes to app.py
     that modify lines far apart, producing two separate hunks.
     """
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/tracked_branch"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/tracked_branch")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/tracked_branch", main_sha)
+    temp_repo.set_head("refs/heads/tracked_branch")
 
     # Need enough context lines (>6) between modified regions for separate hunks
     app_py = tmp_path / "app.py"
@@ -103,7 +103,7 @@ def test_accept_single_hunk(
 ) -> None:
     """Accept a single hunk from working changes into a tracked branch."""
     repo = repo_with_tracked_and_working
-    repo_path = Path(repo.path)
+    repo_path = Path(repo.workdir)
 
     full_patch = _git_diff_working(repo_path)
     file_patch = _get_file_patch(full_patch, "app.py")
@@ -134,7 +134,7 @@ def test_accept_multiple_hunks_same_file(
 ) -> None:
     """Accept multiple hunks from the same file."""
     repo = repo_with_tracked_and_working
-    repo_path = Path(repo.path)
+    repo_path = Path(repo.workdir)
 
     full_patch = _git_diff_working(repo_path)
     file_patch = _get_file_patch(full_patch, "app.py")
@@ -161,12 +161,12 @@ def test_accept_multiple_hunks_same_file(
 def test_accept_hunks_across_multiple_files(temp_repo: Repo, tmp_path: Path) -> None:
     """Accept hunks from different files."""
     repo = temp_repo
-    repo_path = Path(repo.path)
+    repo_path = Path(repo.workdir)
 
     # Create tracked branch with two files
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/tracked_branch"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/tracked_branch")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/tracked_branch", main_sha)
+    repo.set_head("refs/heads/tracked_branch")
 
     app_py = tmp_path / "app.py"
     app_py.write_text("def hello():\n    return 'hello'\n")
@@ -206,12 +206,12 @@ def test_accept_hunks_across_multiple_files(temp_repo: Repo, tmp_path: Path) -> 
 def test_remaining_working_changes_preserved(temp_repo: Repo, tmp_path: Path) -> None:
     """Remaining working changes are preserved via stash/pop after accept."""
     repo = temp_repo
-    repo_path = Path(repo.path)
+    repo_path = Path(repo.workdir)
 
     # Create tracked branch
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/tracked_branch"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/tracked_branch")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/tracked_branch", main_sha)
+    repo.set_head("refs/heads/tracked_branch")
 
     app_py = tmp_path / "app.py"
     app_py.write_text(
@@ -289,7 +289,7 @@ def test_error_rebase_in_progress(
     repo = repo_with_tracked_and_working
 
     # Simulate rebase in progress
-    rebase_dir = Path(repo.controldir()) / "rebase-merge"
+    rebase_dir = Path(repo.path.rstrip("/")) / "rebase-merge"
     rebase_dir.mkdir(exist_ok=True)
 
     try:
@@ -308,8 +308,8 @@ def test_error_rebase_in_progress(
 def test_error_target_branch_not_tracked(temp_repo: Repo, tmp_path: Path) -> None:
     """Error when target branch is not tracked by Shortcake."""
     # Create an untracked branch (no Shortcake-Parent trailer)
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/untracked"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/untracked", main_sha)
 
     # Create working changes
     work_file = tmp_path / "work.py"
@@ -338,7 +338,7 @@ def test_error_invalid_hunk_index(
 ) -> None:
     """Error when hunk index is out of range."""
     repo = repo_with_tracked_and_working
-    repo_path = Path(repo.path)
+    repo_path = Path(repo.workdir)
 
     full_patch = _git_diff_working(repo_path)
     file_patch = _get_file_patch(full_patch, "app.py")
@@ -366,12 +366,12 @@ def test_error_empty_hunks_list(temp_repo: Repo) -> None:
 def test_accept_restacks_downstream_branches(temp_repo: Repo, tmp_path: Path) -> None:
     """When accepting hunks, downstream branches are restacked successfully."""
     repo = temp_repo
-    repo_path = Path(repo.path)
+    repo_path = Path(repo.workdir)
 
     # Build: main → parent_branch → child_branch
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/parent_branch"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/parent_branch")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/parent_branch", main_sha)
+    repo.set_head("refs/heads/parent_branch")
 
     app_py = tmp_path / "app.py"
     app_py.write_text("def hello():\n    return 'hello'\n")
@@ -379,11 +379,11 @@ def test_accept_restacks_downstream_branches(temp_repo: Repo, tmp_path: Path) ->
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add app")
     commit(repo, message)
-    parent_sha = repo.refs[b"refs/heads/parent_branch"]
+    parent_sha = get_ref(repo, "refs/heads/parent_branch")
 
     # child_branch adds a separate file (non-conflicting)
-    repo.refs[b"refs/heads/child_branch"] = parent_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/child_branch")
+    set_ref(repo, "refs/heads/child_branch", parent_sha)
+    repo.set_head("refs/heads/child_branch")
 
     child_py = tmp_path / "child.py"
     child_py.write_text("def child():\n    return 'child'\n")
@@ -413,12 +413,12 @@ def test_accept_restacks_downstream_branches(temp_repo: Repo, tmp_path: Path) ->
 def test_rollback_on_restack_failure(temp_repo: Repo, tmp_path: Path) -> None:
     """If restacking fails after target modification, all refs are rolled back."""
     repo = temp_repo
-    repo_path = Path(repo.path)
+    repo_path = Path(repo.workdir)
 
     # Build stack: main → parent_branch → child_branch
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/parent_branch"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/parent_branch")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/parent_branch", main_sha)
+    repo.set_head("refs/heads/parent_branch")
 
     app_py = tmp_path / "app.py"
     app_py.write_text("def hello():\n    return 'hello'\n")
@@ -426,10 +426,10 @@ def test_rollback_on_restack_failure(temp_repo: Repo, tmp_path: Path) -> None:
     trailers = Trailers(parent_branch="main")
     message = trailers.apply_to("feat: add app")
     commit(repo, message)
-    parent_sha = repo.refs[b"refs/heads/parent_branch"]
+    parent_sha = get_ref(repo, "refs/heads/parent_branch")
 
-    repo.refs[b"refs/heads/child_branch"] = parent_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/child_branch")
+    set_ref(repo, "refs/heads/child_branch", parent_sha)
+    repo.set_head("refs/heads/child_branch")
 
     # child modifies app.py in a conflicting way
     app_py.write_text("CONFLICT CONTENT\nTHIS WILL PREVENT REBASE\n")

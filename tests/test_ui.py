@@ -85,7 +85,7 @@ def test_build_diff_payload_missing_parent_error(
 ) -> None:
     """Diff endpoint rejects when parent branch is missing locally."""
     # Delete the parent branch so it doesn't exist
-    del repo_with_stack.refs[b"refs/heads/main"]
+    repo_with_stack.references.delete("refs/heads/main")
 
     with pytest.raises(ValueError, match="does not exist locally"):
         _build_diff_payload(repo_with_stack, "branch_a")
@@ -136,7 +136,7 @@ def test_resolve_frontend_dir_prefers_repo_src_web(
     temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The repo-local src/shortcake/_web directory should be preferred."""
-    repo_path = Path(temp_repo.path)
+    repo_path = Path(temp_repo.workdir)
     src_web_dir = repo_path / "src" / "shortcake" / "_web"
     src_web_dir.mkdir(parents=True)
     (src_web_dir / "package.json").write_text("{}")
@@ -148,7 +148,7 @@ def test_resolve_frontend_dir_prefers_repo_src_web(
 
 def test_resolve_frontend_dir_from_packaged_fallback(temp_repo: Repo) -> None:
     """If repo has no web/, fall back to packaged shortcake._web assets."""
-    repo_path = Path(temp_repo.path)
+    repo_path = Path(temp_repo.workdir)
     frontend_dir = _resolve_frontend_dir(repo_path)
     assert frontend_dir is not None
     assert (frontend_dir / "package.json").is_file()
@@ -251,7 +251,7 @@ def test_write_json() -> None:
 
 def test_git_diff_patch(repo_with_stack: Repo) -> None:
     """_git_diff_patch returns patch text for a branch diff."""
-    repo_path = Path(repo_with_stack.path)
+    repo_path = Path(repo_with_stack.workdir)
     patch = _git_diff_patch(repo_path, "branch_a", "branch_b")
     assert "diff --git" in patch
     assert "b.txt" in patch
@@ -260,12 +260,12 @@ def test_git_diff_patch(repo_with_stack: Repo) -> None:
 def test_git_diff_patch_error(temp_repo: Repo) -> None:
     """_git_diff_patch raises ValueError on git failure."""
     with pytest.raises(ValueError):
-        _git_diff_patch(Path(temp_repo.path), "nonexistent", "also-nonexistent")
+        _git_diff_patch(Path(temp_repo.workdir), "nonexistent", "also-nonexistent")
 
 
 def test_git_working_diff(repo_with_stack: Repo, tmp_path: Path) -> None:
     """_git_working_diff returns diff for uncommitted changes."""
-    repo_path = Path(repo_with_stack.path)
+    repo_path = Path(repo_with_stack.workdir)
     # Create an uncommitted change
     (tmp_path / "uncommitted.txt").write_text("new content")
     subprocess.run(["git", "add", "uncommitted.txt"], cwd=tmp_path, check=True)
@@ -276,7 +276,7 @@ def test_git_working_diff(repo_with_stack: Repo, tmp_path: Path) -> None:
 
 def test_git_working_diff_no_changes(repo_with_stack: Repo) -> None:
     """_git_working_diff returns empty string when there are no changes."""
-    repo_path = Path(repo_with_stack.path)
+    repo_path = Path(repo_with_stack.workdir)
     patch = _git_working_diff(repo_path)
     assert patch == ""
 
@@ -324,7 +324,7 @@ class FakeHandler:
 
 def _make_handler(repo: Repo, path: str) -> FakeHandler:
     """Create a handler class from repo and invoke do_GET with the given path."""
-    handler_cls = _build_request_handler(Path(repo.path))
+    handler_cls = _build_request_handler(Path(repo.workdir))
     fake = FakeHandler(path)
     # Bind the do_GET method to our fake handler
     handler_cls.do_GET(fake)  # type: ignore[arg-type]
@@ -412,7 +412,7 @@ def test_handler_404(temp_repo: Repo) -> None:
 
 def test_handler_log_message_suppressed(temp_repo: Repo) -> None:
     """log_message is overridden to suppress output."""
-    handler_cls = _build_request_handler(Path(temp_repo.path))
+    handler_cls = _build_request_handler(Path(temp_repo.workdir))
     fake = FakeHandler("/api/health")
     # Calling log_message should not raise
     handler_cls.log_message(fake, "test %s", "arg")  # type: ignore[arg-type]
@@ -425,7 +425,7 @@ def _make_post_handler(
     repo: Repo, path: str, body: dict | str | None = None
 ) -> FakeHandler:
     """Create a handler class and invoke do_POST with given path+body."""
-    handler_cls = _build_request_handler(Path(repo.path))
+    handler_cls = _build_request_handler(Path(repo.workdir))
     fake = FakeHandler(path)
     if body is not None:
         raw = json.dumps(body) if isinstance(body, dict) else body
@@ -440,7 +440,7 @@ def _make_post_handler(
 
 def test_post_move_hunks_invalid_json(temp_repo: Repo) -> None:
     """POST /api/move-hunks with invalid JSON returns 400."""
-    handler_cls = _build_request_handler(Path(temp_repo.path))
+    handler_cls = _build_request_handler(Path(temp_repo.workdir))
     fake = FakeHandler("/api/move-hunks")
     fake.rfile = io.BytesIO(b"not json")
     fake.headers = {"Content-Length": "8"}
@@ -544,7 +544,7 @@ def test_post_move_hunks_unexpected_error(repo_with_stack: Repo) -> None:
 
 def test_post_accept_hunks_invalid_json(temp_repo: Repo) -> None:
     """POST /api/accept-working-hunks with invalid JSON returns 400."""
-    handler_cls = _build_request_handler(Path(temp_repo.path))
+    handler_cls = _build_request_handler(Path(temp_repo.workdir))
     fake = FakeHandler("/api/accept-working-hunks")
     fake.rfile = io.BytesIO(b"bad json")
     fake.headers = {"Content-Length": "8"}
@@ -681,7 +681,7 @@ def test_post_404(temp_repo: Repo) -> None:
 
 def test_options_handler(temp_repo: Repo) -> None:
     """OPTIONS returns 200 with CORS headers."""
-    handler_cls = _build_request_handler(Path(temp_repo.path))
+    handler_cls = _build_request_handler(Path(temp_repo.workdir))
     fake = FakeHandler("/api/move-hunks")
     handler_cls.do_OPTIONS(fake)  # type: ignore[arg-type]
     assert fake._status == 200
@@ -698,7 +698,7 @@ def test_start_api_server(temp_repo: Repo) -> None:
     """_start_api_server starts a server that responds to health checks."""
     import urllib.request
 
-    server = _start_api_server(Path(temp_repo.path), "127.0.0.1", 0)
+    server = _start_api_server(Path(temp_repo.workdir), "127.0.0.1", 0)
     try:
         port = server.server_address[1]
         resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health")
@@ -1164,7 +1164,7 @@ def test_build_suggestions_payload_branch_parent_missing(
 ) -> None:
     """_build_suggestions_payload raises when parent branch doesn't exist locally."""
     # Delete branch_a so branch_b's parent is missing
-    del repo_with_stack.refs[b"refs/heads/branch_a"]
+    repo_with_stack.references.delete("refs/heads/branch_a")
     with pytest.raises(ValueError, match="does not exist locally"):
         _build_suggestions_payload(repo_with_stack, "branch", "branch_b")
 

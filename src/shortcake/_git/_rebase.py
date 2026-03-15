@@ -3,14 +3,15 @@
 import os
 import subprocess
 from dataclasses import dataclass
-from pathlib import Path
 
-from dulwich import porcelain
-from dulwich.graph import find_merge_base
-from dulwich.repo import Repo
+import pygit2
 
 from shortcake._git._core import (
     DULWICH_ERRORS,
+    Repo,
+    _git_dir,
+    _oid,
+    _repo_workdir,
     switch_branch,
 )
 
@@ -28,16 +29,23 @@ class RebaseResult:
 
 
 class RebaseFailure(RuntimeError):
-    """Raised when a dulwich rebase operation fails."""
+    """Raised when a rebase operation fails."""
 
 
 def get_merge_base(repo: Repo, commit1: bytes, commit2: bytes) -> bytes | None:
-    """Get merge base of two commits using dulwich.
+    """Get merge base of two commits.
 
     Returns the common ancestor of two commits, or None if no common ancestor.
     """
-    bases = find_merge_base(repo, [commit1, commit2])
-    return bases[0] if bases else None
+    oid1 = pygit2.Oid(hex=_oid(commit1))
+    oid2 = pygit2.Oid(hex=_oid(commit2))
+    try:
+        result = repo.merge_base(oid1, oid2)
+    except pygit2.GitError:
+        return None
+    if result is None:
+        return None
+    return str(result).encode()
 
 
 def is_ancestor(repo: Repo, maybe_ancestor: bytes, descendant: bytes) -> bool:
@@ -61,28 +69,29 @@ def get_rebase_commits(
     encountered on the first-parent chain, or the merge base is not on that
     chain, this raises a ValueError.
     """
-    head_bytes = head.encode() if isinstance(head, str) else head
-    merge_base_bytes = (
-        merge_base.encode() if isinstance(merge_base, str) else merge_base
-    )
+    head_hex = _oid(head)
+    merge_base_hex = _oid(merge_base)
 
-    if head_bytes == merge_base_bytes:
+    if head_hex == merge_base_hex:
         return []
 
+    head_oid = pygit2.Oid(hex=head_hex)
+    merge_base_oid = pygit2.Oid(hex=merge_base_hex)
+
     commits: list[bytes] = []
-    current = repo[head_bytes]
+    current = repo.get(head_oid)
     while True:
-        if current.id == merge_base_bytes:
+        if current.id == merge_base_oid:
             return list(reversed(commits))
-        if len(current.parents) > 1:
+        if len(current.parent_ids) > 1:
             raise ValueError(
                 "Non-linear history detected (merge commit). "
                 "Shortcake restack supports linear stacks only."
             )
-        commits.append(current.id)
-        if not current.parents:
+        commits.append(str(current.id).encode())
+        if not current.parent_ids:
             break
-        current = repo[current.parents[0]]
+        current = repo.get(current.parent_ids[0])
 
     raise ValueError(
         "Merge base not found on first-parent chain. "
@@ -92,7 +101,7 @@ def get_rebase_commits(
 
 def is_rebase_in_progress(repo: Repo) -> bool:
     """Check if git rebase is in progress."""
-    git_dir = Path(repo.controldir())
+    git_dir = _git_dir(repo)
     return (
         (git_dir / "rebase-merge").exists()
         or (git_dir / "rebase-apply").exists()
@@ -102,7 +111,7 @@ def is_rebase_in_progress(repo: Repo) -> bool:
 
 def get_cherry_pick_head(repo: Repo) -> bytes | None:
     """Return current CHERRY_PICK_HEAD, if any."""
-    head_path = Path(repo.controldir()) / "CHERRY_PICK_HEAD"
+    head_path = _git_dir(repo) / "CHERRY_PICK_HEAD"
     if not head_path.exists():
         return None
     data = head_path.read_bytes().strip()
@@ -127,7 +136,7 @@ def rebase_branch(repo: Repo, branch: str, onto: str, upstream: str) -> RebaseRe
 
     result = subprocess.run(
         ["git", "rebase", "--onto", onto, upstream, branch, "--empty=drop"],
-        cwd=repo.path,
+        cwd=_repo_workdir(repo),
         capture_output=True,
         text=True,
     )
@@ -154,7 +163,7 @@ def rebase_continue(repo: Repo) -> RebaseResult:
     """
     result = subprocess.run(
         ["git", "rebase", "--continue"],
-        cwd=repo.path,
+        cwd=_repo_workdir(repo),
         capture_output=True,
         text=True,
         env={**os.environ, "GIT_EDITOR": "true"},
@@ -168,7 +177,7 @@ def rebase_continue(repo: Repo) -> RebaseResult:
     if "nothing to commit" in combined_output:
         skip_result = subprocess.run(
             ["git", "rebase", "--skip"],
-            cwd=repo.path,
+            cwd=_repo_workdir(repo),
             capture_output=True,
             text=True,
         )
@@ -191,7 +200,7 @@ def rebase_abort(repo: Repo) -> None:
     """Abort an in-progress rebase or cherry-pick."""
     import shutil
 
-    git_dir = Path(repo.controldir())
+    git_dir = _git_dir(repo)
     rebase_merge = git_dir / "rebase-merge"
     rebase_apply = git_dir / "rebase-apply"
     cherry_pick_head = git_dir / "CHERRY_PICK_HEAD"
@@ -200,7 +209,7 @@ def rebase_abort(repo: Repo) -> None:
     if rebase_merge.exists() or rebase_apply.exists():
         result = subprocess.run(
             ["git", "rebase", "--abort"],
-            cwd=repo.path,
+            cwd=_repo_workdir(repo),
             capture_output=True,
             text=True,
         )
@@ -217,7 +226,7 @@ def rebase_abort(repo: Repo) -> None:
     if cherry_pick_head.exists():
         result = subprocess.run(
             ["git", "cherry-pick", "--abort"],
-            cwd=repo.path,
+            cwd=_repo_workdir(repo),
             capture_output=True,
             text=True,
         )
@@ -229,7 +238,11 @@ def rebase_abort(repo: Repo) -> None:
 
 def cherry_pick(repo: Repo, commit: bytes) -> None:
     """Cherry-pick a commit onto the current branch."""
-    try:
-        porcelain.cherry_pick(repo, commit)
-    except DULWICH_REBASE_ERRORS as e:
-        raise RebaseFailure(str(e) or "Cherry-pick failed") from e
+    result = subprocess.run(
+        ["git", "cherry-pick", _oid(commit)],
+        cwd=_repo_workdir(repo),
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RebaseFailure(result.stderr or "Cherry-pick failed")

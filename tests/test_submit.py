@@ -23,7 +23,7 @@ from shortcake.commands.submit import (
     _submit,
     _update_pr_body_with_stack,
 )
-from tests._git_helpers import Repo, add_paths, commit
+from tests._git_helpers import Repo, add_paths, commit, get_ref, set_ref, set_remote
 
 runner = CliRunner()
 
@@ -41,9 +41,7 @@ def _mock_restack():
 # Helper to set up origin remote
 def setup_origin_remote(repo: Repo, url: str = "git@github.com:owner/repo.git") -> None:
     """Configure origin remote for a repo."""
-    config = repo.get_config()
-    config.set((b"remote", b"origin"), b"url", url.encode())
-    config.write_to_path()
+    set_remote(repo, "origin", url)
 
 
 # Tests for helper functions
@@ -282,9 +280,8 @@ def test_update_pr_body_with_stack_empty_body() -> None:
 def test_submit_error_detached_head(temp_repo: Repo, tmp_path: Path) -> None:
     """Test submit fails in detached HEAD state."""
     # Detach HEAD by removing the symbolic ref
-    head_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs.remove_if_equals(b"HEAD", temp_repo.refs.read_ref(b"HEAD"))
-    temp_repo.refs.add_if_new(b"HEAD", head_sha)
+    head_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", head_sha)
 
     with pytest.raises(SubmitError, match="detached HEAD"):
         _submit(temp_repo)
@@ -1839,9 +1836,9 @@ def test_submit_resolves_merged_parent_for_existing_pr(
 
     # Create branch with trailer pointing to a non-existent parent
     # (simulating a parent that was merged and deleted locally)
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     test_file = tmp_path / "feature.txt"
     test_file.write_text("feature content")
@@ -1893,9 +1890,9 @@ def test_submit_resolves_merged_parent_for_new_pr(
     """Test submit creates PR with resolved base when parent was merged."""
     from shortcake._trailers import Trailers
 
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     test_file = tmp_path / "feature.txt"
     test_file.write_text("feature content")
@@ -1977,9 +1974,9 @@ def test_submit_merged_parent_resolution_api_error_ignored(
     """Test that API errors during parent resolution are handled gracefully."""
     from shortcake._trailers import Trailers
 
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     test_file = tmp_path / "feature.txt"
     test_file.write_text("feature content")

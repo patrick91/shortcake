@@ -4,11 +4,11 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._editor import open_editor
 from shortcake._exceptions import ShortcakeError
+from shortcake._git._core import Repo
 from shortcake._trailers import Trailers, strip_trailers
 from shortcake.commands.move_lines import (
     _get_tracked_branches_in_order,
@@ -47,7 +47,7 @@ def _modify_amend(repo: Repo, message: str, no_verify: bool = False) -> ModifyRe
     Returns:
         ModifyResult with old/new SHAs and final message
     """
-    old_sha = repo.head()
+    old_sha = str(repo.head.target).encode()
     old_message = git.get_commit_message(repo, old_sha)
 
     # Preserve trailer from old commit
@@ -74,7 +74,7 @@ def _modify_with_new_commit(
     Returns:
         ModifyResult with old/new SHAs and final message
     """
-    old_sha = repo.head()
+    old_sha = str(repo.head.target).encode()
     old_message = git.get_commit_message(repo, old_sha)
 
     # Preserve trailer from old commit
@@ -99,7 +99,7 @@ def _modify_target(
 
     Raises ModifyError on any failure (with rollback of modified refs).
     """
-    repo_path = Path(repo.path)
+    repo_path = Path(repo.workdir)
 
     # --- Preconditions ---
     current = git.get_current_branch(repo)
@@ -291,7 +291,7 @@ def modify(
 
     if edit:
         # Amend with editor
-        old_sha = repo.head()
+        old_sha = str(repo.head.target).encode()
         old_message = git.get_commit_message(repo, old_sha)
         editor_content = strip_trailers(old_message)
 
@@ -316,7 +316,7 @@ def modify(
             typer.echo("Error: No staged changes to amend", err=True)
             raise typer.Exit(1)
 
-        old_sha = repo.head()
+        old_sha = str(repo.head.target).encode()
         old_message = git.get_commit_message(repo, old_sha)
         # Strip and reapply trailers to preserve them
         clean_message = strip_trailers(old_message)

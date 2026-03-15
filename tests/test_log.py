@@ -8,7 +8,9 @@ from tests._git_helpers import (
     commit_files,
     create_branch,
     get_branch_head,
+    get_ref,
     init_repo,
+    set_ref,
     update_branch,
 )
 
@@ -104,9 +106,8 @@ def test_log_no_commits_at_parent(temp_repo: Repo, tmp_path: Path) -> None:
 def test_log_detached_head(temp_repo: Repo) -> None:
     """Test log error in detached HEAD state."""
     # Detach HEAD
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    del temp_repo.refs[b"HEAD"]
-    temp_repo.refs[b"HEAD"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", main_sha)
 
     with pytest.raises(ValueError, match="detached HEAD"):
         _log(temp_repo)

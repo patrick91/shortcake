@@ -1,9 +1,17 @@
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from shortcake import _git as git
-from tests._git_helpers import Repo, commit_files, init_repo
+from tests._git_helpers import (
+    Repo,
+    commit_files,
+    get_ref,
+    init_repo,
+    set_ref,
+    set_remote,
+)
 
 
 def test_open_repo_current_dir(
@@ -36,7 +44,7 @@ def test_open_repo_from_subdirectory(
     # Should still find the repo
     repo = git.open_repo()
     assert repo is not None
-    assert Path(repo.path).resolve() == tmp_path.resolve()
+    assert Path(repo.workdir).resolve() == tmp_path.resolve()
 
 
 def test_get_current_branch(repo_with_feature: Repo) -> None:
@@ -48,10 +56,9 @@ def test_get_current_branch(repo_with_feature: Repo) -> None:
 def test_get_current_branch_detached_head(temp_repo: Repo) -> None:
     """Test error when in detached HEAD state."""
     # Get the commit SHA and write it directly to HEAD file
-    head_sha = temp_repo.refs[b"refs/heads/main"]
-    # Write raw SHA to HEAD (not a symbolic ref)
-    head_path = Path(temp_repo.controldir()) / "HEAD"
-    head_path.write_bytes(head_sha.hex().encode() + b"\n")
+    head_sha = get_ref(temp_repo, "refs/heads/main")
+    # Detach HEAD by writing SHA directly
+    set_ref(temp_repo, "HEAD", head_sha)
 
     assert git.get_current_branch(temp_repo) is None
 
@@ -59,9 +66,11 @@ def test_get_current_branch_detached_head(temp_repo: Repo) -> None:
 def test_get_default_branch_from_origin_head(temp_repo: Repo) -> None:
     """Test getting default branch from origin/HEAD."""
     # Set up origin/HEAD pointing to main
-    temp_repo.refs[b"refs/remotes/origin/main"] = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs.set_symbolic_ref(
-        b"refs/remotes/origin/HEAD", b"refs/remotes/origin/main"
+    set_ref(
+        temp_repo, "refs/remotes/origin/main", get_ref(temp_repo, "refs/heads/main")
+    )
+    temp_repo.references.create(
+        "refs/remotes/origin/HEAD", "refs/remotes/origin/main", force=True
     )
 
     default = git.get_default_branch(temp_repo)
@@ -113,9 +122,7 @@ def test_has_remote_no_remote(temp_repo: Repo) -> None:
 def test_has_remote_with_remote(temp_repo: Repo, tmp_path: Path) -> None:
     """Test has_remote returns True when remote is configured."""
     # Add origin remote to config
-    config = temp_repo.get_config()
-    config.set((b"remote", b"origin"), b"url", b"https://github.com/test/test.git")
-    config.write_to_path()
+    set_remote(temp_repo, "origin", "https://github.com/test/test.git")
 
     assert git.has_remote(temp_repo, "origin")
 
@@ -142,18 +149,9 @@ def test_fetch_and_fast_forward_trunk_with_new_remote_commits(
     commit_files(local_repo, {local_path / "README.md": "# Test"}, "Initial commit")
 
     # Configure origin to point to the remote repo
-    config = local_repo.get_config()
-    config.set(
-        (b"remote", b"origin"),
-        b"url",
-        str(remote_path).encode(),
-    )
-    config.set(
-        (b"remote", b"origin"),
-        b"fetch",
-        b"+refs/heads/*:refs/remotes/origin/*",
-    )
-    config.write_to_path()
+    set_remote(local_repo, "origin", str(remote_path))
+
+    local_repo.config["remote.origin.fetch"] = "+refs/heads/*:refs/remotes/origin/*"
 
     # Fetch once so local has origin/main and shares history
     from shortcake._git._pygit2 import fetch_remote
@@ -161,8 +159,8 @@ def test_fetch_and_fast_forward_trunk_with_new_remote_commits(
     fetch_remote(local_repo, "origin")
 
     # Reset local main to origin/main so they share history
-    remote_main_sha = local_repo.refs[b"refs/remotes/origin/main"]
-    local_repo.refs[b"refs/heads/main"] = remote_main_sha
+    remote_main_sha = get_ref(local_repo, "refs/remotes/origin/main")
+    set_ref(local_repo, "refs/heads/main", remote_main_sha)
 
     # Now add new commits to the remote (local is behind)
     commit_files(
@@ -194,7 +192,6 @@ def test_fetch_and_fast_forward_trunk_falls_back_to_git_cli(
     'authentication required but no callback set' for SSH remotes.
     fetch_remote should fall back to `git fetch` via subprocess.
     """
-    from unittest.mock import patch
 
     # Set up a "remote" repo
     remote_path = tmp_path / "remote"
@@ -207,25 +204,16 @@ def test_fetch_and_fast_forward_trunk_falls_back_to_git_cli(
     commit_files(local_repo, {local_path / "README.md": "# Test"}, "Initial commit")
 
     # Configure origin
-    config = local_repo.get_config()
-    config.set(
-        (b"remote", b"origin"),
-        b"url",
-        str(remote_path).encode(),
-    )
-    config.set(
-        (b"remote", b"origin"),
-        b"fetch",
-        b"+refs/heads/*:refs/remotes/origin/*",
-    )
-    config.write_to_path()
+    set_remote(local_repo, "origin", str(remote_path))
+
+    local_repo.config["remote.origin.fetch"] = "+refs/heads/*:refs/remotes/origin/*"
 
     # Fetch once and sync history
     from shortcake._git._pygit2 import fetch_remote as real_fetch
 
     real_fetch(local_repo, "origin")
-    remote_main_sha = local_repo.refs[b"refs/remotes/origin/main"]
-    local_repo.refs[b"refs/heads/main"] = remote_main_sha
+    remote_main_sha = get_ref(local_repo, "refs/remotes/origin/main")
+    set_ref(local_repo, "refs/heads/main", remote_main_sha)
 
     # Add new commits to remote
     commit_files(
@@ -243,11 +231,14 @@ def test_fetch_and_fast_forward_trunk_falls_back_to_git_cli(
     def failing_pygit2_fetch(repo, remote_name="origin"):
         raise pygit2.GitError("authentication required but no callback set")
 
-    with patch("shortcake._git._pygit2.open_pygit2_repo") as mock_open:
-        mock_repo = mock_open.return_value
+    with patch("shortcake._git._pygit2._pygit2_repo") as mock_pygit2:
+        mock_repo = MagicMock()
         mock_repo.remotes.__getitem__.return_value.fetch.side_effect = pygit2.GitError(
             "authentication required but no callback set"
         )
+        mock_repo.workdir = local_repo.workdir
+        mock_repo.path = local_repo.path
+        mock_pygit2.return_value = mock_repo
 
         success, new_sha = git.fetch_and_fast_forward_trunk(local_repo, "main")
 

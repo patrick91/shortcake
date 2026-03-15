@@ -5,11 +5,12 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Annotated
 
+import pygit2
 import typer
-from dulwich.repo import Repo
 
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
+from shortcake._git._core import Repo
 from shortcake.commands.restack import RestackResult, _get_stack_in_order, _restack
 
 
@@ -63,7 +64,7 @@ def _fetch(repo: Repo) -> bool:
 
     result = subprocess.run(
         ["git", "fetch", "origin"],
-        cwd=repo.path,
+        cwd=repo.workdir,
         capture_output=True,
         text=True,
     )
@@ -74,7 +75,7 @@ def _reset_to_remote(repo: Repo, branch: str) -> None:
     """Reset current branch to match origin/branch."""
     subprocess.run(
         ["git", "reset", "--hard", f"origin/{branch}"],
-        cwd=repo.path,
+        cwd=repo.workdir,
         capture_output=True,
         text=True,
         check=True,
@@ -88,7 +89,7 @@ def _rebase_onto_remote(repo: Repo, branch: str) -> bool:
     """
     result = subprocess.run(
         ["git", "rebase", f"origin/{branch}"],
-        cwd=repo.path,
+        cwd=repo.workdir,
         capture_output=True,
         text=True,
     )
@@ -142,8 +143,9 @@ def _pull(
         )
 
     # Get local branch head
-    local_ref = f"refs/heads/{branch}".encode()
-    local_sha = repo.refs[local_ref]
+    local_ref_name = f"refs/heads/{branch}"
+    local_ref_obj = repo.references.get(local_ref_name)
+    local_sha = str(local_ref_obj.target).encode() if local_ref_obj else None
 
     # Already up to date?
     if local_sha == remote_ref:
@@ -152,7 +154,11 @@ def _pull(
     # Can we fast-forward? (local is ancestor of remote)
     if git.is_ancestor(repo, local_sha, remote_ref):
         # Fast-forward
-        repo.refs[local_ref] = remote_ref
+        remote_oid = pygit2.Oid(hex=remote_ref.decode())
+        if local_ref_name in repo.references:
+            repo.references[local_ref_name].set_target(remote_oid)
+        else:
+            repo.references.create(local_ref_name, remote_oid)
         # Update working directory
         git.switch_branch(repo, branch)
         return PullResult(
@@ -282,10 +288,10 @@ def _find_trailer_parent(
             break
 
         # Walk to parent
-        commit = repo[current]
-        if not commit.parents:
+        commit = repo.get(current.decode() if isinstance(current, bytes) else current)
+        if commit is None or not commit.parent_ids:
             break
-        current = commit.parents[0]
+        current = str(commit.parent_ids[0]).encode()
 
     return None
 
@@ -312,8 +318,7 @@ def _ensure_children_from_remote(
     while changed:
         changed = False
         # Get all remote refs that don't have a local branch
-        for ref in list(repo.refs.keys()):
-            ref_str = ref.decode() if isinstance(ref, bytes) else ref
+        for ref_str in list(repo.references):
             if not ref_str.startswith("refs/remotes/origin/"):
                 continue
             branch_name = ref_str[len("refs/remotes/origin/") :]
@@ -321,7 +326,10 @@ def _ensure_children_from_remote(
                 continue
 
             # Walk commits from HEAD to find the trailer
-            remote_sha = repo.refs[ref]
+            ref_obj = repo.references.get(ref_str)
+            if ref_obj is None:
+                continue
+            remote_sha = str(ref_obj.target).encode()
             parent_branch = _find_trailer_parent(repo, remote_sha, known_heads)
 
             if parent_branch is not None and parent_branch in stack_branches:
@@ -342,14 +350,19 @@ def _update_branch_from_remote(repo: Repo, branch: str) -> BranchPullResult:
     if remote_ref is None:
         return BranchPullResult(branch=branch, skipped_no_remote=True)
 
-    local_ref = f"refs/heads/{branch}".encode()
-    local_sha = repo.refs[local_ref]
+    local_ref_name = f"refs/heads/{branch}"
+    local_ref_obj = repo.references.get(local_ref_name)
+    local_sha = str(local_ref_obj.target).encode() if local_ref_obj else None
 
     if local_sha == remote_ref:
         return BranchPullResult(branch=branch, already_up_to_date=True)
 
     # Remote wins — update local ref to match remote
-    repo.refs[local_ref] = remote_ref
+    remote_oid = pygit2.Oid(hex=remote_ref.decode())
+    if local_ref_name in repo.references:
+        repo.references[local_ref_name].set_target(remote_oid)
+    else:
+        repo.references.create(local_ref_name, remote_oid)
     return BranchPullResult(
         branch=branch, updated=True, new_sha=remote_ref[:7].decode()
     )
@@ -442,14 +455,19 @@ def _pull_single_after_fetch(repo: Repo, branch: str) -> PullResult:
             f"Push your branch first with 'git push -u origin {branch}'."
         )
 
-    local_ref = f"refs/heads/{branch}".encode()
-    local_sha = repo.refs[local_ref]
+    local_ref_name = f"refs/heads/{branch}"
+    local_ref_obj = repo.references.get(local_ref_name)
+    local_sha = str(local_ref_obj.target).encode() if local_ref_obj else None
 
     if local_sha == remote_ref:
         return PullResult(branch=branch, already_up_to_date=True)
 
     if git.is_ancestor(repo, local_sha, remote_ref):
-        repo.refs[local_ref] = remote_ref
+        remote_oid = pygit2.Oid(hex=remote_ref.decode())
+        if local_ref_name in repo.references:
+            repo.references[local_ref_name].set_target(remote_oid)
+        else:
+            repo.references.create(local_ref_name, remote_oid)
         git.switch_branch(repo, branch)
         return PullResult(
             branch=branch, fast_forwarded=True, new_sha=remote_ref[:7].decode()

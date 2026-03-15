@@ -9,8 +9,10 @@ from tests._git_helpers import (
     Repo,
     add_paths,
     commit,
+    get_ref,
     init_repo,
     reset_hard,
+    set_ref,
     switch_branch,
 )
 
@@ -35,7 +37,7 @@ def test_cli_adopt_with_branch(
     """Test CLI adopt with explicit branch argument."""
     monkeypatch.chdir(tmp_path)
     # Switch to main first
-    repo_with_feature.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    repo_with_feature.set_head("refs/heads/main")
 
     result = runner.invoke(app, ["adopt", "feature"])
 
@@ -143,7 +145,9 @@ def test_cli_create_prompts_when_branch_exists(
     monkeypatch.chdir(tmp_path)
 
     # Create a branch first
-    temp_repo.refs[b"refs/heads/feat-existing"] = temp_repo.refs[b"refs/heads/main"]
+    set_ref(
+        temp_repo, "refs/heads/feat-existing", get_ref(temp_repo, "refs/heads/main")
+    )
 
     # Provide alternative name via input
     result = runner.invoke(
@@ -164,9 +168,8 @@ def test_cli_create_error_detached_head(
     monkeypatch.chdir(tmp_path)
 
     # Detach HEAD
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    del temp_repo.refs[b"HEAD"]
-    temp_repo.refs[b"HEAD"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", main_sha)
 
     result = runner.invoke(app, ["create", "-m", "feat: something"])
 
@@ -193,7 +196,7 @@ def test_cli_create_no_verify(
     monkeypatch.chdir(tmp_path)
 
     # Create a failing hook
-    hooks_dir = Path(temp_repo.controldir()) / "hooks"
+    hooks_dir = Path(temp_repo.path.rstrip("/")) / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_path = hooks_dir / "pre-commit"
     hook_path.write_text("#!/bin/sh\nexit 1\n")
@@ -218,7 +221,7 @@ def test_cli_create_hook_failure(
     monkeypatch.chdir(tmp_path)
 
     # Create a failing hook
-    hooks_dir = Path(temp_repo.controldir()) / "hooks"
+    hooks_dir = Path(temp_repo.path.rstrip("/")) / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_path = hooks_dir / "pre-commit"
     hook_path.write_text("#!/bin/sh\necho 'Hook failed!'\nexit 1\n")
@@ -272,7 +275,9 @@ def test_cli_create_invalid_branch_name_after_exists_prompt(
     monkeypatch.chdir(tmp_path)
 
     # Create existing branch
-    temp_repo.refs[b"refs/heads/feat-existing"] = temp_repo.refs[b"refs/heads/main"]
+    set_ref(
+        temp_repo, "refs/heads/feat-existing", get_ref(temp_repo, "refs/heads/main")
+    )
 
     # User enters invalid name (only special chars)
     result = runner.invoke(
@@ -381,8 +386,7 @@ def test_cli_create_after(
     monkeypatch.chdir(tmp_path)
 
     # Switch to branch_a first (which has branch_b as child)
-    ref = b"refs/heads/branch_a"
-    repo_with_stack.refs.set_symbolic_ref(b"HEAD", ref)
+    repo_with_stack.set_head("refs/heads/branch_a")
     reset_hard(repo_with_stack)
 
     result = runner.invoke(
@@ -465,8 +469,7 @@ def test_cli_create_after_multiple_children_error(
     monkeypatch.chdir(tmp_path)
 
     # Switch to branch_a which has multiple children (branch_b, branch_c)
-    ref = b"refs/heads/branch_a"
-    repo_with_fork.refs.set_symbolic_ref(b"HEAD", ref)
+    repo_with_fork.set_head("refs/heads/branch_a")
     reset_hard(repo_with_fork)
 
     result = runner.invoke(
@@ -654,9 +657,9 @@ def test_cli_bottom_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     commit(repo, b"Initial commit")
 
     # Create branch_a
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
@@ -665,9 +668,9 @@ def test_cli_bottom_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     commit(repo, msg_a)
 
     # Create branch_b from branch_a
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
     trailers_b = Trailers(parent_branch="branch_a")
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
@@ -727,9 +730,9 @@ def test_cli_up_multiple_children_interactive(
     commit(repo, b"Initial commit")
 
     # Create branch_a
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
@@ -738,9 +741,9 @@ def test_cli_up_multiple_children_interactive(
     commit(repo, msg_a)
 
     # Create branch_b from branch_a
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
     trailers_b = Trailers(parent_branch="branch_a")
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
@@ -749,8 +752,8 @@ def test_cli_up_multiple_children_interactive(
     commit(repo, msg_b)
 
     # Create branch_c from branch_a (fork!)
-    repo.refs[b"refs/heads/branch_c"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    set_ref(repo, "refs/heads/branch_c", branch_a_sha)
+    repo.set_head("refs/heads/branch_c")
     trailers_c = Trailers(parent_branch="branch_a")
     msg_c = trailers_c.apply_to("feat: c")
     file_c = tmp_path / "c.txt"
@@ -785,9 +788,9 @@ def test_cli_up_multiple_children_invalid_selection(
     commit(repo, b"Initial commit")
 
     # Create branch_a
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
@@ -796,9 +799,9 @@ def test_cli_up_multiple_children_invalid_selection(
     commit(repo, msg_a)
 
     # Create branch_b from branch_a
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
     trailers_b = Trailers(parent_branch="branch_a")
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
@@ -807,8 +810,8 @@ def test_cli_up_multiple_children_invalid_selection(
     commit(repo, msg_b)
 
     # Create branch_c from branch_a (fork!)
-    repo.refs[b"refs/heads/branch_c"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    set_ref(repo, "refs/heads/branch_c", branch_a_sha)
+    repo.set_head("refs/heads/branch_c")
     trailers_c = Trailers(parent_branch="branch_a")
     msg_c = trailers_c.apply_to("feat: c")
     file_c = tmp_path / "c.txt"
@@ -817,7 +820,7 @@ def test_cli_up_multiple_children_invalid_selection(
     commit(repo, msg_c)
 
     # Switch to branch_a
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    repo.set_head("refs/heads/branch_a")
 
     # Run up with invalid input
     result = runner.invoke(app, ["up"], input="invalid_branch\n")
@@ -841,9 +844,9 @@ def test_cli_up_with_child_argument(
     add_paths(repo, readme)
     commit(repo, b"Initial commit")
 
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
@@ -851,9 +854,9 @@ def test_cli_up_with_child_argument(
     add_paths(repo, file_a)
     commit(repo, msg_a)
 
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
     trailers_b = Trailers(parent_branch="branch_a")
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
@@ -861,8 +864,8 @@ def test_cli_up_with_child_argument(
     add_paths(repo, file_b)
     commit(repo, msg_b)
 
-    repo.refs[b"refs/heads/branch_c"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    set_ref(repo, "refs/heads/branch_c", branch_a_sha)
+    repo.set_head("refs/heads/branch_c")
     trailers_c = Trailers(parent_branch="branch_a")
     msg_c = trailers_c.apply_to("feat: c")
     file_c = tmp_path / "c.txt"
@@ -887,9 +890,8 @@ def test_cli_up_detached_head(
     monkeypatch.chdir(tmp_path)
 
     # Detach HEAD
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    del temp_repo.refs[b"HEAD"]
-    temp_repo.refs[b"HEAD"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", main_sha)
 
     result = runner.invoke(app, ["up"])
 
@@ -904,9 +906,8 @@ def test_cli_down_detached_head(
     monkeypatch.chdir(tmp_path)
 
     # Detach HEAD
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    del temp_repo.refs[b"HEAD"]
-    temp_repo.refs[b"HEAD"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", main_sha)
 
     result = runner.invoke(app, ["down"])
 
@@ -921,9 +922,8 @@ def test_cli_top_detached_head(
     monkeypatch.chdir(tmp_path)
 
     # Detach HEAD
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    del temp_repo.refs[b"HEAD"]
-    temp_repo.refs[b"HEAD"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", main_sha)
 
     result = runner.invoke(app, ["top"])
 
@@ -938,9 +938,8 @@ def test_cli_bottom_detached_head(
     monkeypatch.chdir(tmp_path)
 
     # Detach HEAD
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    del temp_repo.refs[b"HEAD"]
-    temp_repo.refs[b"HEAD"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", main_sha)
 
     result = runner.invoke(app, ["bottom"])
 
@@ -976,9 +975,9 @@ def test_cli_top_multiple_children_interactive(
     add_paths(repo, readme)
     commit(repo, b"Initial commit")
 
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
@@ -986,9 +985,9 @@ def test_cli_top_multiple_children_interactive(
     add_paths(repo, file_a)
     commit(repo, msg_a)
 
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
     trailers_b = Trailers(parent_branch="branch_a")
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
@@ -996,8 +995,8 @@ def test_cli_top_multiple_children_interactive(
     add_paths(repo, file_b)
     commit(repo, msg_b)
 
-    repo.refs[b"refs/heads/branch_c"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    set_ref(repo, "refs/heads/branch_c", branch_a_sha)
+    repo.set_head("refs/heads/branch_c")
     trailers_c = Trailers(parent_branch="branch_a")
     msg_c = trailers_c.apply_to("feat: c")
     file_c = tmp_path / "c.txt"
@@ -1031,9 +1030,9 @@ def test_cli_top_multiple_children_invalid_selection(
     add_paths(repo, readme)
     commit(repo, b"Initial commit")
 
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
@@ -1041,9 +1040,9 @@ def test_cli_top_multiple_children_invalid_selection(
     add_paths(repo, file_a)
     commit(repo, msg_a)
 
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
     trailers_b = Trailers(parent_branch="branch_a")
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
@@ -1051,8 +1050,8 @@ def test_cli_top_multiple_children_invalid_selection(
     add_paths(repo, file_b)
     commit(repo, msg_b)
 
-    repo.refs[b"refs/heads/branch_c"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    set_ref(repo, "refs/heads/branch_c", branch_a_sha)
+    repo.set_head("refs/heads/branch_c")
     trailers_c = Trailers(parent_branch="branch_a")
     msg_c = trailers_c.apply_to("feat: c")
     file_c = tmp_path / "c.txt"
@@ -1061,7 +1060,7 @@ def test_cli_top_multiple_children_invalid_selection(
     commit(repo, msg_c)
 
     # Switch to main
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    repo.set_head("refs/heads/main")
 
     # Run top with invalid input
     result = runner.invoke(app, ["top"], input="invalid_branch\n")
@@ -1085,9 +1084,9 @@ def test_cli_up_invalid_child_argument(
     add_paths(repo, readme)
     commit(repo, b"Initial commit")
 
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
@@ -1095,9 +1094,9 @@ def test_cli_up_invalid_child_argument(
     add_paths(repo, file_a)
     commit(repo, msg_a)
 
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
     trailers_b = Trailers(parent_branch="branch_a")
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
@@ -1106,7 +1105,7 @@ def test_cli_up_invalid_child_argument(
     commit(repo, msg_b)
 
     # Switch to main (which has branch_a as child)
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/main")
+    repo.set_head("refs/heads/main")
 
     # Run up with invalid child argument (branch_b is not a direct child of main)
     result = runner.invoke(app, ["up", "nonexistent"])
@@ -1130,9 +1129,9 @@ def test_cli_down_to_non_trunk_parent(
     add_paths(repo, readme)
     commit(repo, b"Initial commit")
 
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
@@ -1140,9 +1139,9 @@ def test_cli_down_to_non_trunk_parent(
     add_paths(repo, file_a)
     commit(repo, msg_a)
 
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
     trailers_b = Trailers(parent_branch="branch_a")
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
@@ -1173,9 +1172,9 @@ def test_cli_top_fork_then_continue(
     add_paths(repo, readme)
     commit(repo, b"Initial commit")
 
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
@@ -1183,11 +1182,11 @@ def test_cli_top_fork_then_continue(
     add_paths(repo, file_a)
     commit(repo, msg_a)
 
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
 
     # branch_b from branch_a
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
     trailers_b = Trailers(parent_branch="branch_a")
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
@@ -1195,11 +1194,11 @@ def test_cli_top_fork_then_continue(
     add_paths(repo, file_b)
     commit(repo, msg_b)
 
-    branch_b_sha = repo.refs[b"refs/heads/branch_b"]
+    branch_b_sha = get_ref(repo, "refs/heads/branch_b")
 
     # branch_d from branch_b (so branch_b has a child)
-    repo.refs[b"refs/heads/branch_d"] = branch_b_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_d")
+    set_ref(repo, "refs/heads/branch_d", branch_b_sha)
+    repo.set_head("refs/heads/branch_d")
     trailers_d = Trailers(parent_branch="branch_b")
     msg_d = trailers_d.apply_to("feat: d")
     file_d = tmp_path / "d.txt"
@@ -1208,8 +1207,8 @@ def test_cli_top_fork_then_continue(
     commit(repo, msg_d)
 
     # branch_c from branch_a (fork sibling of branch_b)
-    repo.refs[b"refs/heads/branch_c"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    set_ref(repo, "refs/heads/branch_c", branch_a_sha)
+    repo.set_head("refs/heads/branch_c")
     trailers_c = Trailers(parent_branch="branch_a")
     msg_c = trailers_c.apply_to("feat: c")
     file_c = tmp_path / "c.txt"
@@ -1245,9 +1244,9 @@ def test_cli_top_fork_then_another_fork(
     add_paths(repo, readme)
     commit(repo, b"Initial commit")
 
-    main_sha = repo.refs[b"refs/heads/main"]
-    repo.refs[b"refs/heads/branch_a"] = main_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_a")
+    main_sha = get_ref(repo, "refs/heads/main")
+    set_ref(repo, "refs/heads/branch_a", main_sha)
+    repo.set_head("refs/heads/branch_a")
     trailers_a = Trailers(parent_branch="main")
     msg_a = trailers_a.apply_to("feat: a")
     file_a = tmp_path / "a.txt"
@@ -1255,11 +1254,11 @@ def test_cli_top_fork_then_another_fork(
     add_paths(repo, file_a)
     commit(repo, msg_a)
 
-    branch_a_sha = repo.refs[b"refs/heads/branch_a"]
+    branch_a_sha = get_ref(repo, "refs/heads/branch_a")
 
     # branch_b from branch_a
-    repo.refs[b"refs/heads/branch_b"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_b")
+    set_ref(repo, "refs/heads/branch_b", branch_a_sha)
+    repo.set_head("refs/heads/branch_b")
     trailers_b = Trailers(parent_branch="branch_a")
     msg_b = trailers_b.apply_to("feat: b")
     file_b = tmp_path / "b.txt"
@@ -1267,11 +1266,11 @@ def test_cli_top_fork_then_another_fork(
     add_paths(repo, file_b)
     commit(repo, msg_b)
 
-    branch_b_sha = repo.refs[b"refs/heads/branch_b"]
+    branch_b_sha = get_ref(repo, "refs/heads/branch_b")
 
     # branch_d from branch_b
-    repo.refs[b"refs/heads/branch_d"] = branch_b_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_d")
+    set_ref(repo, "refs/heads/branch_d", branch_b_sha)
+    repo.set_head("refs/heads/branch_d")
     trailers_d = Trailers(parent_branch="branch_b")
     msg_d = trailers_d.apply_to("feat: d")
     file_d = tmp_path / "d.txt"
@@ -1280,8 +1279,8 @@ def test_cli_top_fork_then_another_fork(
     commit(repo, msg_d)
 
     # branch_e from branch_b (another fork!)
-    repo.refs[b"refs/heads/branch_e"] = branch_b_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_e")
+    set_ref(repo, "refs/heads/branch_e", branch_b_sha)
+    repo.set_head("refs/heads/branch_e")
     trailers_e = Trailers(parent_branch="branch_b")
     msg_e = trailers_e.apply_to("feat: e")
     file_e = tmp_path / "e.txt"
@@ -1290,8 +1289,8 @@ def test_cli_top_fork_then_another_fork(
     commit(repo, msg_e)
 
     # branch_c from branch_a
-    repo.refs[b"refs/heads/branch_c"] = branch_a_sha
-    repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/branch_c")
+    set_ref(repo, "refs/heads/branch_c", branch_a_sha)
+    repo.set_head("refs/heads/branch_c")
     trailers_c = Trailers(parent_branch="branch_a")
     msg_c = trailers_c.apply_to("feat: c")
     file_c = tmp_path / "c.txt"
@@ -1326,7 +1325,7 @@ def test_cli_modify_with_message_creates_new_commit(
     # First adopt to add trailer
     runner.invoke(app, ["adopt"])
 
-    old_sha = repo_with_feature.head()
+    old_oid = repo_with_feature.head.target
 
     # Stage a new file (required for -m)
     new_file = tmp_path / "new.txt"
@@ -1339,8 +1338,8 @@ def test_cli_modify_with_message_creates_new_commit(
     assert "Created commit on 'feature'" in result.output
 
     # Verify old commit is parent of new commit
-    new_commit = repo_with_feature[repo_with_feature.head()]
-    assert old_sha in new_commit.parents
+    new_commit = repo_with_feature.get(str(repo_with_feature.head.target))
+    assert old_oid in new_commit.parent_ids
 
 
 def test_cli_modify_preserves_trailer(
@@ -1366,7 +1365,7 @@ def test_cli_modify_preserves_trailer(
     # Verify trailer is still there
     from shortcake import _git as git
 
-    head_sha = repo_with_feature.head()
+    head_sha = str(repo_with_feature.head.target).encode()
     message = git.get_commit_message(repo_with_feature, head_sha)
     trailers = Trailers.from_message(message)
     assert trailers.parent_branch == "main"
@@ -1379,9 +1378,8 @@ def test_cli_modify_detached_head(
     monkeypatch.chdir(tmp_path)
 
     # Detach HEAD
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    del temp_repo.refs[b"HEAD"]
-    temp_repo.refs[b"HEAD"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", main_sha)
 
     result = runner.invoke(app, ["modify", "-e"])
 
@@ -1437,10 +1435,12 @@ def test_cli_modify_with_staged_changes(
     assert result.exit_code == 0
 
     # Verify file is in the commit
-    head_sha = repo_with_feature.head()
-    commit = repo_with_feature[head_sha]
-    tree = repo_with_feature[commit.tree]
-    files = [entry.path for entry in tree.items()]
+    head_sha = str(repo_with_feature.head.target).encode()
+    commit = repo_with_feature.get(
+        head_sha.decode() if isinstance(head_sha, bytes) else str(head_sha)
+    )
+    tree = repo_with_feature.get(str(commit.tree_id))
+    files = [entry.name.encode() for entry in tree]
     assert b"staged.txt" in files
 
 
@@ -1451,7 +1451,7 @@ def test_cli_modify_no_verify(
     monkeypatch.chdir(tmp_path)
 
     # Create a failing hook
-    hooks_dir = Path(repo_with_feature.controldir()) / "hooks"
+    hooks_dir = Path(repo_with_feature.path.rstrip("/")) / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_path = hooks_dir / "pre-commit"
     hook_path.write_text("#!/bin/sh\nexit 1\n")
@@ -1476,7 +1476,7 @@ def test_cli_modify_hook_failure(
     monkeypatch.chdir(tmp_path)
 
     # Create a failing hook
-    hooks_dir = Path(repo_with_feature.controldir()) / "hooks"
+    hooks_dir = Path(repo_with_feature.path.rstrip("/")) / "hooks"
     hooks_dir.mkdir(exist_ok=True)
     hook_path = hooks_dir / "pre-commit"
     hook_path.write_text("#!/bin/sh\necho 'Hook failed!'\nexit 1\n")
@@ -1499,7 +1499,7 @@ def test_cli_modify_no_flags_amends_with_staged(
     """Test CLI modify with no flags amends with staged changes."""
     monkeypatch.chdir(tmp_path)
 
-    old_sha = repo_with_feature.head()
+    old_sha = str(repo_with_feature.head.target).encode()
 
     # Stage a new file
     new_file = tmp_path / "staged.txt"
@@ -1512,7 +1512,7 @@ def test_cli_modify_no_flags_amends_with_staged(
     assert "Amended commit on 'feature'" in result.output
 
     # Verify commit was amended (new SHA, same parent)
-    new_sha = repo_with_feature.head()
+    new_sha = str(repo_with_feature.head.target).encode()
     assert new_sha != old_sha
 
 
@@ -1606,9 +1606,8 @@ def test_cli_log_detached_head(
     monkeypatch.chdir(tmp_path)
 
     # Detach HEAD
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    del temp_repo.refs[b"HEAD"]
-    temp_repo.refs[b"HEAD"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", main_sha)
 
     result = runner.invoke(app, ["log"])
 
@@ -1623,9 +1622,9 @@ def test_cli_log_no_commits(
     monkeypatch.chdir(tmp_path)
 
     # Create feature branch with one commit
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     file1 = tmp_path / "file1.txt"
     file1.write_text("content")
@@ -1636,8 +1635,8 @@ def test_cli_log_no_commits(
     runner.invoke(app, ["adopt"])
 
     # Simulate merge: fast-forward main to feature's head
-    feature_sha = temp_repo.refs[b"refs/heads/feature"]
-    temp_repo.refs[b"refs/heads/main"] = feature_sha
+    feature_sha = get_ref(temp_repo, "refs/heads/feature")
+    set_ref(temp_repo, "refs/heads/main", feature_sha)
 
     result = runner.invoke(app, ["log"])
 
@@ -1652,9 +1651,9 @@ def test_cli_log_multiple_commits(
     monkeypatch.chdir(tmp_path)
 
     # Create feature branch with multiple commits
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
-    temp_repo.refs.set_symbolic_ref(b"HEAD", b"refs/heads/feature")
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
 
     # First commit
     file1 = tmp_path / "file1.txt"

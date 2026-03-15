@@ -1,12 +1,12 @@
 from typing import Annotated
 
 import typer
-from dulwich.repo import Repo
 from rich.console import Console
 from rich.live import Live
 
 from shortcake import _git as git
 from shortcake._cache import load_pr_cache, update_pr_cache
+from shortcake._git._core import Repo
 from shortcake._github import GitHubClient, get_github_token, get_repo_info
 from shortcake._tree import BranchNode, StackTree
 

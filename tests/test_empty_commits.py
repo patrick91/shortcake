@@ -13,7 +13,7 @@ from shortcake import _git as git
 from shortcake._git._rebase import RebaseResult, rebase_branch, rebase_continue
 from shortcake._trailers import Trailers
 from shortcake.commands.restack import _restack
-from tests._git_helpers import Repo, add_paths, commit, switch_branch
+from tests._git_helpers import Repo, add_paths, commit, get_ref, set_ref, switch_branch
 
 
 def test_rebase_result_dataclass() -> None:
@@ -35,8 +35,8 @@ def test_rebase_result_dataclass() -> None:
 def test_rebase_branch_normal(temp_repo: Repo, tmp_path: Path) -> None:
     """Test basic rebase works with git CLI."""
     # Create feature branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
     switch_branch(temp_repo, "feature")
 
     # Add a commit on feature
@@ -44,7 +44,7 @@ def test_rebase_branch_normal(temp_repo: Repo, tmp_path: Path) -> None:
     feature_file.write_text("feature content")
     add_paths(temp_repo, feature_file)
     commit(temp_repo, b"feat: add feature")
-    feature_sha = temp_repo.refs[b"refs/heads/feature"]
+    feature_sha = get_ref(temp_repo, "refs/heads/feature")
 
     # Add a commit to main
     switch_branch(temp_repo, "main")
@@ -52,7 +52,7 @@ def test_rebase_branch_normal(temp_repo: Repo, tmp_path: Path) -> None:
     main_file.write_text("main update")
     add_paths(temp_repo, main_file)
     commit(temp_repo, b"chore: update main")
-    main_new_sha = temp_repo.refs[b"refs/heads/main"]
+    main_new_sha = get_ref(temp_repo, "refs/heads/main")
 
     # Rebase feature onto main
     result = rebase_branch(temp_repo, "feature", "main", main_sha.decode())
@@ -62,18 +62,22 @@ def test_rebase_branch_normal(temp_repo: Repo, tmp_path: Path) -> None:
     assert result.skipped_empty is False
 
     # Verify feature is now on top of main
-    new_feature_sha = temp_repo.refs[b"refs/heads/feature"]
+    new_feature_sha = get_ref(temp_repo, "refs/heads/feature")
     assert new_feature_sha != feature_sha
     # Feature's parent should now be main
-    feature_commit = temp_repo[new_feature_sha]
-    assert feature_commit.parents[0] == main_new_sha
+    feature_commit = temp_repo.get(
+        new_feature_sha.decode()
+        if isinstance(new_feature_sha, bytes)
+        else str(new_feature_sha)
+    )
+    assert str(feature_commit.parent_ids[0]) == main_new_sha.decode()
 
 
 def test_rebase_branch_skips_empty_commits(temp_repo: Repo, tmp_path: Path) -> None:
     """Test that rebase with --empty=drop skips empty commits."""
     # Create feature branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
     switch_branch(temp_repo, "feature")
 
     # Add a change on feature
@@ -112,10 +116,10 @@ def test_reproduce_content_loss_bug(temp_repo: Repo, tmp_path: Path) -> None:
     file_txt.write_text("initial\n")
     add_paths(temp_repo, file_txt)
     commit(temp_repo, b"initial file.txt")
-    main_base_sha = temp_repo.refs[b"refs/heads/main"]
+    main_base_sha = get_ref(temp_repo, "refs/heads/main")
 
     # Feature branch with important changes
-    temp_repo.refs[b"refs/heads/feature"] = main_base_sha
+    set_ref(temp_repo, "refs/heads/feature", main_base_sha)
     switch_branch(temp_repo, "feature")
     file_txt.write_text("initial\nfeature line 1\nfeature line 2\n")
     important_txt = tmp_path / "important.txt"
@@ -143,8 +147,8 @@ def test_reproduce_content_loss_bug(temp_repo: Repo, tmp_path: Path) -> None:
 def test_rebase_branch_with_conflict(temp_repo: Repo, tmp_path: Path) -> None:
     """Test that conflicts are properly detected during rebase."""
     # Create feature branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
     switch_branch(temp_repo, "feature")
 
     # Modify README on feature
@@ -170,8 +174,8 @@ def test_rebase_branch_with_conflict(temp_repo: Repo, tmp_path: Path) -> None:
 def test_rebase_continue_success(temp_repo: Repo, tmp_path: Path) -> None:
     """Test rebase continue after resolving conflict."""
     # Create conflicting scenario
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
     switch_branch(temp_repo, "feature")
 
     readme = tmp_path / "README.md"
@@ -212,8 +216,8 @@ def test_rebase_continue_empty_after_conflict_resolution(
     rebasing onto), while "theirs" refers to the branch being rebased.
     """
     # Create conflicting scenario
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
     switch_branch(temp_repo, "feature")
 
     readme = tmp_path / "README.md"
@@ -243,15 +247,15 @@ def test_rebase_continue_empty_after_conflict_resolution(
 def test_rebase_abort_after_conflict(temp_repo: Repo, tmp_path: Path) -> None:
     """Test that abort works after conflict."""
     # Create conflicting scenario
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
     switch_branch(temp_repo, "feature")
 
     readme = tmp_path / "README.md"
     readme.write_text("# Feature Version")
     add_paths(temp_repo, readme)
     commit(temp_repo, b"feat: modify readme")
-    feature_sha = temp_repo.refs[b"refs/heads/feature"]
+    feature_sha = get_ref(temp_repo, "refs/heads/feature")
 
     switch_branch(temp_repo, "main")
     readme.write_text("# Main Version")
@@ -269,14 +273,14 @@ def test_rebase_abort_after_conflict(temp_repo: Repo, tmp_path: Path) -> None:
 
     # Feature branch should be restored
     # Note: git rebase --abort restores the branch to original position
-    assert temp_repo.refs[b"refs/heads/feature"] == feature_sha
+    assert get_ref(temp_repo, "refs/heads/feature") == feature_sha
 
 
 def test_restack_with_empty_commits(temp_repo: Repo, tmp_path: Path) -> None:
     """Test _restack properly handles and reports empty commits."""
     # Create tracked feature branch
-    main_sha = temp_repo.refs[b"refs/heads/main"]
-    temp_repo.refs[b"refs/heads/feature"] = main_sha
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
     switch_branch(temp_repo, "feature")
 
     # Add a change on feature with trailer
