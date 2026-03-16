@@ -3,7 +3,6 @@ from dataclasses import dataclass, field
 from typing import Annotated
 
 import httpx
-import pygit2
 import typer
 
 from shortcake import _git as git
@@ -11,8 +10,7 @@ from shortcake._cache import update_pr_cache
 from shortcake._exceptions import ShortcakeError
 from shortcake._git._core import Repo
 from shortcake._github import GitHubClient, get_github_token, get_repo_info
-from shortcake._trailers import Trailers
-from shortcake.commands.restack import RestackResult, _restack
+from shortcake.commands.restack import RestackResult, _restack, _restore_trailer
 
 
 class SyncError(ShortcakeError):
@@ -62,113 +60,45 @@ def _topological_sort_for_deletion(repo: Repo, branches: list[str]) -> list[str]
     return result
 
 
-def _replay_commits(repo: Repo, commits: list[bytes], base: bytes) -> bytes:
-    """Replay commits on top of a new base, return final SHA."""
-    current_base = base
-    # Commits are newest-first, so reverse to replay in order
-    for commit_sha in reversed(commits):
-        old_commit = repo.get(commit_sha.decode())
-        new_sha = git.amend_commit_message(repo, commit_sha, old_commit.message)
-        new_commit = repo.get(new_sha.decode())
+def _reparent_branch(repo: Repo, child: str, new_parent: str) -> bool:
+    """Rebase a branch onto a new parent, updating the Shortcake-Parent trailer.
 
-        new_oid = repo.create_commit(
-            None,  # don't update any ref
-            old_commit.author,
-            pygit2.Signature(
-                new_commit.committer.name,
-                new_commit.committer.email,
-                new_commit.committer.time,
-                new_commit.committer.offset,
-            ),
-            old_commit.message,
-            old_commit.tree_id,
-            [pygit2.Oid(hex=current_base.decode())],
-        )
-        current_base = str(new_oid).encode()
+    Uses git rebase --onto to properly rebase file content onto the new parent,
+    then updates the trailer. This ensures the branch's tree is consistent with
+    the new parent (unlike the old approach that preserved stale tree snapshots).
 
-    return current_base
-
-
-def _reparent_branch(repo: Repo, child: str, new_parent: str) -> None:
-    """Update a branch's Shortcake-Parent trailer to point to new parent.
-
-    This rewrites the first commit (the one with the trailer) and replays
-    subsequent commits on top of it.
+    Returns True on success, False on failure (rebase conflict or error).
     """
+    from shortcake.commands.reorder import _update_branch_trailer
+
     all_branches = set(git.get_all_local_branches(repo))
     parent_info = git.get_branch_parent_info(repo, child, all_branches)
     if parent_info is None:
-        return  # Not tracked, nothing to do
+        return True  # Not tracked, nothing to do
 
     _, merge_base = parent_info
     if merge_base is None:
-        return  # Orphan commit, nothing to do
+        return True  # Orphan commit, nothing to do
 
-    # Get the new parent's head as the base for commits
-    new_parent_head = git.get_branch_head(repo, new_parent)
+    # Rebase the branch onto the new parent, properly handling file content.
+    # This takes commits from merge_base..child and replays them onto new_parent.
+    result = git.rebase_branch(repo, child, new_parent, merge_base.decode())
 
-    # Get commits on child branch relative to merge base.
-    # Use merge_base (parent of the first commit with the trailer) instead
-    # of old_parent_head, because the old parent branch may have diverged
-    # (e.g., been rebased) since the child was created.
-    child_head = git.get_branch_head(repo, child)
-    commits = git.get_commits_between(repo, child_head, merge_base)
+    if not result.success:
+        # Abort the failed rebase so we can continue with other branches
+        if git.is_rebase_in_progress(repo):
+            git.rebase_abort(repo)
+        return False
 
-    if not commits:  # pragma: no cover
-        return
+    # Update the trailer to point to the new parent
+    _update_branch_trailer(repo, child, new_parent)
 
-    # First commit is last in list (walker returns newest first)
-    first_commit_sha = commits[-1]
+    # If trailer was lost during rebase (--empty=drop), restore it
+    all_branches = set(git.get_all_local_branches(repo))
+    if git.get_branch_parent(repo, child, all_branches) is None:
+        _restore_trailer(repo, child, new_parent)
 
-    # Update trailer in first commit
-    message = git.get_commit_message(repo, first_commit_sha)
-
-    # Strip existing trailer and add new one
-    # Find where trailer block starts and rebuild message
-    lines = message.rstrip().split("\n")
-    body_lines = []
-    for line in lines:
-        if line.startswith("Shortcake-Parent: "):
-            continue
-        body_lines.append(line)
-
-    # Remove trailing empty lines from body
-    while body_lines and not body_lines[-1].strip():
-        body_lines.pop()
-
-    new_message = "\n".join(body_lines)
-    new_trailers = Trailers(parent_branch=new_parent)
-    new_message = new_trailers.apply_to(new_message)
-
-    new_first_sha = git.amend_commit_message(repo, first_commit_sha, new_message)
-
-    # Fix parent of first commit to point to new_parent_head
-    old_first = repo.get(first_commit_sha.decode())
-    new_first_commit = repo.get(new_first_sha.decode())
-
-    new_oid = repo.create_commit(
-        None,  # don't update any ref
-        old_first.author,
-        pygit2.Signature(
-            new_first_commit.committer.name,
-            new_first_commit.committer.email,
-            new_first_commit.committer.time,
-            new_first_commit.committer.offset,
-        ),
-        new_message,
-        old_first.tree_id,
-        [pygit2.Oid(hex=new_parent_head.decode())],
-    )
-    new_first_sha = str(new_oid).encode()
-
-    # Replay remaining commits
-    if len(commits) > 1:
-        new_head = _replay_commits(repo, commits[:-1], new_first_sha)
-    else:
-        new_head = new_first_sha
-
-    # Update branch ref
-    git.update_branch(repo, child, new_head.decode())
+    return True
 
 
 def _delete_and_reparent(
@@ -198,9 +128,16 @@ def _delete_and_reparent(
 
     for child in children:
         if child not in skip_branches:
-            _reparent_branch(repo, child, grandparent)
-            result.reparented_branches[child] = grandparent
-            typer.echo(f"Reparented {child} to {grandparent}")
+            success = _reparent_branch(repo, child, grandparent)
+            if success:
+                result.reparented_branches[child] = grandparent
+                typer.echo(f"Reparented {child} to {grandparent}")
+            else:
+                typer.echo(
+                    f"Warning: Could not reparent '{child}' to '{grandparent}' "
+                    f"due to conflicts. Run 'sc restack' manually after resolving.",
+                    err=True,
+                )
 
     git.delete_branch(repo, branch)
     return current_branch
@@ -443,12 +380,20 @@ def _sync(
                         f"'{parent}' to '{merged_target}'"
                     )
                 else:
-                    _reparent_branch(repo, branch, merged_target)
-                    result.reparented_branches[branch] = merged_target
-                    typer.echo(
-                        f"Reparented '{branch}' to '{merged_target}' "
-                        f"('{parent}' was merged)"
-                    )
+                    success = _reparent_branch(repo, branch, merged_target)
+                    if success:
+                        result.reparented_branches[branch] = merged_target
+                        typer.echo(
+                            f"Reparented '{branch}' to '{merged_target}' "
+                            f"('{parent}' was merged)"
+                        )
+                    else:
+                        typer.echo(
+                            f"Warning: Could not reparent '{branch}' to "
+                            f"'{merged_target}' due to conflicts. "
+                            f"Run 'sc restack' manually after resolving.",
+                            err=True,
+                        )
 
     # 4. Restack remaining branches if current is tracked
     current_branch = git.get_current_branch(repo)
