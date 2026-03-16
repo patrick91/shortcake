@@ -1007,6 +1007,84 @@ def test_reparent_branch_multiple_commits(temp_repo: Repo, tmp_path: Path) -> No
     assert "child2.txt" in tree_entries
 
 
+def test_reparent_branch_does_not_revert_master_changes(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test _reparent_branch properly rebases content onto the new parent.
+
+    Regression test: when a child branch is reparented from a deleted parent
+    to the grandparent (e.g., main), the child's tree must be rebased onto
+    the new parent. Previously, _reparent_branch only rewrote commit metadata
+    (parent pointer + trailer) but preserved the old tree snapshot. This caused
+    the reparented branch to silently revert changes that were independently
+    added to main after the original stack was created.
+    """
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+
+    # Create parent branch with a file
+    set_ref(temp_repo, "refs/heads/parent", main_sha)
+    temp_repo.set_head("refs/heads/parent")
+    reset_hard(temp_repo)
+
+    parent_file = tmp_path / "parent.txt"
+    parent_file.write_text("parent content")
+    add_paths(temp_repo, parent_file)
+    parent_trailers = Trailers(parent_branch="main")
+    commit(temp_repo, parent_trailers.apply_to("feat: parent").encode())
+    parent_sha = get_ref(temp_repo, "refs/heads/parent")
+
+    # Create child branch with its own file
+    set_ref(temp_repo, "refs/heads/child", parent_sha)
+    temp_repo.set_head("refs/heads/child")
+    reset_hard(temp_repo)
+
+    child_file = tmp_path / "child.txt"
+    child_file.write_text("child content")
+    add_paths(temp_repo, child_file)
+    child_trailers = Trailers(parent_branch="parent")
+    commit(temp_repo, child_trailers.apply_to("feat: child").encode())
+
+    # Now add a new file to main (simulating another PR being merged)
+    temp_repo.set_head("refs/heads/main")
+    reset_hard(temp_repo)
+
+    main_new_file = tmp_path / "main_new.txt"
+    main_new_file.write_text("independently added to main")
+    add_paths(temp_repo, main_new_file)
+    commit(temp_repo, b"chore: add main_new.txt")
+
+    # Also fast-forward parent into main (simulating parent being merged)
+    run_git(temp_repo, "merge", "parent", "--no-edit")
+
+    # Switch to child for the reparent
+    temp_repo.set_head("refs/heads/child")
+    reset_hard(temp_repo)
+
+    # Reparent child from parent to main
+    _reparent_branch(temp_repo, "child", "main")
+
+    # Verify trailer was updated
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    new_parent = git.get_branch_parent(temp_repo, "child", all_branches)
+    assert new_parent == "main"
+
+    # CRITICAL: verify that main_new.txt is in the child's tree.
+    # Before the fix, _reparent_branch preserved the old tree (which didn't
+    # have main_new.txt), making the reparented branch silently revert it.
+    child_head = get_ref(temp_repo, "refs/heads/child")
+    child_commit = temp_repo.get(child_head.decode())
+    child_tree = temp_repo.get(str(child_commit.tree_id))
+    tree_entries = {entry.name for entry in child_tree}
+    assert "child.txt" in tree_entries, "Child's own file should be preserved"
+    assert "parent.txt" in tree_entries, (
+        "Parent's file should be preserved (merged into main)"
+    )
+    assert "main_new.txt" in tree_entries, (
+        "File independently added to main MUST be in the reparented branch's tree. "
+        "If missing, the reparented branch would silently revert this file."
+    )
+
+
 # Tests for _detect_github_stale_branches
 
 
