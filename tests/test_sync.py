@@ -1805,7 +1805,9 @@ def test_delete_and_reparent_warns_on_child_reparent_conflict(temp_repo: Repo) -
     result = SyncResult(trunk_updated=False)
 
     with (
-        patch("shortcake.commands.sync.git.get_branch_children", return_value=["child"]),
+        patch(
+            "shortcake.commands.sync.git.get_branch_children", return_value=["child"]
+        ),
         patch("shortcake.commands.sync.git.get_branch_parent", return_value=None),
         patch("shortcake.commands.sync._reparent_branch", return_value=False),
         patch("shortcake.commands.sync.typer.echo") as mock_echo,
