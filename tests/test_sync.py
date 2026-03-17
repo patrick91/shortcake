@@ -24,6 +24,7 @@ from shortcake.commands.sync import (
     _GitHubBranchStatus,
     _reparent_branch,
     _resolve_deleted_parent,
+    _resolve_existing_parent,
     _sync,
     _topological_sort_for_deletion,
 )
@@ -1007,6 +1008,47 @@ def test_reparent_branch_multiple_commits(temp_repo: Repo, tmp_path: Path) -> No
     assert "child2.txt" in tree_entries
 
 
+def test_reparent_branch_aborts_failed_rebase(temp_repo: Repo) -> None:
+    """Test _reparent_branch aborts when git leaves a rebase in progress."""
+    with (
+        patch(
+            "shortcake.commands.sync.git.get_branch_parent_info",
+            return_value=("main", b"abc123"),
+        ),
+        patch(
+            "shortcake.commands.sync.git.rebase_branch",
+            return_value=git.RebaseResult(success=False),
+        ),
+        patch("shortcake.commands.sync.git.is_rebase_in_progress", return_value=True),
+        patch("shortcake.commands.sync.git.rebase_abort") as mock_abort,
+    ):
+        result = _reparent_branch(temp_repo, "feature", "main")
+
+    assert result is False
+    mock_abort.assert_called_once_with(temp_repo)
+
+
+def test_reparent_branch_restores_trailer_when_lost(temp_repo: Repo) -> None:
+    """Test _reparent_branch restores trailer after empty-drop rebases."""
+    with (
+        patch(
+            "shortcake.commands.sync.git.get_branch_parent_info",
+            return_value=("main", b"abc123"),
+        ),
+        patch(
+            "shortcake.commands.sync.git.rebase_branch",
+            return_value=git.RebaseResult(success=True),
+        ),
+        patch("shortcake.commands.reorder._update_branch_trailer"),
+        patch("shortcake.commands.sync.git.get_branch_parent", return_value=None),
+        patch("shortcake.commands.sync._restore_trailer") as mock_restore,
+    ):
+        result = _reparent_branch(temp_repo, "feature", "main")
+
+    assert result is True
+    mock_restore.assert_called_once_with(temp_repo, "feature", "main")
+
+
 def test_reparent_branch_does_not_revert_master_changes(
     temp_repo: Repo, tmp_path: Path
 ) -> None:
@@ -1452,6 +1494,38 @@ def test_sync_reparents_branch_with_deleted_parent(
     assert new_parent == "main"
 
 
+def test_sync_warns_when_deleted_parent_reparent_conflicts(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test sync warns when orphaned-parent reparenting conflicts."""
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
+
+    test_file = tmp_path / "feature.txt"
+    test_file.write_text("feature content")
+    add_paths(temp_repo, test_file)
+    trailers = Trailers(parent_branch="deleted-parent")
+    message = trailers.apply_to("feat: add feature")
+    commit(temp_repo, message)
+
+    git.switch_branch(temp_repo, "main")
+
+    with (
+        patch("shortcake.commands.sync._resolve_existing_parent", return_value="main"),
+        patch("shortcake.commands.sync._reparent_branch", return_value=False),
+        patch("shortcake.commands.sync.typer.echo") as mock_echo,
+    ):
+        result = _sync(temp_repo, force=True)
+
+    assert result.reparented_branches == {}
+    assert any(
+        "Could not reparent 'feature' to 'main'" in call.args[0]
+        and call.kwargs.get("err") is True
+        for call in mock_echo.call_args_list
+    )
+
+
 def test_sync_reparents_branch_dry_run(temp_repo: Repo, tmp_path: Path) -> None:
     """Test sync dry run shows reparent without executing."""
     main_sha = get_ref(temp_repo, "refs/heads/main")
@@ -1505,6 +1579,62 @@ def test_sync_skips_reparent_when_resolve_returns_none(
         result = _sync(temp_repo, force=True)
 
     assert result.reparented_branches == {}
+
+
+def test_sync_reparents_branch_with_multi_hop_deleted_parent(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test sync resolves deleted-parent chains until a local branch exists."""
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
+
+    test_file = tmp_path / "feature.txt"
+    test_file.write_text("feature content")
+    add_paths(temp_repo, test_file)
+    trailers = Trailers(parent_branch="deleted-parent-a")
+    message = trailers.apply_to("feat: add feature")
+    commit(temp_repo, message)
+
+    git.switch_branch(temp_repo, "main")
+
+    resolved_parents: list[str] = []
+
+    def resolve_parent(repo: Repo, parent: str) -> str | None:
+        resolved_parents.append(parent)
+        mapping = {
+            "deleted-parent-a": "deleted-parent-b",
+            "deleted-parent-b": "main",
+        }
+        return mapping.get(parent)
+
+    with patch(
+        "shortcake.commands.sync._resolve_deleted_parent",
+        side_effect=resolve_parent,
+    ):
+        result = _sync(temp_repo, force=True)
+
+    assert result.reparented_branches == {"feature": "main"}
+    assert resolved_parents == ["deleted-parent-a", "deleted-parent-b"]
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    new_parent = git.get_branch_parent(temp_repo, "feature", all_branches)
+    assert new_parent == "main"
+
+
+def test_resolve_existing_parent_uses_local_branches_from_repo(temp_repo: Repo) -> None:
+    """Test _resolve_existing_parent loads local branches when not provided."""
+    assert _resolve_existing_parent(temp_repo, "main") == "main"
+
+
+def test_resolve_existing_parent_returns_none_on_cycle(temp_repo: Repo) -> None:
+    """Test _resolve_existing_parent stops on cyclical merge targets."""
+    with patch(
+        "shortcake.commands.sync._resolve_deleted_parent",
+        return_value="deleted-parent",
+    ):
+        result = _resolve_existing_parent(temp_repo, "deleted-parent", set())
+
+    assert result is None
 
 
 def test_resolve_deleted_parent_returns_merged_base(
@@ -1668,3 +1798,25 @@ def test_delete_and_reparent_grandparent_already_deleted(
     all_branches = set(git.get_all_local_branches(temp_repo))
     parent = git.get_branch_parent(temp_repo, "branch_c", all_branches)
     assert parent == "main"
+
+
+def test_delete_and_reparent_warns_on_child_reparent_conflict(temp_repo: Repo) -> None:
+    """Test _delete_and_reparent warns when a child can't be reparented."""
+    result = SyncResult(trunk_updated=False)
+
+    with (
+        patch(
+            "shortcake.commands.sync.git.get_branch_children", return_value=["child"]
+        ),
+        patch("shortcake.commands.sync.git.get_branch_parent", return_value=None),
+        patch("shortcake.commands.sync._reparent_branch", return_value=False),
+        patch("shortcake.commands.sync.typer.echo") as mock_echo,
+    ):
+        _delete_and_reparent(temp_repo, "branch", "main", "main", set(), result)
+
+    assert result.reparented_branches == {}
+    assert any(
+        "Could not reparent 'child' to 'main'" in call.args[0]
+        and call.kwargs.get("err") is True
+        for call in mock_echo.call_args_list
+    )
