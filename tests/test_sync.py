@@ -1507,6 +1507,46 @@ def test_sync_skips_reparent_when_resolve_returns_none(
     assert result.reparented_branches == {}
 
 
+def test_sync_reparents_branch_with_multi_hop_deleted_parent(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test sync resolves deleted-parent chains until a local branch exists."""
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
+
+    test_file = tmp_path / "feature.txt"
+    test_file.write_text("feature content")
+    add_paths(temp_repo, test_file)
+    trailers = Trailers(parent_branch="deleted-parent-a")
+    message = trailers.apply_to("feat: add feature")
+    commit(temp_repo, message)
+
+    git.switch_branch(temp_repo, "main")
+
+    resolved_parents: list[str] = []
+
+    def resolve_parent(repo: Repo, parent: str) -> str | None:
+        resolved_parents.append(parent)
+        mapping = {
+            "deleted-parent-a": "deleted-parent-b",
+            "deleted-parent-b": "main",
+        }
+        return mapping.get(parent)
+
+    with patch(
+        "shortcake.commands.sync._resolve_deleted_parent",
+        side_effect=resolve_parent,
+    ):
+        result = _sync(temp_repo, force=True)
+
+    assert result.reparented_branches == {"feature": "main"}
+    assert resolved_parents == ["deleted-parent-a", "deleted-parent-b"]
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    new_parent = git.get_branch_parent(temp_repo, "feature", all_branches)
+    assert new_parent == "main"
+
+
 def test_resolve_deleted_parent_returns_merged_base(
     temp_repo: Repo,
 ) -> None:

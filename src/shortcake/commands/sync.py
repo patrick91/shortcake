@@ -222,6 +222,37 @@ def _resolve_deleted_parent(repo: Repo, parent: str) -> str | None:
         return None
 
 
+def _resolve_existing_parent(
+    repo: Repo,
+    parent: str,
+    local_branches: set[str] | None = None,
+) -> str | None:
+    """Resolve deleted-parent chains until a local branch is found.
+
+    A stacked branch can point at a parent that was merged into another branch
+    that was also later deleted locally. Sync needs to follow that chain until
+    it lands on an existing local branch, otherwise reparenting will target
+    another missing branch and leave the stack orphaned.
+    """
+    if local_branches is None:
+        local_branches = set(git.get_all_local_branches(repo))
+
+    current = parent
+    seen: set[str] = set()
+
+    while current not in local_branches:
+        if current in seen:
+            return None
+        seen.add(current)
+
+        merged_target = _resolve_deleted_parent(repo, current)
+        if not merged_target:
+            return None
+        current = merged_target
+
+    return current
+
+
 def _sync(
     repo: Repo,
     force: bool = False,
@@ -372,25 +403,25 @@ def _sync(
         )
         if parent and parent not in all_local:
             # Parent doesn't exist locally - check if it was merged on GitHub
-            merged_target = _resolve_deleted_parent(repo, parent)
-            if merged_target:
+            resolved_parent = _resolve_existing_parent(repo, parent, all_local)
+            if resolved_parent:
                 if dry_run:
                     typer.echo(
                         f"Would reparent '{branch}' from "
-                        f"'{parent}' to '{merged_target}'"
+                        f"'{parent}' to '{resolved_parent}'"
                     )
                 else:
-                    success = _reparent_branch(repo, branch, merged_target)
+                    success = _reparent_branch(repo, branch, resolved_parent)
                     if success:
-                        result.reparented_branches[branch] = merged_target
+                        result.reparented_branches[branch] = resolved_parent
                         typer.echo(
-                            f"Reparented '{branch}' to '{merged_target}' "
+                            f"Reparented '{branch}' to '{resolved_parent}' "
                             f"('{parent}' was merged)"
                         )
                     else:
                         typer.echo(
                             f"Warning: Could not reparent '{branch}' to "
-                            f"'{merged_target}' due to conflicts. "
+                            f"'{resolved_parent}' due to conflicts. "
                             f"Run 'sc restack' manually after resolving.",
                             err=True,
                         )
