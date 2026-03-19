@@ -1506,6 +1506,75 @@ export function mockApi(): Plugin {
           return;
         }
 
+        if (url.pathname === '/api/review/models') {
+          return json(res, 200, {
+            models: [
+              { id: 'claude', name: 'Claude', available: true },
+              { id: 'codex', name: 'Codex', available: true },
+            ],
+          });
+        }
+
+        if (req.method === 'POST' && url.pathname === '/api/review') {
+          let body = '';
+          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+          req.on('end', () => {
+            res.writeHead(200, {
+              'Content-Type': 'text/event-stream',
+              'Cache-Control': 'no-cache',
+              'Access-Control-Allow-Origin': '*',
+            });
+
+            const data = JSON.parse(body);
+            const models: string[] = data.models ?? ['claude'];
+            let delay = 800;
+
+            for (const model of models) {
+              setTimeout(() => {
+                const event = JSON.stringify({
+                  model,
+                  summary: `${model === 'claude' ? 'Claude' : 'Codex'} review: The changes look reasonable overall. Consider adding input validation and improving error handling in a few places.`,
+                  comments: [
+                    {
+                      file: 'src/auth.py',
+                      start_line: 8,
+                      end_line: 10,
+                      side: 'additions',
+                      text: 'Hard-coded credentials should be replaced with proper authentication.',
+                      severity: 'error',
+                    },
+                    {
+                      file: 'src/auth.py',
+                      start_line: 14,
+                      end_line: 14,
+                      side: 'additions',
+                      text: 'Consider adding a docstring explaining the expected token format.',
+                      severity: 'suggestion',
+                    },
+                    {
+                      file: 'src/middleware.py',
+                      start_line: 7,
+                      end_line: 12,
+                      side: 'additions',
+                      text: 'The Authorization header parsing could be more robust.',
+                      severity: 'warning',
+                    },
+                  ],
+                  error: null,
+                });
+                res.write(`event: review\ndata: ${event}\n\n`);
+              }, delay);
+              delay += 1200;
+            }
+
+            setTimeout(() => {
+              res.write('event: done\ndata: {}\n\n');
+              res.end();
+            }, delay + 200);
+          });
+          return;
+        }
+
         if (req.method === 'OPTIONS') {
           res.writeHead(200, {
             'Access-Control-Allow-Origin': '*',
