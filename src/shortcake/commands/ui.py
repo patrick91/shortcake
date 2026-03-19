@@ -27,6 +27,7 @@ from shortcake._github import (
     get_repo_info,
 )
 from shortcake._tree import BranchNode, StackTree
+from shortcake.commands._review import _get_available_models, _run_review
 from shortcake.commands._suggest import _compute_suggestions
 from shortcake.commands.move_lines import (
     HunkSelection,
@@ -387,6 +388,10 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
                     _write_json(self, 500, {"error": str(exc)})
                 return
 
+            if parsed.path == "/api/review/models":
+                _write_json(self, 200, {"models": _get_available_models()})
+                return
+
             _write_json(self, 404, {"error": "Not found"})
 
         def do_POST(self) -> None:
@@ -711,6 +716,90 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
                         _write_json(self, 400, {"error": str(exc)})
                     except Exception as exc:
                         _write_json(self, 500, {"error": str(exc)})
+                return
+
+            if parsed.path == "/api/review":
+                content_length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(content_length)
+                try:
+                    body = json.loads(raw)
+                except (json.JSONDecodeError, ValueError):
+                    _write_json(self, 400, {"error": "Invalid JSON body"})
+                    return
+
+                branch = body.get("branch")
+                models = body.get("models")
+                if not branch or not models:
+                    _write_json(
+                        self,
+                        400,
+                        {"error": "Missing required fields: branch, models"},
+                    )
+                    return
+
+                try:
+                    repo = _open_repo()
+                    tracked = _tracked_branch_parents(repo)
+                    if branch not in tracked:
+                        _write_json(
+                            self,
+                            400,
+                            {"error": f"Branch '{branch}' is not tracked"},
+                        )
+                        return
+                    parent = tracked[branch]
+                    patch = _git_diff_patch(repo_path, parent, branch)
+                except Exception as exc:
+                    _write_json(self, 500, {"error": str(exc)})
+                    return
+
+                # SSE response
+                try:
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+
+                    from concurrent.futures import as_completed
+
+                    with ThreadPoolExecutor(
+                        max_workers=len(models),
+                    ) as executor:
+                        futures = {
+                            executor.submit(_run_review, patch, m): m
+                            for m in models
+                        }
+                        for future in as_completed(futures):
+                            try:
+                                result = future.result()
+                                event_data = json.dumps({
+                                    "model": result.model,
+                                    "summary": result.summary,
+                                    "comments": [
+                                        {
+                                            "file": c.file,
+                                            "start_line": c.start_line,
+                                            "end_line": c.end_line,
+                                            "side": c.side,
+                                            "text": c.text,
+                                            "severity": c.severity,
+                                        }
+                                        for c in result.comments
+                                    ],
+                                    "error": result.error,
+                                })
+                                self.wfile.write(
+                                    f"event: review\ndata: {event_data}\n\n".encode()
+                                )
+                                self.wfile.flush()
+                            except Exception:
+                                pass
+
+                    self.wfile.write(b"event: done\ndata: {}\n\n")
+                    self.wfile.flush()
+                except (BrokenPipeError, ConnectionError):
+                    pass
                 return
 
             _write_json(self, 404, {"error": "Not found"})
