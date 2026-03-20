@@ -8,20 +8,22 @@ import pytest
 from typer.testing import CliRunner
 
 from shortcake._github import GitHubClient, PRInfo
-from shortcake.cli import app
-from shortcake.commands.restack import RestackError, RestackResult
-from shortcake.commands.submit import (
+from shortcake._pr_stack import (
     STACK_END_MARKER,
     STACK_START_MARKER,
-    PRAction,
-    SubmitError,
     _build_stack_section,
-    _get_commit_title,
     _parse_all_prs_from_body,
     _parse_merged_prs_from_body,
     _parse_stack_order_from_body,
-    _submit,
     _update_pr_body_with_stack,
+)
+from shortcake.cli import app
+from shortcake.commands.restack import RestackError, RestackResult
+from shortcake.commands.submit import (
+    PRAction,
+    SubmitError,
+    _get_commit_title,
+    _submit,
 )
 from tests._git_helpers import Repo, add_paths, commit, get_ref, set_ref, set_remote
 
@@ -2153,6 +2155,13 @@ def test_submit_updates_moved_away_branch_prs(
     assert "branch_b" in new_body
     # It should preserve the original description
     assert "Original branch_b description" in new_body
+
+    base_updates_for_b = [
+        call
+        for call in mock_client.update_pr.call_args_list
+        if call[0][0] == 20 and call[1].get("base") == "main"
+    ]
+    assert base_updates_for_b, "branch_b's PR base was not updated after move"
 
     # branch_a's PR should NOT contain branch_b (it moved away)
     body_updates_for_a = [

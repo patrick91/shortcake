@@ -1,6 +1,6 @@
 """Submit command - push branches and create/update GitHub PRs."""
 
-import re
+import contextlib
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Annotated
@@ -13,109 +13,14 @@ from shortcake._cache import update_pr_cache
 from shortcake._exceptions import ShortcakeError
 from shortcake._git._core import Repo
 from shortcake._github import GitHubClient, get_github_token, get_repo_info, push_branch
+from shortcake._pr_stack import (
+    _parse_all_prs_from_body,
+    _parse_merged_prs_from_body,
+    _parse_stack_order_from_body,
+    _sync_pr_descriptions_for_branches,
+    _sync_stack_pr_descriptions,
+)
 from shortcake.commands.restack import RestackError, _get_stack_in_order, _restack
-
-# Markers for stack section in PR body
-STACK_START_MARKER = "<!-- shortcake:start -->"
-STACK_END_MARKER = "<!-- shortcake:end -->"
-
-# Regex patterns for parsing stack sections
-# Matches: - #42 (merged) (`branch-name`)
-_MERGED_PR_PATTERN = re.compile(r"-\s*#(\d+)\s*\(merged\)\s*\(`([^`]+)`\)")
-# Matches any branch in stack: - #42 (`branch`) or - **#42** (`branch`)
-# or - (no PR) (`branch`)
-_STACK_BRANCH_PATTERN = re.compile(
-    r"-\s*(?:\*\*)?(?:#\d+|#\d+\s*\(merged\)|\(no PR\))(?:\*\*)?\s*\(`([^`]+)`\)"
-)
-# Matches any PR number with branch: - #42 (`branch`) or - **#42** (`branch`)
-# Excludes (no PR) and (merged) entries
-_ALL_PR_PATTERN = re.compile(
-    r"-\s*\*{0,2}#(\d+)\*{0,2}\s*\(`([^`]+)`\)(?:\s*<-- this PR)?"
-)
-
-
-def _parse_merged_prs_from_body(body: str) -> dict[str, int]:
-    """Extract merged PR info from existing stack section.
-
-    Parses lines like: - #42 (merged) (`branch-name`)
-
-    Args:
-        body: The PR body text.
-
-    Returns:
-        Dict mapping branch name to merged PR number.
-    """
-    # Extract the stack section first
-    if STACK_START_MARKER not in body or STACK_END_MARKER not in body:
-        return {}
-
-    start_idx = body.index(STACK_START_MARKER)
-    end_idx = body.index(STACK_END_MARKER) + len(STACK_END_MARKER)
-    stack_section = body[start_idx:end_idx]
-
-    merged_prs: dict[str, int] = {}
-    for match in _MERGED_PR_PATTERN.finditer(stack_section):
-        pr_number = int(match.group(1))
-        branch_name = match.group(2)
-        merged_prs[branch_name] = pr_number
-
-    return merged_prs
-
-
-def _parse_all_prs_from_body(body: str) -> dict[str, int]:
-    """Extract all PR numbers from existing stack section.
-
-    Parses lines like:
-    - #42 (`branch-name`)
-    - **#42** (`branch-name`) <-- this PR
-
-    Args:
-        body: The PR body text.
-
-    Returns:
-        Dict mapping branch name to PR number.
-    """
-    if STACK_START_MARKER not in body or STACK_END_MARKER not in body:
-        return {}
-
-    start_idx = body.index(STACK_START_MARKER)
-    end_idx = body.index(STACK_END_MARKER) + len(STACK_END_MARKER)
-    stack_section = body[start_idx:end_idx]
-
-    all_prs: dict[str, int] = {}
-    for match in _ALL_PR_PATTERN.finditer(stack_section):
-        pr_number = int(match.group(1))
-        branch_name = match.group(2)
-        all_prs[branch_name] = pr_number
-
-    return all_prs
-
-
-def _parse_stack_order_from_body(body: str) -> list[str]:
-    """Extract branch order from existing stack section.
-
-    Returns branches in display order (top to bottom as shown in PR).
-
-    Args:
-        body: The PR body text.
-
-    Returns:
-        List of branch names in display order.
-    """
-    # Extract the stack section first
-    if STACK_START_MARKER not in body or STACK_END_MARKER not in body:
-        return []
-
-    start_idx = body.index(STACK_START_MARKER)
-    end_idx = body.index(STACK_END_MARKER) + len(STACK_END_MARKER)
-    stack_section = body[start_idx:end_idx]
-
-    branches: list[str] = []
-    for match in _STACK_BRANCH_PATTERN.finditer(stack_section):
-        branch_name = match.group(1)
-        branches.append(branch_name)
-
-    return branches
 
 
 class PRAction(Enum):
@@ -170,73 +75,6 @@ def _get_commit_title(repo: Repo, branch: str) -> str:
     message = git.get_commit_message(repo, sha)
     first_line = message.partition("\n")[0].strip()
     return first_line
-
-
-def _build_stack_section(
-    stack_branches: list[str],
-    current_branch: str,
-    pr_numbers: dict[str, int],
-    owner: str,
-    merged_pr_numbers: dict[str, int] | None = None,
-) -> str:
-    """Build the stack visualization markdown section.
-
-    Args:
-        stack_branches: Branches in topological order (bottom to top).
-        current_branch: The branch this section is being built for.
-        pr_numbers: Map of branch name to open PR number.
-        owner: GitHub repo owner for PR links.
-        merged_pr_numbers: Map of branch name to merged PR number.
-
-    Returns:
-        Markdown string with stack visualization.
-    """
-    if merged_pr_numbers is None:
-        merged_pr_numbers = {}
-
-    lines = [STACK_START_MARKER, "## Stack", ""]
-
-    # Show stack in reverse order (top to bottom) for readability
-    for branch in reversed(stack_branches):
-        pr_num = pr_numbers.get(branch)
-        merged_num = merged_pr_numbers.get(branch)
-
-        if pr_num:
-            pr_ref = f"#{pr_num}"
-        elif merged_num:
-            pr_ref = f"#{merged_num} (merged)"
-        else:
-            pr_ref = "(no PR)"
-
-        if branch == current_branch:
-            lines.append(f"- **{pr_ref}** (`{branch}`) <-- this PR")
-        else:
-            lines.append(f"- {pr_ref} (`{branch}`)")
-
-    lines.append(STACK_END_MARKER)
-    return "\n".join(lines)
-
-
-def _update_pr_body_with_stack(
-    existing_body: str,
-    stack_section: str,
-) -> str:
-    """Update PR body with stack section.
-
-    If markers exist, replace content between them.
-    Otherwise, prepend markers + stack section to existing body.
-    """
-    # Check if markers already exist
-    if STACK_START_MARKER in existing_body and STACK_END_MARKER in existing_body:
-        # Replace content between markers
-        pattern = re.escape(STACK_START_MARKER) + r".*?" + re.escape(STACK_END_MARKER)
-        return re.sub(pattern, stack_section, existing_body, flags=re.DOTALL)
-    else:
-        # Prepend stack section to existing body
-        if existing_body.strip():
-            return f"{stack_section}\n\n{existing_body}"
-        else:
-            return stack_section
 
 
 def _submit(
@@ -570,77 +408,20 @@ def _submit(
 
             result.branch_results.append(branch_result)
 
-        # Phase 2: Collect merged PR numbers for stack visualization
-        # Start with historical merged PRs (from existing PR bodies)
-        merged_pr_numbers: dict[str, int] = dict(historical_merged_prs)
-        # Also check GitHub API for merged PRs of local branches
-        for branch in stack_branches:
-            if branch not in pr_numbers and branch not in merged_pr_numbers:
-                try:
-                    merged_num = gh.get_merged_pr_number(branch)
-                    if merged_num:
-                        merged_pr_numbers[branch] = merged_num
-                except (httpx.HTTPStatusError, httpx.RequestError):
-                    pass
-
-        # Phase 3: Update all PR bodies with stack visualization
-        # Merge historical stack order with current local branches
-        # Historical order is in display order (top to bottom), need to reverse
-        # for our internal representation (bottom to top)
-        full_stack_branches = list(stack_branches)  # Start with local branches
-        if historical_stack_order:
-            # Historical order is display order (top to bottom)
-            # Reverse to get bottom to top order
-            historical_bottom_to_top = list(reversed(historical_stack_order))
-            # Add historical branches that were deleted (merged and cleaned up).
-            # Skip branches that still exist locally (they moved to another stack).
-            for hist_branch in historical_bottom_to_top:
-                if (
-                    hist_branch not in full_stack_branches
-                    and hist_branch not in all_branches
-                ):
-                    # Find position based on historical order
-                    # Insert at the position it would have been
-                    inserted = False
-                    for i, local_branch in enumerate(full_stack_branches):
-                        if local_branch in historical_bottom_to_top:
-                            local_pos = historical_bottom_to_top.index(local_branch)
-                            hist_pos = historical_bottom_to_top.index(hist_branch)
-                            if hist_pos < local_pos:
-                                full_stack_branches.insert(i, hist_branch)
-                                inserted = True
-                                break
-                    if not inserted:
-                        # Append at the end if no better position found
-                        full_stack_branches.append(hist_branch)
-
-        for branch in stack_branches:
-            pr_num = pr_numbers.get(branch)
-            if not pr_num:
-                continue
-
-            try:
-                existing_pr = gh.get_pr_for_branch(branch)
-                if existing_pr:
-                    stack_section = _build_stack_section(
-                        full_stack_branches,
-                        branch,
-                        pr_numbers,
-                        owner,
-                        merged_pr_numbers,
-                    )
-                    new_body = _update_pr_body_with_stack(
-                        existing_pr.body, stack_section
-                    )
-                    gh.update_pr(pr_num, body=new_body)
-            except (httpx.HTTPStatusError, httpx.RequestError):
-                # Non-fatal: stack visualization update failed
-                pass
+        # Phase 3: Update PR bodies for the submitted stack.
+        with contextlib.suppress(httpx.HTTPStatusError, httpx.RequestError):
+            _sync_stack_pr_descriptions(
+                repo,
+                gh,
+                owner,
+                stack_branches,
+                pr_numbers=pr_numbers,
+            )
 
         # Phase 4: Update PRs of branches that moved away from this stack.
         # If the old stack section listed branches that are no longer in the
         # current stack (e.g., after sc move/reorder), update those PRs with
-        # their new stack visualization.
+        # their new base branch and stack visualization.
         current_stack_set = set(stack_branches)
         all_local = set(git.get_all_local_branches(repo))
         moved_away = [
@@ -648,50 +429,17 @@ def _submit(
             for b in historical_stack_order
             if b not in current_stack_set
             and b in all_local
-            and b not in merged_pr_numbers
+            and b not in historical_merged_prs
         ]
 
-        for branch in moved_away:
-            try:
-                existing_pr = gh.get_pr_for_branch(branch)
-                if not existing_pr:  # pragma: no cover
-                    continue
-
-                # Compute this branch's new stack
-                new_stack = _get_stack_in_order(repo, branch)
-                if not new_stack:  # pragma: no cover
-                    # Branch is now untracked — clear the stack section
-                    new_body = _update_pr_body_with_stack(
-                        existing_pr.body,
-                        f"{STACK_START_MARKER}\n{STACK_END_MARKER}",
-                    )
-                    gh.update_pr(existing_pr.number, body=new_body)
-                    continue
-
-                # Collect PR numbers for the new stack
-                new_stack_pr_numbers: dict[str, int] = {}
-                for b in new_stack:
-                    try:
-                        pr = gh.get_pr_for_branch(b)
-                        if pr:
-                            new_stack_pr_numbers[b] = pr.number
-                    except (
-                        httpx.HTTPStatusError,
-                        httpx.RequestError,
-                    ):  # pragma: no cover
-                        pass
-
-                stack_section = _build_stack_section(
-                    new_stack,
-                    branch,
-                    new_stack_pr_numbers,
-                    owner,
-                )
-                new_body = _update_pr_body_with_stack(existing_pr.body, stack_section)
-                gh.update_pr(existing_pr.number, body=new_body)
-            except (httpx.HTTPStatusError, httpx.RequestError):  # pragma: no cover
-                # Non-fatal: moved branch PR update failed
-                pass
+        with contextlib.suppress(httpx.HTTPStatusError, httpx.RequestError):
+            _sync_pr_descriptions_for_branches(
+                repo,
+                gh,
+                owner,
+                moved_away,
+                sync_bases=True,
+            )
 
     return result
 
