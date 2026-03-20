@@ -14,27 +14,13 @@ from shortcake._exceptions import ShortcakeError
 from shortcake._git._core import Repo
 from shortcake._github import GitHubClient, get_github_token, get_repo_info, push_branch
 from shortcake._pr_stack import (
-    STACK_END_MARKER,
-    STACK_START_MARKER,
-    _build_stack_section,
     _parse_all_prs_from_body,
     _parse_merged_prs_from_body,
     _parse_stack_order_from_body,
     _sync_pr_descriptions_for_branches,
     _sync_stack_pr_descriptions,
-    _update_pr_body_with_stack,
 )
 from shortcake.commands.restack import RestackError, _get_stack_in_order, _restack
-
-__all__ = [
-    "STACK_END_MARKER",
-    "STACK_START_MARKER",
-    "_build_stack_section",
-    "_parse_all_prs_from_body",
-    "_parse_merged_prs_from_body",
-    "_parse_stack_order_from_body",
-    "_update_pr_body_with_stack",
-]
 
 
 class PRAction(Enum):

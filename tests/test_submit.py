@@ -8,20 +8,22 @@ import pytest
 from typer.testing import CliRunner
 
 from shortcake._github import GitHubClient, PRInfo
-from shortcake.cli import app
-from shortcake.commands.restack import RestackError, RestackResult
-from shortcake.commands.submit import (
+from shortcake._pr_stack import (
     STACK_END_MARKER,
     STACK_START_MARKER,
-    PRAction,
-    SubmitError,
     _build_stack_section,
-    _get_commit_title,
     _parse_all_prs_from_body,
     _parse_merged_prs_from_body,
     _parse_stack_order_from_body,
-    _submit,
     _update_pr_body_with_stack,
+)
+from shortcake.cli import app
+from shortcake.commands.restack import RestackError, RestackResult
+from shortcake.commands.submit import (
+    PRAction,
+    SubmitError,
+    _get_commit_title,
+    _submit,
 )
 from tests._git_helpers import Repo, add_paths, commit, get_ref, set_ref, set_remote
 

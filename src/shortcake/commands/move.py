@@ -61,14 +61,6 @@ def _sync_prs_after_move(
 
     try:
         with GitHubClient(token, owner, repo_name) as gh:
-            try:
-                existing_pr = gh.get_pr_for_branch(branch)
-                if existing_pr and existing_pr.base != new_parent:
-                    gh.update_pr(existing_pr.number, base=new_parent)
-                    existing_pr.base = new_parent
-            except (httpx.HTTPStatusError, httpx.RequestError):
-                pass
-
             _sync_pr_descriptions_for_branches(
                 repo,
                 gh,
