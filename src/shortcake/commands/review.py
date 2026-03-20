@@ -106,7 +106,8 @@ def review(
     else:
         selected_models = available_ids
 
-    typer.echo(f"Reviewing '{branch}' (vs '{parent}') with: {', '.join(selected_models)}")
+    models_str = ", ".join(selected_models)
+    typer.echo(f"Reviewing '{branch}' (vs '{parent}') with: {models_str}")
     typer.echo("")
 
     # Run reviews in parallel

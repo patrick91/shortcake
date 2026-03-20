@@ -49,7 +49,10 @@ def _build_prompt(patch: str) -> str:
     Truncates the patch at ~100KB with a note if it exceeds that size.
     """
     if len(patch) > MAX_PATCH_SIZE:
-        patch = patch[:MAX_PATCH_SIZE] + "\n\n... [patch truncated — too large for review]"
+        patch = (
+            patch[:MAX_PATCH_SIZE]
+            + "\n\n... [patch truncated — too large for review]"
+        )
 
     return (
         "You are an expert code reviewer. Review the following diff and respond "
