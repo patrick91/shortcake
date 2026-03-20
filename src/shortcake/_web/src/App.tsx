@@ -629,7 +629,9 @@ function AIComment({
   const borderClass = MODEL_COLORS[tool] ?? 'border-l-accent';
   const severityClass = SEVERITY_COLORS[source.severity] ?? 'text-text-muted';
   const handleCopy = useCallback(() => {
-    void navigator.clipboard.writeText(comment.text).then(() => {
+    const ref = formatLineRef(comment.file, comment.startLine, comment.endLine);
+    const copyText = `${ref}\n${comment.text}`;
+    void navigator.clipboard.writeText(copyText).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
