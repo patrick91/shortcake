@@ -2,19 +2,24 @@ from __future__ import annotations
 
 import json
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from typer.testing import CliRunner
 
+from shortcake.cli import app
 from shortcake.commands._review import (
     MAX_PATCH_SIZE,
-    ReviewComment,
     ReviewResult,
     _build_prompt,
     _get_available_models,
     _parse_review_response,
     _run_review,
 )
+from tests._git_helpers import Repo
+
+runner = CliRunner()
 
 
 # -- _get_available_models ---------------------------------------------------
@@ -253,3 +258,321 @@ def test_run_review_unknown_model() -> None:
     assert result.model == "gpt-unknown"
     assert result.error is not None
     assert "Unknown model" in result.error
+
+
+def test_run_review_file_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_fnf(*args: object, **kwargs: object) -> None:
+        raise FileNotFoundError("claude not found")
+
+    monkeypatch.setattr("subprocess.run", raise_fnf)
+
+    result = _run_review("some patch", "claude")
+    assert result.error is not None
+    assert "not found" in result.error.lower()
+
+
+def test_run_review_os_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_os(*args: object, **kwargs: object) -> None:
+        raise OSError("permission denied")
+
+    monkeypatch.setattr("subprocess.run", raise_os)
+
+    result = _run_review("some patch", "claude")
+    assert result.error is not None
+    assert "Failed to run" in result.error
+
+
+def test_parse_review_response_json_in_prose() -> None:
+    """JSON embedded in surrounding text (not in code fences)."""
+    inner = _make_valid_response(summary="Embedded.")
+    raw = f"Here is my review:\n{inner}\nHope that helps!"
+    result = _parse_review_response(raw, "claude")
+    assert result.summary == "Embedded."
+    assert result.error is None
+
+
+def test_parse_review_response_comment_with_bad_types() -> None:
+    """Comment with values that cause TypeError during int()."""
+    raw = json.dumps({
+        "summary": "OK",
+        "comments": [
+            {"file": "x.py", "start_line": "not_a_number"},
+        ],
+    })
+    result = _parse_review_response(raw, "claude")
+    assert result.error is None
+    # The bad comment should be skipped
+    assert result.comments == []
+
+
+# -- CLI command (review) ----------------------------------------------------
+
+
+def test_cli_review_not_tracked(
+    repo_with_feature: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["review"])
+    assert result.exit_code == 1
+    assert "not tracked" in result.output
+
+
+def test_cli_review_no_models(
+    repo_with_tracked_feature: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "shortcake.commands._review.shutil.which",
+        lambda cmd: None,
+    )
+    result = runner.invoke(app, ["review"])
+    assert result.exit_code == 1
+    assert "No AI review tools found" in result.output
+
+
+def test_cli_review_invalid_model(
+    repo_with_tracked_feature: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "shortcake.commands._review.shutil.which",
+        lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
+    )
+    result = runner.invoke(app, ["review", "-m", "nonexistent"])
+    assert result.exit_code == 1
+    assert "Unavailable" in result.output
+
+
+def test_cli_review_success(
+    repo_with_tracked_feature: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "shortcake.commands._review.shutil.which",
+        lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
+    )
+    review_json = json.dumps({
+        "summary": "Looks good overall.",
+        "comments": [
+            {
+                "file": "feature.txt",
+                "start_line": 1,
+                "end_line": 1,
+                "side": "additions",
+                "text": "Needs docs.",
+                "severity": "suggestion",
+            },
+        ],
+    })
+    monkeypatch.setattr(
+        "shortcake.commands._review.subprocess.run",
+        MagicMock(
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0,
+                stdout=review_json, stderr="",
+            )
+        ),
+    )
+    result = runner.invoke(app, ["review", "-m", "claude"])
+    assert result.exit_code == 0
+    assert "Looks good overall." in result.output
+    assert "Needs docs." in result.output
+    assert "suggestion" in result.output
+
+
+def test_cli_review_no_changes(
+    repo_with_tracked_feature: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review when branch has no diff vs parent prints message."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "shortcake.commands.review._git_diff_patch",
+        lambda *a, **kw: "",
+    )
+    result = runner.invoke(app, ["review"])
+    assert result.exit_code == 0
+    assert "No changes to review" in result.output
+
+
+def test_cli_review_diff_error(
+    repo_with_tracked_feature: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "shortcake.commands.review._git_diff_patch",
+        lambda *a, **kw: (_ for _ in ()).throw(
+            ValueError("diff failed")
+        ),
+    )
+    result = runner.invoke(app, ["review"])
+    assert result.exit_code == 1
+    assert "diff failed" in result.output
+
+
+def test_cli_review_with_error_result(
+    repo_with_tracked_feature: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review where the model returns an error."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "shortcake.commands._review.shutil.which",
+        lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
+    )
+    monkeypatch.setattr(
+        "shortcake.commands.review._run_review",
+        lambda patch, model: ReviewResult(
+            model=model,
+            error="'claude' exited with code 1: auth error",
+        ),
+    )
+    result = runner.invoke(app, ["review", "-m", "claude"])
+    assert result.exit_code == 0
+    assert "Error:" in result.output
+    assert "auth error" in result.output
+
+
+def test_cli_review_explicit_branch(
+    repo_with_stack: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "shortcake.commands._review.shutil.which",
+        lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
+    )
+    review_json = json.dumps({
+        "summary": "Branch A review.",
+        "comments": [],
+    })
+    monkeypatch.setattr(
+        "shortcake.commands._review.subprocess.run",
+        MagicMock(
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0,
+                stdout=review_json, stderr="",
+            )
+        ),
+    )
+    result = runner.invoke(
+        app, ["review", "branch_a", "-m", "claude"],
+    )
+    assert result.exit_code == 0
+    assert "branch_a" in result.output
+    assert "Branch A review." in result.output
+
+
+def test_cli_review_default_models(
+    repo_with_tracked_feature: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When no --model is specified, all available models are used."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "shortcake.commands._review.shutil.which",
+        lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
+    )
+    review_json = json.dumps({"summary": "Auto.", "comments": []})
+    monkeypatch.setattr(
+        "shortcake.commands._review.subprocess.run",
+        MagicMock(
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0,
+                stdout=review_json, stderr="",
+            )
+        ),
+    )
+    result = runner.invoke(app, ["review"])
+    assert result.exit_code == 0
+    assert "claude" in result.output
+    assert "Auto." in result.output
+
+
+def test_cli_review_multiple_models(
+    repo_with_tracked_feature: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review with multiple models selected."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "shortcake.commands._review.shutil.which",
+        lambda cmd: f"/usr/bin/{cmd}",
+    )
+    review_json = json.dumps({"summary": "OK.", "comments": []})
+    monkeypatch.setattr(
+        "shortcake.commands._review.subprocess.run",
+        MagicMock(
+            return_value=subprocess.CompletedProcess(
+                args=[], returncode=0,
+                stdout=review_json, stderr="",
+            )
+        ),
+    )
+    result = runner.invoke(
+        app, ["review", "-m", "claude", "-m", "codex"],
+    )
+    assert result.exit_code == 0
+    assert "claude" in result.output
+    assert "codex" in result.output
+
+
+def test_cli_review_executor_exception(
+    repo_with_tracked_feature: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When _run_review raises, errors are collected."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        "shortcake.commands._review.shutil.which",
+        lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
+    )
+
+    def boom(patch: str, model: str) -> ReviewResult:
+        raise RuntimeError("unexpected crash")
+
+    monkeypatch.setattr(
+        "shortcake.commands.review._run_review", boom,
+    )
+    result = runner.invoke(app, ["review", "-m", "claude"])
+    assert result.exit_code == 1
+    assert "unexpected crash" in result.output
+
+
+def test_print_review_result_line_range() -> None:
+    """Comments spanning multiple lines show start-end range."""
+    from shortcake.commands._review import ReviewComment
+    from shortcake.commands.review import _print_review_result
+
+    result = ReviewResult(
+        model="claude",
+        summary="Summary.",
+        comments=[
+            ReviewComment(
+                file="a.py",
+                start_line=5,
+                end_line=10,
+                side="additions",
+                text="multi-line issue",
+                severity="warning",
+            ),
+        ],
+    )
+    # Just verify it doesn't crash — output goes to typer.echo
+    _print_review_result(result)

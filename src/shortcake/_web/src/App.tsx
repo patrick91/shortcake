@@ -626,20 +626,20 @@ function AIComment({
   const borderClass = MODEL_COLORS[source.model] ?? 'border-l-accent';
   const severityClass = SEVERITY_COLORS[source.severity] ?? 'text-text-muted';
   return (
-    <div className={`flex items-start gap-2 p-2.5 my-1 bg-surface-hover border border-border ${borderClass} border-l-2 rounded-md group`}>
+    <div className={`flex items-start gap-2 p-3 my-1 bg-yellow-500/[0.06] border border-yellow-500/20 ${borderClass} border-l-2 max-w-[720px] group`}>
       <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 mb-0.5">
-          <span className="font-mono text-[0.6rem] text-text-muted bg-surface-active px-1.5 py-0.5 rounded">
+        <div className="flex items-center gap-1.5 mb-1">
+          <span className="font-mono text-[0.6rem] text-text-primary bg-surface-active px-1.5 py-0.5 rounded-sm font-semibold">
             {source.model}
           </span>
-          <span className={`font-mono text-[0.55rem] uppercase tracking-wider ${severityClass}`}>
+          <span className={`font-mono text-[0.6rem] uppercase tracking-wider font-semibold ${severityClass}`}>
             {source.severity}
           </span>
           <span className="font-mono text-[0.6rem] text-text-muted ml-auto">
             {formatLineLabel(comment.startLine, comment.endLine)}
           </span>
         </div>
-        <p className="text-text-primary font-mono text-[0.75rem] m-0 mt-0.5 whitespace-pre-wrap break-words">
+        <p className="text-text-primary font-mono text-[0.78rem] m-0 mt-0.5 whitespace-pre-wrap break-words leading-relaxed">
           {comment.text}
         </p>
       </div>
