@@ -207,8 +207,8 @@ type FileEntry = {
 type TreeEntry = DirEntry | FileEntry;
 
 const API_BASE = import.meta.env.VITE_SHORTCAKE_API_URL ?? '';
-const FILE_TREE_INDENT_BASE = 8;
-const FILE_TREE_INDENT_STEP = 10;
+const FILE_TREE_INDENT_BASE = 10;
+const FILE_TREE_INDENT_STEP = 14;
 const STACK_CARD_INDENT_BASE = 4;
 const STACK_CARD_INDENT_STEP = 10;
 const STACK_GUIDE_OFFSET = 6;
@@ -424,18 +424,21 @@ function FileTreeEntries({
           return (
             <div key={entry.path}>
               <button
-                className="appearance-none border-none bg-transparent text-text-secondary flex items-center gap-[5px] w-full py-1 px-2.5 font-sans text-[0.78rem] font-semibold cursor-pointer select-none transition-[background] duration-100 ease-in-out hover:bg-surface-hover"
+                className="group appearance-none border-none bg-transparent text-text-secondary flex items-center gap-1.5 w-full py-[5px] px-3 font-sans text-[0.78rem] font-semibold cursor-pointer select-none transition-all duration-100 ease-in-out hover:bg-surface-hover hover:text-text-primary rounded-md mx-0.5"
                 style={{
                   paddingInlineStart: `${FILE_TREE_INDENT_BASE + depth * FILE_TREE_INDENT_STEP}px`,
+                  width: 'calc(100% - 4px)',
                 }}
                 onClick={() => onToggleDir(entry.path)}
                 type="button"
               >
-                <span
-                  className={`inline-block w-3.5 text-center text-[0.65rem] text-text-muted transition-transform duration-150 ease-in-out shrink-0 ${collapsed ? '-rotate-90' : ''}`}
+                <svg
+                  className={`w-3.5 h-3.5 text-text-muted shrink-0 transition-transform duration-150 ease-in-out ${collapsed ? '-rotate-90' : ''}`}
+                  viewBox="0 0 16 16"
+                  fill="currentColor"
                 >
-                  &#9662;
-                </span>
+                  <path d="M4.427 5.427a.75.75 0 0 1 1.06-.073L8 7.585l2.513-2.231a.75.75 0 1 1 .997 1.122l-3.012 2.671a.75.75 0 0 1-.997 0L4.5 6.476a.75.75 0 0 1-.073-1.05Z" />
+                </svg>
                 <span className="whitespace-nowrap overflow-hidden text-ellipsis">
                   {entry.name}
                 </span>
@@ -466,26 +469,31 @@ function FileTreeEntries({
         return (
           <button
             key={entry.info.path}
-            className={`appearance-none border-none bg-transparent flex items-center gap-1.5 w-full py-[3px] px-2.5 font-mono text-[0.72rem] cursor-pointer select-none transition-[background,color,opacity] duration-100 ease-in-out ${active ? 'bg-accent-bg text-text-primary' : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'}`}
+            className={`group appearance-none border-none bg-transparent flex items-center gap-1.5 w-full py-[5px] px-3 font-mono text-[0.72rem] cursor-pointer select-none transition-all duration-100 ease-in-out rounded-md mx-0.5 ${active ? 'bg-accent-bg text-text-primary ring-1 ring-accent/20' : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'}`}
             style={{
               paddingInlineStart: `${FILE_TREE_INDENT_BASE + depth * FILE_TREE_INDENT_STEP}px`,
               opacity: isViewed ? 0.5 : 1,
+              width: 'calc(100% - 4px)',
             }}
             onClick={() => onFileClick(entry.info.patchIndex)}
             type="button"
           >
             {isViewed && (
-              <span className="text-accent text-[0.6rem] shrink-0">{'\u2713'}</span>
+              <span className="text-accent text-[0.65rem] shrink-0 leading-none">{'\u2713'}</span>
             )}
-            <span className="whitespace-nowrap overflow-hidden text-ellipsis">
+            <span className="whitespace-nowrap overflow-hidden text-ellipsis min-w-0">
               {entry.name}
             </span>
-            <span className="ml-auto flex gap-[5px] text-[0.65rem] shrink-0">
+            <span className="ml-auto flex gap-1 shrink-0 items-center">
               {entry.info.additions > 0 && (
-                <span className="text-stat-add">+{entry.info.additions}</span>
+                <span className="text-stat-add text-[0.6rem] font-medium bg-stat-add/10 px-1.5 py-px rounded-full leading-relaxed">
+                  +{entry.info.additions}
+                </span>
               )}
               {entry.info.deletions > 0 && (
-                <span className="text-stat-del">-{entry.info.deletions}</span>
+                <span className="text-stat-del text-[0.6rem] font-medium bg-stat-del/10 px-1.5 py-px rounded-full leading-relaxed">
+                  -{entry.info.deletions}
+                </span>
               )}
             </span>
           </button>
@@ -3055,20 +3063,37 @@ export default function App() {
 
         {!isDiffLoading && activePatch && diffPatches.length > 0 && (
           <div className="flex flex-1 min-h-0">
-            <aside className="w-[260px] min-w-[260px] border-r border-border flex flex-col overflow-hidden max-[1100px]:hidden">
-              <div className="px-3.5 py-2.5 text-[0.8rem] font-semibold text-text-secondary border-b border-border">
-                Files changed ({fileInfos.length})
+            <aside className="w-[280px] min-w-[280px] border-r border-border flex flex-col overflow-hidden max-[1100px]:hidden">
+              <div className="px-4 py-3 border-b border-border">
+                <div className="flex items-center justify-between">
+                  <span className="text-[0.8rem] font-semibold text-text-primary">
+                    Files changed
+                  </span>
+                  <span className="text-[0.65rem] font-mono text-text-muted bg-surface-hover px-2 py-0.5 rounded-full">
+                    {fileInfos.length}
+                  </span>
+                </div>
+                {fileInfos.length > 0 && (
+                  <div className="flex gap-2.5 mt-1.5 text-[0.65rem] font-mono">
+                    <span className="text-stat-add">
+                      +{fileInfos.reduce((s, f) => s + f.additions, 0)}
+                    </span>
+                    <span className="text-stat-del">
+                      -{fileInfos.reduce((s, f) => s + f.deletions, 0)}
+                    </span>
+                  </div>
+                )}
               </div>
               <div className="px-2.5 py-2 border-b border-border">
                 <input
-                  className="w-full appearance-none border border-border rounded-md bg-surface-hover text-text-primary font-mono text-[0.72rem] px-[9px] py-1.5 outline-none transition-[border-color] duration-150 ease-in-out focus:border-border-strong placeholder:text-text-muted"
+                  className="w-full appearance-none border border-border rounded-md bg-surface-hover text-text-primary font-mono text-[0.72rem] px-2.5 py-1.5 outline-none transition-[border-color] duration-150 ease-in-out focus:border-accent/40 focus:ring-1 focus:ring-accent/10 placeholder:text-text-muted"
                   type="text"
                   placeholder="Filter files..."
                   value={fileFilter}
                   onChange={(e) => setFileFilter(e.target.value)}
                 />
               </div>
-              <div className="flex-1 overflow-y-auto py-1">
+              <div className="flex-1 overflow-y-auto py-1.5">
                 <FileTreeEntries
                   entries={fileTree}
                   depth={0}
