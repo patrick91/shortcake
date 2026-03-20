@@ -3,7 +3,6 @@
 from unittest.mock import MagicMock, patch
 
 import httpx
-import pytest
 
 from shortcake._github import GitHubClient, PRInfo
 from shortcake._pr_stack import (
@@ -12,7 +11,6 @@ from shortcake._pr_stack import (
     _sync_pr_descriptions_for_branches,
     _sync_stack_pr_descriptions,
 )
-from shortcake._trailers import Trailers
 from tests._git_helpers import (
     Repo,
     commit_files,
