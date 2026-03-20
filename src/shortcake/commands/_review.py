@@ -101,6 +101,122 @@ def _build_prompt(patch: str) -> str:
     )
 
 
+def _build_synthesis_prompt(
+    patch: str, reviews: list[ReviewResult],
+) -> str:
+    """Build a prompt for a final synthesis pass.
+
+    The synthesis model reads the diff and all prior independent reviews,
+    then produces a consolidated review that deduplicates, resolves
+    disagreements, and surfaces the most important findings.
+    """
+    if len(patch) > MAX_PATCH_SIZE:
+        patch = (
+            patch[:MAX_PATCH_SIZE]
+            + "\n\n... [patch truncated — too large for review]"
+        )
+
+    prior_section = ""
+    for r in reviews:
+        if r.error:
+            continue
+        prior_section += f"\n### {r.model}\n"
+        prior_section += f"Summary: {r.summary}\n"
+        for c in r.comments:
+            prior_section += (
+                f"- {c.file}:{c.start_line} [{c.severity}] {c.text}\n"
+            )
+
+    return (
+        "You are an expert code reviewer performing a final synthesis. "
+        "Multiple independent reviewers have already analyzed the diff below. "
+        "Your job is to:\n"
+        "1. Deduplicate findings — merge overlapping comments\n"
+        "2. Resolve disagreements — note when reviewers conflict\n"
+        "3. Prioritize — surface the most important issues first\n"
+        "4. Add anything the prior reviewers missed\n"
+        "\n"
+        "Respond with ONLY valid JSON:\n"
+        "{\n"
+        '  "summary": "2-4 sentence consolidated overview",\n'
+        '  "comments": [\n'
+        '    {"file": "path", "start_line": N, "end_line": N, '
+        '"side": "additions", "text": "...", "severity": "suggestion"}\n'
+        "  ]\n"
+        "}\n"
+        "Rules: line numbers = new side of diff. "
+        "severity = info|warning|error|suggestion. "
+        "side = additions|deletions. "
+        "Only include meaningful, deduplicated findings.\n"
+        "\n"
+        "<prior-reviews>\n"
+        f"{prior_section}\n"
+        "</prior-reviews>\n"
+        "\n"
+        "<diff>\n"
+        f"{patch}\n"
+        "</diff>"
+    )
+
+
+def _run_synthesis(
+    patch: str,
+    reviews: list[ReviewResult],
+    model_id: str,
+) -> ReviewResult:
+    """Run a final synthesis pass over prior independent reviews."""
+    prompt = _build_synthesis_prompt(patch, reviews)
+    tool, variant = _parse_model_id(model_id)
+
+    if tool == "claude":
+        cmd = ["claude", "-p"]
+        if variant:
+            cmd += ["--model", variant]
+        cmd.append(prompt)
+    elif tool == "codex":
+        cmd = ["codex", "exec"]
+        if variant:
+            cmd += ["--model", variant]
+        cmd.append(prompt)
+    else:
+        return ReviewResult(
+            model=model_id, error=f"Unknown tool: {tool}",
+        )
+
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except subprocess.TimeoutExpired:
+        return ReviewResult(
+            model=model_id,
+            error="Synthesis timed out after 300 seconds",
+        )
+    except FileNotFoundError:
+        return ReviewResult(
+            model=model_id,
+            error=f"'{tool}' CLI tool not found",
+        )
+    except OSError as e:
+        return ReviewResult(
+            model=model_id,
+            error=f"Failed to run '{tool}': {e}",
+        )
+
+    if result.returncode != 0:
+        stderr = result.stderr.strip()
+        return ReviewResult(
+            model=model_id,
+            error=f"'{tool}' exited with code {result.returncode}"
+            + (f": {stderr}" if stderr else ""),
+        )
+
+    return _parse_review_response(result.stdout, model_id)
+
+
 def _parse_review_response(raw: str, model: str) -> ReviewResult:
     """Parse the JSON response from an LLM review.
 

@@ -11,12 +11,15 @@ from typer.testing import CliRunner
 from shortcake.cli import app
 from shortcake.commands._review import (
     MAX_PATCH_SIZE,
+    ReviewComment,
     ReviewResult,
     _build_prompt,
+    _build_synthesis_prompt,
     _get_available_models,
     _parse_model_id,
     _parse_review_response,
     _run_review,
+    _run_synthesis,
 )
 from tests._git_helpers import Repo
 
@@ -639,7 +642,6 @@ def test_cli_review_executor_exception(
 
 
 def test_print_review_result_line_range() -> None:
-    from shortcake.commands._review import ReviewComment
     from shortcake.commands.review import _print_review_result
 
     result = ReviewResult(
@@ -657,3 +659,186 @@ def test_print_review_result_line_range() -> None:
         ],
     )
     _print_review_result(result)
+
+
+# -- _build_synthesis_prompt / _run_synthesis --------------------------------
+
+
+def _make_prior_reviews() -> list[ReviewResult]:
+    return [
+        ReviewResult(
+            model="claude:sonnet",
+            summary="Auth looks weak.",
+            comments=[
+                ReviewComment(
+                    file="auth.py",
+                    start_line=5,
+                    end_line=5,
+                    side="additions",
+                    text="Hard-coded password.",
+                    severity="error",
+                ),
+            ],
+        ),
+        ReviewResult(
+            model="codex:gpt-5.4",
+            summary="Needs input validation.",
+            comments=[
+                ReviewComment(
+                    file="auth.py",
+                    start_line=5,
+                    end_line=5,
+                    side="additions",
+                    text="Credentials are hard-coded.",
+                    severity="error",
+                ),
+            ],
+        ),
+    ]
+
+
+def test_build_synthesis_prompt_includes_prior_reviews() -> None:
+    patch = "diff --git a/auth.py b/auth.py\n+pass"
+    reviews = _make_prior_reviews()
+    prompt = _build_synthesis_prompt(patch, reviews)
+    assert "<prior-reviews>" in prompt
+    assert "claude:sonnet" in prompt
+    assert "codex:gpt-5.4" in prompt
+    assert "Hard-coded password." in prompt
+    assert "<diff>" in prompt
+    assert patch in prompt
+
+
+def test_build_synthesis_prompt_skips_errored_reviews() -> None:
+    reviews = [
+        ReviewResult(model="claude:sonnet", error="timed out"),
+        ReviewResult(
+            model="codex:gpt-5.4",
+            summary="OK.",
+            comments=[],
+        ),
+    ]
+    prompt = _build_synthesis_prompt("diff", reviews)
+    assert "claude:sonnet" not in prompt
+    assert "codex:gpt-5.4" in prompt
+
+
+def test_build_synthesis_prompt_truncates_large_patch() -> None:
+    patch = "x" * (MAX_PATCH_SIZE + 500)
+    prompt = _build_synthesis_prompt(patch, [])
+    assert "patch truncated" in prompt
+
+
+def test_run_synthesis_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    synth_json = json.dumps({
+        "summary": "Consolidated: credentials are the top issue.",
+        "comments": [
+            {
+                "file": "auth.py",
+                "start_line": 5,
+                "end_line": 5,
+                "side": "additions",
+                "text": "All reviewers flagged hard-coded creds.",
+                "severity": "error",
+            },
+        ],
+    })
+    mock_run = MagicMock(
+        return_value=subprocess.CompletedProcess(
+            args=[], returncode=0,
+            stdout=synth_json, stderr="",
+        )
+    )
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    result = _run_synthesis(
+        "some patch", _make_prior_reviews(), "claude:opus",
+    )
+    assert result.model == "claude:opus"
+    assert "Consolidated" in result.summary
+    assert len(result.comments) == 1
+    assert result.error is None
+    # Verify --model opus was passed
+    cmd = mock_run.call_args[0][0]
+    assert "--model" in cmd
+    assert cmd[cmd.index("--model") + 1] == "opus"
+
+
+def test_run_synthesis_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def raise_timeout(*args: object, **kwargs: object) -> None:
+        raise subprocess.TimeoutExpired(cmd="claude", timeout=300)
+
+    monkeypatch.setattr("subprocess.run", raise_timeout)
+
+    result = _run_synthesis("patch", _make_prior_reviews(), "claude:sonnet")
+    assert result.error is not None
+    assert "timed out" in result.error.lower()
+
+
+def test_run_synthesis_unknown_tool() -> None:
+    result = _run_synthesis("patch", _make_prior_reviews(), "unknown:model")
+    assert result.error is not None
+    assert "Unknown tool" in result.error
+
+
+def test_run_synthesis_file_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *a, **kw: (_ for _ in ()).throw(
+            FileNotFoundError("not found"),
+        ),
+    )
+    result = _run_synthesis("patch", [], "claude:sonnet")
+    assert result.error is not None
+    assert "not found" in result.error.lower()
+
+
+def test_run_synthesis_os_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *a, **kw: (_ for _ in ()).throw(OSError("denied")),
+    )
+    result = _run_synthesis("patch", [], "claude:sonnet")
+    assert result.error is not None
+    assert "Failed to run" in result.error
+
+
+def test_run_synthesis_nonzero_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_run = MagicMock(
+        return_value=subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="", stderr="err",
+        )
+    )
+    monkeypatch.setattr("subprocess.run", mock_run)
+    result = _run_synthesis("patch", [], "codex:gpt-5.4")
+    assert result.error is not None
+    assert "exited with code 1" in result.error
+
+
+def test_run_synthesis_codex(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    synth_json = json.dumps({"summary": "Codex synth.", "comments": []})
+    mock_run = MagicMock(
+        return_value=subprocess.CompletedProcess(
+            args=[], returncode=0,
+            stdout=synth_json, stderr="",
+        )
+    )
+    monkeypatch.setattr("subprocess.run", mock_run)
+
+    result = _run_synthesis("patch", [], "codex:gpt-5.4")
+    assert result.model == "codex:gpt-5.4"
+    cmd = mock_run.call_args[0][0]
+    assert cmd[0] == "codex"
+    assert cmd[1] == "exec"

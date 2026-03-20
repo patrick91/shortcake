@@ -607,6 +607,7 @@ function SavedComment({
 const MODEL_COLORS: Record<string, string> = {
   claude: 'border-l-orange-400',
   codex: 'border-l-green-400',
+  synthesis: 'border-l-purple-400',
 };
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -683,7 +684,7 @@ function ReviewDialog({
   isReviewing,
 }: {
   models: ReviewModel[];
-  onStart: (selectedModels: string[]) => void;
+  onStart: (selectedModels: string[], synthesizeWith: string | null) => void;
   onClose: () => void;
   isReviewing: boolean;
 }) {
@@ -698,6 +699,11 @@ function ReviewDialog({
       }
     }
     return defaults;
+  });
+  const [synthesize, setSynthesize] = useState(false);
+  const [synthesisModel, setSynthesisModel] = useState<string>(() => {
+    const first = models.find((m) => m.available);
+    return first?.id ?? '';
   });
 
   const toggle = (id: string) => {
@@ -719,6 +725,11 @@ function ReviewDialog({
     }
     return map;
   }, [models]);
+
+  const availableModels = useMemo(
+    () => models.filter((m) => m.available),
+    [models],
+  );
 
   return (
     <div className="bg-surface border border-border rounded-lg shadow-lg p-4 flex flex-col gap-3">
@@ -758,13 +769,44 @@ function ReviewDialog({
           </div>
         ))}
       </div>
+      {selected.size >= 2 && (
+        <div className="border-t border-border pt-3 flex flex-col gap-2">
+          <label className="flex items-center gap-2 font-mono text-[0.75rem] text-text-primary cursor-pointer">
+            <input
+              type="checkbox"
+              checked={synthesize}
+              onChange={() => setSynthesize((p) => !p)}
+              disabled={isReviewing}
+              className="accent-accent"
+            />
+            Final synthesis pass
+          </label>
+          {synthesize && (
+            <select
+              className="appearance-none bg-surface-hover border border-border rounded-md text-text-primary font-mono text-[0.72rem] px-2 py-1 outline-none cursor-pointer"
+              value={synthesisModel}
+              onChange={(e) => setSynthesisModel(e.target.value)}
+              disabled={isReviewing}
+            >
+              {availableModels.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          )}
+          {synthesize && (
+            <p className="font-mono text-[0.6rem] text-text-muted m-0">
+              After all reviews complete, one model reads all findings and produces a consolidated review.
+            </p>
+          )}
+        </div>
+      )}
       <button
         type="button"
         className="appearance-none border border-accent bg-accent/10 text-accent text-[0.72rem] font-mono px-3 py-1.5 rounded-md cursor-pointer hover:bg-accent/20 transition-colors duration-100 disabled:opacity-40 disabled:cursor-not-allowed self-end"
         disabled={selected.size === 0 || isReviewing}
-        onClick={() => onStart([...selected])}
+        onClick={() => onStart([...selected], synthesize ? synthesisModel : null)}
       >
-        {isReviewing ? 'Reviewing...' : `Review with ${selected.size} model${selected.size === 1 ? '' : 's'}`}
+        {isReviewing ? 'Reviewing...' : `Review with ${selected.size} model${selected.size === 1 ? '' : 's'}${synthesize ? ' + synthesis' : ''}`}
       </button>
     </div>
   );
@@ -2491,16 +2533,22 @@ export default function App() {
   }, []);
 
   const handleStartReview = useCallback(
-    async (selectedModels: string[]) => {
+    async (selectedModels: string[], synthesizeWith: string | null) => {
       if (!selection || selection.type !== 'branch') return;
-      setReviewModelStatus(new Map(selectedModels.map((m) => [m, 'pending'])));
+      const statusMap = new Map(selectedModels.map((m) => [m, 'pending' as const]));
+      if (synthesizeWith) statusMap.set('synthesis', 'pending');
+      setReviewModelStatus(statusMap);
       setIsReviewDialogOpen(false);
 
       try {
         const response = await fetch(`${API_BASE}/api/review`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ branch: selection.name, models: selectedModels }),
+          body: JSON.stringify({
+            branch: selection.name,
+            models: selectedModels,
+            synthesize: synthesizeWith,
+          }),
         });
 
         if (!response.ok || !response.body) {
@@ -2524,33 +2572,37 @@ export default function App() {
           for (const line of lines) {
             if (line.startsWith('event: ')) {
               eventType = line.slice(7).trim();
-            } else if (line.startsWith('data: ') && eventType === 'review') {
+            } else if (line.startsWith('data: ') && (eventType === 'review' || eventType === 'synthesis')) {
               try {
                 const data = JSON.parse(line.slice(6));
                 const modelId: string = data.model;
+                const isSynthesis = eventType === 'synthesis';
+                const statusKey = isSynthesis ? 'synthesis' : modelId;
                 // Mark model as done or error
                 setReviewModelStatus((prev) => {
                   const next = new Map(prev);
-                  next.set(modelId, data.error ? 'error' : 'done');
+                  next.set(statusKey, data.error ? 'error' : 'done');
                   return next;
                 });
+                const summaryLabel = isSynthesis ? `synthesis (${modelId})` : modelId;
                 if (data.summary) {
                   setReviewSummaries((prev) => {
                     const next = new Map(prev);
-                    next.set(modelId, data.summary);
+                    next.set(summaryLabel, data.summary);
                     return next;
                   });
                 }
                 if (data.comments && Array.isArray(data.comments)) {
+                  const sourceModel = isSynthesis ? `synthesis:${modelId}` : modelId;
                   const newComments: DiffComment[] = data.comments.map(
                     (c: { file: string; start_line: number; end_line: number; side: string; text: string; severity: string }) => ({
-                      id: `ai-${modelId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                      id: `ai-${sourceModel}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
                       file: c.file,
                       startLine: c.start_line,
                       endLine: c.end_line,
                       side: (c.side === 'deletions' ? 'deletions' : 'additions') as AnnotationSide,
                       text: c.text,
-                      source: { type: 'ai' as const, model: modelId, severity: c.severity },
+                      source: { type: 'ai' as const, model: sourceModel, severity: c.severity },
                     }),
                   );
                   setComments((prev) => [...prev, ...newComments]);
