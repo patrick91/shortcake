@@ -625,6 +625,7 @@ function AIComment({
   onDelete: (id: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [copiedFix, setCopiedFix] = useState(false);
   const source = comment.source!;
   const tool = source.model.split(':')[0] ?? source.model;
   const borderClass = MODEL_COLORS[tool] ?? 'border-l-accent';
@@ -636,7 +637,17 @@ function AIComment({
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     });
-  }, [comment.text]);
+  }, [comment.file, comment.startLine, comment.endLine, comment.text]);
+  const handleCopyFix = useCallback(() => {
+    const lineRange = comment.startLine === comment.endLine
+      ? `line ${comment.startLine}`
+      : `lines ${comment.startLine}-${comment.endLine}`;
+    const fixPrompt = `In ${comment.file} at ${lineRange}: ${comment.text}`;
+    void navigator.clipboard.writeText(fixPrompt).then(() => {
+      setCopiedFix(true);
+      setTimeout(() => setCopiedFix(false), 1500);
+    });
+  }, [comment.file, comment.startLine, comment.endLine, comment.text]);
   return (
     <div className={`flex items-start gap-2 p-3 my-1 bg-yellow-500/[0.06] border border-yellow-500/20 ${borderClass} border-l-2 max-w-[720px] group`}>
       <div className="flex-1 min-w-0">
@@ -656,6 +667,14 @@ function AIComment({
         </p>
       </div>
       <div className="flex gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-100">
+        <button
+          type="button"
+          className="appearance-none border-none bg-transparent text-text-muted text-[0.6rem] cursor-pointer hover:text-accent p-0.5"
+          onClick={(e) => { e.stopPropagation(); handleCopyFix(); }}
+          title="Copy as fix prompt"
+        >
+          {copiedFix ? '✓' : 'Fix'}
+        </button>
         <button
           type="button"
           className="appearance-none border-none bg-transparent text-text-muted text-[0.65rem] cursor-pointer hover:text-text-primary p-0.5"
@@ -2605,7 +2624,17 @@ export default function App() {
                       source: { type: 'ai' as const, model: sourceModel, severity: c.severity },
                     }),
                   );
-                  setComments((prev) => [...prev, ...newComments]);
+                  if (isSynthesis) {
+                    // Replace individual AI comments with synthesis-only
+                    setComments((prev) => [
+                      ...prev.filter((c) => !c.source || c.source.model.startsWith('synthesis:')),
+                      ...newComments,
+                    ]);
+                    // Keep only synthesis summary
+                    setReviewSummaries(new Map([[summaryLabel, data.summary ?? '']]));
+                  } else {
+                    setComments((prev) => [...prev, ...newComments]);
+                  }
                 }
               } catch {
                 // Skip malformed SSE data
