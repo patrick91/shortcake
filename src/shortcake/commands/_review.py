@@ -153,7 +153,7 @@ def _run_review(patch: str, model: str) -> ReviewResult:
     if model == "claude":
         cmd = ["claude", "-p", prompt]
     elif model == "codex":
-        cmd = ["codex", "--quiet", prompt]
+        cmd = ["codex", "exec", prompt]
     else:
         return ReviewResult(model=model, error=f"Unknown model: {model}")
 
@@ -162,10 +162,10 @@ def _run_review(patch: str, model: str) -> ReviewResult:
             cmd,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=300,
         )
     except subprocess.TimeoutExpired:
-        return ReviewResult(model=model, error="Review timed out after 120 seconds")
+        return ReviewResult(model=model, error="Review timed out after 300 seconds")
     except FileNotFoundError:
         return ReviewResult(model=model, error=f"'{model}' CLI tool not found")
     except OSError as e:

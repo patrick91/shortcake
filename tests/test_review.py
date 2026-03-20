@@ -220,7 +220,7 @@ def test_run_review_codex_success(monkeypatch: pytest.MonkeyPatch) -> None:
     call_args = mock_run.call_args
     cmd = call_args[0][0]
     assert cmd[0] == "codex"
-    assert cmd[1] == "--quiet"
+    assert cmd[1] == "exec"
 
 
 def test_run_review_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -233,6 +233,7 @@ def test_run_review_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result.model == "claude"
     assert result.error is not None
     assert "timed out" in result.error.lower()
+    assert "300" in result.error
 
 
 def test_run_review_nonzero_exit(monkeypatch: pytest.MonkeyPatch) -> None:
