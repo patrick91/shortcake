@@ -15,6 +15,7 @@ from shortcake.commands.move import move
 from shortcake.commands.pull import pull
 from shortcake.commands.reorder import reorder
 from shortcake.commands.restack import restack
+from shortcake.commands.review import review
 from shortcake.commands.submit import submit
 from shortcake.commands.sync import sync
 from shortcake.commands.top import top
@@ -46,6 +47,7 @@ app.command()(move)
 app.command()(pull)
 app.command()(reorder)
 app.command()(restack)
+app.command()(review)
 app.command()(submit)
 app.command()(sync)
 app.command()(top)

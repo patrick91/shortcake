@@ -1506,6 +1506,115 @@ export function mockApi(): Plugin {
           return;
         }
 
+        if (url.pathname === '/api/review/models') {
+          return json(res, 200, {
+            models: [
+              { id: 'claude:sonnet', name: 'Claude Sonnet 4.6', tool: 'claude', variant: 'sonnet', available: true },
+              { id: 'claude:opus', name: 'Claude Opus 4.6', tool: 'claude', variant: 'opus', available: true },
+              { id: 'claude:haiku', name: 'Claude Haiku', tool: 'claude', variant: 'haiku', available: true },
+              { id: 'codex:gpt-5.4', name: 'Codex GPT-5.4', tool: 'codex', variant: 'gpt-5.4', available: true },
+              { id: 'codex:gpt-5.4-mini', name: 'Codex GPT-5.4 Mini', tool: 'codex', variant: 'gpt-5.4-mini', available: true },
+              { id: 'codex:gpt-5.3-codex', name: 'Codex GPT-5.3 Codex', tool: 'codex', variant: 'gpt-5.3-codex', available: true },
+            ],
+          });
+        }
+
+        if (req.method === 'POST' && url.pathname === '/api/review') {
+          let body = '';
+          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+          req.on('end', () => {
+            res.writeHead(200, {
+              'Content-Type': 'text/event-stream',
+              'Cache-Control': 'no-cache',
+              'Access-Control-Allow-Origin': '*',
+            });
+
+            const data = JSON.parse(body);
+            const models: string[] = data.models ?? ['claude'];
+            let delay = 800;
+
+            for (const model of models) {
+              setTimeout(() => {
+                const event = JSON.stringify({
+                  model,
+                  summary: `${model === 'claude' ? 'Claude' : 'Codex'} review: The changes look reasonable overall. Consider adding input validation and improving error handling in a few places.`,
+                  comments: [
+                    {
+                      file: 'src/auth.py',
+                      start_line: 8,
+                      end_line: 10,
+                      side: 'additions',
+                      text: 'Hard-coded credentials should be replaced with proper authentication.',
+                      severity: 'error',
+                    },
+                    {
+                      file: 'src/auth.py',
+                      start_line: 14,
+                      end_line: 14,
+                      side: 'additions',
+                      text: 'Consider adding a docstring explaining the expected token format.',
+                      severity: 'suggestion',
+                    },
+                    {
+                      file: 'src/middleware.py',
+                      start_line: 7,
+                      end_line: 12,
+                      side: 'additions',
+                      text: 'The Authorization header parsing could be more robust.',
+                      severity: 'warning',
+                    },
+                  ],
+                  error: null,
+                });
+                res.write(`event: review\ndata: ${event}\n\n`);
+              }, delay);
+              delay += 1200;
+            }
+
+            const synthesize: string | null = data.synthesize ?? null;
+            if (synthesize && models.length >= 2) {
+              setTimeout(() => {
+                res.write('event: synthesis-start\ndata: {}\n\n');
+              }, delay + 100);
+
+              setTimeout(() => {
+                const synthEvent = JSON.stringify({
+                  model: synthesize,
+                  summary: `Consolidated review: Both reviewers agree that hard-coded credentials are the highest-priority issue. The authentication header parsing concern was raised independently by both, confirming it needs attention. Input validation is a cross-cutting concern worth addressing.`,
+                  comments: [
+                    {
+                      file: 'src/auth.py',
+                      start_line: 8,
+                      end_line: 10,
+                      side: 'additions',
+                      text: '[All reviewers] Hard-coded credentials must be replaced — this is a security vulnerability.',
+                      severity: 'error',
+                    },
+                    {
+                      file: 'src/middleware.py',
+                      start_line: 7,
+                      end_line: 12,
+                      side: 'additions',
+                      text: '[Consensus] Authorization header parsing needs proper error handling for malformed tokens.',
+                      severity: 'warning',
+                    },
+                  ],
+                  error: null,
+                  fix_prompt: 'Fix the following issues:\n\n1. In src/auth.py at lines 8-10: Replace the hard-coded username/password check with a proper authentication backend (e.g. database lookup with hashed passwords). Remove the plaintext "admin"/"secret" credentials entirely.\n\n2. In src/middleware.py at lines 7-12: Add error handling for malformed Authorization headers — handle missing "Bearer " prefix, empty tokens, and invalid token formats gracefully instead of passing empty strings to get_current_user().',
+                });
+                res.write(`event: synthesis\ndata: ${synthEvent}\n\n`);
+              }, delay + 1500);
+              delay += 2000;
+            }
+
+            setTimeout(() => {
+              res.write('event: done\ndata: {}\n\n');
+              res.end();
+            }, delay + 200);
+          });
+          return;
+        }
+
         if (req.method === 'OPTIONS') {
           res.writeHead(200, {
             'Access-Control-Allow-Origin': '*',
