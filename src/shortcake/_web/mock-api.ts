@@ -1571,6 +1571,41 @@ export function mockApi(): Plugin {
               delay += 1200;
             }
 
+            const synthesize: string | null = data.synthesize ?? null;
+            if (synthesize && models.length >= 2) {
+              setTimeout(() => {
+                res.write('event: synthesis-start\ndata: {}\n\n');
+              }, delay + 100);
+
+              setTimeout(() => {
+                const synthEvent = JSON.stringify({
+                  model: synthesize,
+                  summary: `Consolidated review: Both reviewers agree that hard-coded credentials are the highest-priority issue. The authentication header parsing concern was raised independently by both, confirming it needs attention. Input validation is a cross-cutting concern worth addressing.`,
+                  comments: [
+                    {
+                      file: 'src/auth.py',
+                      start_line: 8,
+                      end_line: 10,
+                      side: 'additions',
+                      text: '[All reviewers] Hard-coded credentials must be replaced — this is a security vulnerability.',
+                      severity: 'error',
+                    },
+                    {
+                      file: 'src/middleware.py',
+                      start_line: 7,
+                      end_line: 12,
+                      side: 'additions',
+                      text: '[Consensus] Authorization header parsing needs proper error handling for malformed tokens.',
+                      severity: 'warning',
+                    },
+                  ],
+                  error: null,
+                });
+                res.write(`event: synthesis\ndata: ${synthEvent}\n\n`);
+              }, delay + 1500);
+              delay += 2000;
+            }
+
             setTimeout(() => {
               res.write('event: done\ndata: {}\n\n');
               res.end();

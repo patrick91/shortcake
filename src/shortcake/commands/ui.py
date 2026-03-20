@@ -27,7 +27,12 @@ from shortcake._github import (
     get_repo_info,
 )
 from shortcake._tree import BranchNode, StackTree
-from shortcake.commands._review import _get_available_models, _run_review
+from shortcake.commands._review import (
+    ReviewResult,
+    _get_available_models,
+    _run_review,
+    _run_synthesis,
+)
 from shortcake.commands._suggest import _compute_suggestions
 from shortcake.commands.move_lines import (
     HunkSelection,
@@ -753,6 +758,8 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
                     _write_json(self, 500, {"error": str(exc)})
                     return
 
+                synthesize = body.get("synthesize")
+
                 # SSE response
                 try:
                     self.send_response(200)
@@ -762,6 +769,33 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
                     self.end_headers()
 
                     from concurrent.futures import as_completed
+
+                    def _write_result_event(
+                        event_type: str, result: ReviewResult,
+                    ) -> None:
+                        event_data = json.dumps({
+                            "model": result.model,
+                            "summary": result.summary,
+                            "comments": [
+                                {
+                                    "file": c.file,
+                                    "start_line": c.start_line,
+                                    "end_line": c.end_line,
+                                    "side": c.side,
+                                    "text": c.text,
+                                    "severity": c.severity,
+                                }
+                                for c in result.comments
+                            ],
+                            "error": result.error,
+                        })
+                        self.wfile.write(
+                            f"event: {event_type}\ndata: {event_data}\n\n"
+                            .encode()
+                        )
+                        self.wfile.flush()
+
+                    completed_reviews: list[ReviewResult] = []
 
                     with ThreadPoolExecutor(
                         max_workers=len(models),
@@ -773,28 +807,29 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
                         for future in as_completed(futures):
                             try:
                                 result = future.result()
-                                event_data = json.dumps({
-                                    "model": result.model,
-                                    "summary": result.summary,
-                                    "comments": [
-                                        {
-                                            "file": c.file,
-                                            "start_line": c.start_line,
-                                            "end_line": c.end_line,
-                                            "side": c.side,
-                                            "text": c.text,
-                                            "severity": c.severity,
-                                        }
-                                        for c in result.comments
-                                    ],
-                                    "error": result.error,
-                                })
-                                self.wfile.write(
-                                    f"event: review\ndata: {event_data}\n\n".encode()
-                                )
-                                self.wfile.flush()
+                                completed_reviews.append(result)
+                                _write_result_event("review", result)
                             except Exception:
                                 pass
+
+                    # Synthesis pass
+                    if (
+                        synthesize
+                        and isinstance(synthesize, str)
+                        and len(completed_reviews) > 0
+                    ):
+                        self.wfile.write(
+                            b'event: synthesis-start\n'
+                            b'data: {}\n\n'
+                        )
+                        self.wfile.flush()
+                        try:
+                            synth = _run_synthesis(
+                                patch, completed_reviews, synthesize,
+                            )
+                            _write_result_event("synthesis", synth)
+                        except Exception:
+                            pass
 
                     self.wfile.write(b"event: done\ndata: {}\n\n")
                     self.wfile.flush()
