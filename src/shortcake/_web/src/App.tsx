@@ -850,6 +850,10 @@ function ReviewSummaryPanel({
   }, [fixPrompt]);
 
   if (summaries.size === 0) return null;
+
+  const individual = [...summaries.entries()].filter(([k]) => !k.startsWith('synthesis'));
+  const synthesis = [...summaries.entries()].filter(([k]) => k.startsWith('synthesis'));
+
   return (
     <div className="mx-4 mt-3 mb-1 bg-surface-hover border border-border rounded-lg overflow-hidden">
       <div className="flex items-center justify-between px-3 py-2 border-b border-border">
@@ -862,12 +866,30 @@ function ReviewSummaryPanel({
           ✕
         </button>
       </div>
-      {[...summaries.entries()].map(([model, summary]) => (
+      {individual.length > 0 && synthesis.length > 0 && (
+        <div className="px-3 py-1.5 border-b border-border">
+          <span className="font-mono text-[0.6rem] text-text-muted uppercase tracking-wider">Individual reviews</span>
+        </div>
+      )}
+      {individual.map(([model, summary]) => (
         <div key={model} className="px-3 py-2 border-b border-border last:border-b-0">
           <span className="font-mono text-[0.6rem] text-text-muted bg-surface-active px-1.5 py-0.5 rounded mr-2">{model}</span>
           <p className="font-mono text-[0.72rem] text-text-secondary m-0 mt-1">{summary}</p>
         </div>
       ))}
+      {synthesis.length > 0 && (
+        <div className="border-t-2 border-purple-500/20 bg-purple-500/[0.03]">
+          <div className="px-3 py-1.5 border-b border-purple-500/10">
+            <span className="font-mono text-[0.6rem] text-purple-400 uppercase tracking-wider font-semibold">Synthesis</span>
+          </div>
+          {synthesis.map(([model, summary]) => (
+            <div key={model} className="px-3 py-2 border-b border-purple-500/10 last:border-b-0">
+              <span className="font-mono text-[0.6rem] text-purple-300 bg-purple-500/10 px-1.5 py-0.5 rounded mr-2">{model}</span>
+              <p className="font-mono text-[0.72rem] text-text-primary m-0 mt-1">{summary}</p>
+            </div>
+          ))}
+        </div>
+      )}
       {fixPrompt && (
         <div className="px-3 py-2.5 border-t border-purple-500/20 bg-purple-500/[0.04]">
           <div className="flex items-center justify-between mb-1.5">
@@ -2658,8 +2680,12 @@ export default function App() {
                       ...prev.filter((c) => !c.source || c.source.model.startsWith('synthesis:')),
                       ...newComments,
                     ]);
-                    // Keep only synthesis summary
-                    setReviewSummaries(new Map([[summaryLabel, data.summary ?? '']]));
+                    // Add synthesis summary alongside individual ones
+                    setReviewSummaries((prev) => {
+                      const next = new Map(prev);
+                      next.set(summaryLabel, data.summary ?? '');
+                      return next;
+                    });
                     if (data.fix_prompt) {
                       setReviewFixPrompt(data.fix_prompt);
                     }
