@@ -1,0 +1,10 @@
+{
+  "amp.mcpServers": {
+    "uidotsh": {
+      "url": "https://ui.sh/mcp?agent=amp",
+      "headers": {
+        "Authorization": "1P1a26K7r9fZjRXTAiVSE13oCKyXU4iR"
+      }
+    }
+  }
+}

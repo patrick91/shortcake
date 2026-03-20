@@ -1,0 +1,12 @@
+{
+  "mcp": {
+    "uidotsh": {
+      "type": "remote",
+      "url": "https://ui.sh/mcp?agent=opencode",
+      "enabled": true,
+      "headers": {
+        "Authorization": "Bearer 1P1a26K7r9fZjRXTAiVSE13oCKyXU4iR"
+      }
+    }
+  }
+}
