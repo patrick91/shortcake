@@ -1600,6 +1600,7 @@ export function mockApi(): Plugin {
                     },
                   ],
                   error: null,
+                  fix_prompt: 'Fix the following issues:\n\n1. In src/auth.py at lines 8-10: Replace the hard-coded username/password check with a proper authentication backend (e.g. database lookup with hashed passwords). Remove the plaintext "admin"/"secret" credentials entirely.\n\n2. In src/middleware.py at lines 7-12: Add error handling for malformed Authorization headers — handle missing "Bearer " prefix, empty tokens, and invalid token formats gracefully instead of passing empty strings to get_current_user().',
                 });
                 res.write(`event: synthesis\ndata: ${synthEvent}\n\n`);
               }, delay + 1500);
