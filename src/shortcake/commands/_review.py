@@ -60,13 +60,15 @@ def _get_available_models() -> list[dict]:
     for tool, variants in TOOL_MODELS.items():
         tool_available = shutil.which(tool) is not None
         for v in variants:
-            models.append({
-                "id": f"{tool}:{v['id']}",
-                "name": f"{tool.title()} {v['name']}",
-                "tool": tool,
-                "variant": v["id"],
-                "available": tool_available,
-            })
+            models.append(
+                {
+                    "id": f"{tool}:{v['id']}",
+                    "name": f"{tool.title()} {v['name']}",
+                    "tool": tool,
+                    "variant": v["id"],
+                    "available": tool_available,
+                }
+            )
     return models
 
 
@@ -77,8 +79,7 @@ def _build_prompt(patch: str) -> str:
     """
     if len(patch) > MAX_PATCH_SIZE:
         patch = (
-            patch[:MAX_PATCH_SIZE]
-            + "\n\n... [patch truncated — too large for review]"
+            patch[:MAX_PATCH_SIZE] + "\n\n... [patch truncated — too large for review]"
         )
 
     return (
@@ -103,7 +104,8 @@ def _build_prompt(patch: str) -> str:
 
 
 def _build_synthesis_prompt(
-    patch: str, reviews: list[ReviewResult],
+    patch: str,
+    reviews: list[ReviewResult],
 ) -> str:
     """Build a prompt for a final synthesis pass.
 
@@ -113,8 +115,7 @@ def _build_synthesis_prompt(
     """
     if len(patch) > MAX_PATCH_SIZE:
         patch = (
-            patch[:MAX_PATCH_SIZE]
-            + "\n\n... [patch truncated — too large for review]"
+            patch[:MAX_PATCH_SIZE] + "\n\n... [patch truncated — too large for review]"
         )
 
     prior_section = ""
@@ -124,9 +125,7 @@ def _build_synthesis_prompt(
         prior_section += f"\n### {r.model}\n"
         prior_section += f"Summary: {r.summary}\n"
         for c in r.comments:
-            prior_section += (
-                f"- {c.file}:{c.start_line} [{c.severity}] {c.text}\n"
-            )
+            prior_section += f"- {c.file}:{c.start_line} [{c.severity}] {c.text}\n"
 
     return (
         "You are an expert code reviewer performing a final synthesis. "
@@ -188,7 +187,8 @@ def _run_synthesis(
         cmd.append(prompt)
     else:
         return ReviewResult(
-            model=model_id, error=f"Unknown tool: {tool}",
+            model=model_id,
+            error=f"Unknown tool: {tool}",
         )
 
     try:
@@ -333,7 +333,8 @@ def _run_review(patch: str, model_id: str) -> ReviewResult:
         cmd.append(prompt)
     else:
         return ReviewResult(
-            model=model_id, error=f"Unknown tool: {tool}",
+            model=model_id,
+            error=f"Unknown tool: {tool}",
         )
 
     try:

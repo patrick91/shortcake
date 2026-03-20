@@ -81,7 +81,8 @@ def review(
     model: Annotated[
         list[str] | None,
         typer.Option(
-            "--model", "-m",
+            "--model",
+            "-m",
             help="Models to use (e.g. claude:sonnet, codex:o3)",
         ),
     ] = None,
@@ -120,8 +121,7 @@ def review(
     available_ids = [m["id"] for m in all_models if m["available"]]
     if not available_ids:
         typer.echo(
-            "Error: No AI review tools found. "
-            "Install 'claude' or 'codex' CLI.",
+            "Error: No AI review tools found. Install 'claude' or 'codex' CLI.",
             err=True,
         )
         raise typer.Exit(1)
@@ -161,8 +161,7 @@ def review(
 
     with ThreadPoolExecutor(max_workers=len(selected_models)) as executor:
         future_to_model = {
-            executor.submit(_run_review, patch, m): m
-            for m in selected_models
+            executor.submit(_run_review, patch, m): m for m in selected_models
         }
 
         for future in as_completed(future_to_model):
