@@ -32,7 +32,7 @@ def test_get_available_models_both(monkeypatch: pytest.MonkeyPatch) -> None:
     ids = [m["id"] for m in models]
     assert "claude:sonnet" in ids
     assert "claude:opus" in ids
-    assert "codex:o3" in ids
+    assert "codex:gpt-5.4" in ids
     assert all(m["available"] for m in models)
 
 
@@ -128,8 +128,8 @@ def test_parse_review_response_valid_json() -> None:
 def test_parse_review_response_markdown_fences() -> None:
     inner = _make_valid_response(summary="Fenced response.")
     raw = f"```json\n{inner}\n```"
-    result = _parse_review_response(raw, "codex:o3")
-    assert result.model == "codex:o3"
+    result = _parse_review_response(raw, "codex:gpt-5.4")
+    assert result.model == "codex:gpt-5.4"
     assert result.summary == "Fenced response."
     assert result.error is None
 
@@ -258,13 +258,13 @@ def test_run_review_codex_with_variant(
     )
     monkeypatch.setattr("subprocess.run", mock_run)
 
-    result = _run_review("some patch", "codex:o3")
-    assert result.model == "codex:o3"
+    result = _run_review("some patch", "codex:gpt-5.4")
+    assert result.model == "codex:gpt-5.4"
     cmd = mock_run.call_args[0][0]
     assert cmd[0] == "codex"
     assert cmd[1] == "exec"
     assert "--model" in cmd
-    assert cmd[cmd.index("--model") + 1] == "o3"
+    assert cmd[cmd.index("--model") + 1] == "gpt-5.4"
 
 
 def test_run_review_timeout(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1509,11 +1509,12 @@ export function mockApi(): Plugin {
         if (url.pathname === '/api/review/models') {
           return json(res, 200, {
             models: [
-              { id: 'claude:sonnet', name: 'Claude Sonnet', tool: 'claude', variant: 'sonnet', available: true },
-              { id: 'claude:opus', name: 'Claude Opus', tool: 'claude', variant: 'opus', available: true },
+              { id: 'claude:sonnet', name: 'Claude Sonnet 4.6', tool: 'claude', variant: 'sonnet', available: true },
+              { id: 'claude:opus', name: 'Claude Opus 4.6', tool: 'claude', variant: 'opus', available: true },
               { id: 'claude:haiku', name: 'Claude Haiku', tool: 'claude', variant: 'haiku', available: true },
-              { id: 'codex:o3', name: 'Codex o3', tool: 'codex', variant: 'o3', available: true },
-              { id: 'codex:o4-mini', name: 'Codex o4-mini', tool: 'codex', variant: 'o4-mini', available: true },
+              { id: 'codex:gpt-5.4', name: 'Codex GPT-5.4', tool: 'codex', variant: 'gpt-5.4', available: true },
+              { id: 'codex:gpt-5.4-mini', name: 'Codex GPT-5.4 Mini', tool: 'codex', variant: 'gpt-5.4-mini', available: true },
+              { id: 'codex:gpt-5.3-codex', name: 'Codex GPT-5.3 Codex', tool: 'codex', variant: 'gpt-5.3-codex', available: true },
             ],
           });
         }
