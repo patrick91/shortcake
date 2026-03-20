@@ -85,11 +85,10 @@ def _build_stack_section(
     stack_branches: list[str],
     current_branch: str,
     pr_numbers: dict[str, int],
-    owner: str,
+    _owner: str,
     merged_pr_numbers: dict[str, int] | None = None,
 ) -> str:
     """Build the stack visualization markdown section."""
-    del owner  # Reserved for future repo-scoped links.
 
     if merged_pr_numbers is None:
         merged_pr_numbers = {}
