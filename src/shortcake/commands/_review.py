@@ -8,6 +8,20 @@ from dataclasses import dataclass, field
 
 MAX_PATCH_SIZE = 100_000  # ~100KB
 
+# Known model variants per CLI tool.  The first entry for each tool is
+# the default (i.e. what you get when you don't pass --model).
+TOOL_MODELS: dict[str, list[dict[str, str]]] = {
+    "claude": [
+        {"id": "sonnet", "name": "Sonnet"},
+        {"id": "opus", "name": "Opus"},
+        {"id": "haiku", "name": "Haiku"},
+    ],
+    "codex": [
+        {"id": "o3", "name": "o3"},
+        {"id": "o4-mini", "name": "o4-mini"},
+    ],
+}
+
 
 @dataclass(frozen=True)
 class ReviewComment:
@@ -27,20 +41,31 @@ class ReviewResult:
     error: str | None = None
 
 
+@dataclass(frozen=True)
+class ReviewModelInfo:
+    """A selectable model option exposed to the UI / CLI."""
+
+    id: str  # e.g. "claude:sonnet"
+    name: str  # e.g. "Claude Sonnet"
+    tool: str  # "claude" or "codex"
+    variant: str  # "sonnet", "o3", etc.
+    available: bool
+
+
 def _get_available_models() -> list[dict]:
-    """Check which AI CLI tools are available on the system."""
-    return [
-        {
-            "id": "claude",
-            "name": "Claude",
-            "available": shutil.which("claude") is not None,
-        },
-        {
-            "id": "codex",
-            "name": "Codex",
-            "available": shutil.which("codex") is not None,
-        },
-    ]
+    """Return every known model variant with availability info."""
+    models: list[dict] = []
+    for tool, variants in TOOL_MODELS.items():
+        tool_available = shutil.which(tool) is not None
+        for v in variants:
+            models.append({
+                "id": f"{tool}:{v['id']}",
+                "name": f"{tool.title()} {v['name']}",
+                "tool": tool,
+                "variant": v["id"],
+                "available": tool_available,
+            })
+    return models
 
 
 def _build_prompt(patch: str) -> str:
@@ -142,20 +167,42 @@ def _build_result_from_parsed(data: dict, model: str) -> ReviewResult:
     return ReviewResult(model=model, summary=summary, comments=comments)
 
 
-def _run_review(patch: str, model: str) -> ReviewResult:
+def _parse_model_id(model_id: str) -> tuple[str, str | None]:
+    """Parse a model ID like 'claude:sonnet' into (tool, variant).
+
+    If no colon, treat the whole string as a tool name with no variant
+    (uses the tool's default model).
+    """
+    if ":" in model_id:
+        tool, variant = model_id.split(":", 1)
+        return tool, variant
+    return model_id, None
+
+
+def _run_review(patch: str, model_id: str) -> ReviewResult:
     """Shell out to an AI CLI tool to review the patch.
 
-    Supports "claude" and "codex" as model identifiers. Handles
-    timeouts and process errors gracefully.
+    model_id can be:
+      - "claude:sonnet", "claude:opus", "codex:o3", etc.
+      - "claude" or "codex" (uses the tool's default model)
     """
     prompt = _build_prompt(patch)
+    tool, variant = _parse_model_id(model_id)
 
-    if model == "claude":
-        cmd = ["claude", "-p", prompt]
-    elif model == "codex":
-        cmd = ["codex", "exec", prompt]
+    if tool == "claude":
+        cmd = ["claude", "-p"]
+        if variant:
+            cmd += ["--model", variant]
+        cmd.append(prompt)
+    elif tool == "codex":
+        cmd = ["codex", "exec"]
+        if variant:
+            cmd += ["--model", variant]
+        cmd.append(prompt)
     else:
-        return ReviewResult(model=model, error=f"Unknown model: {model}")
+        return ReviewResult(
+            model=model_id, error=f"Unknown tool: {tool}",
+        )
 
     try:
         result = subprocess.run(
@@ -165,17 +212,27 @@ def _run_review(patch: str, model: str) -> ReviewResult:
             timeout=300,
         )
     except subprocess.TimeoutExpired:
-        return ReviewResult(model=model, error="Review timed out after 300 seconds")
+        return ReviewResult(
+            model=model_id,
+            error="Review timed out after 300 seconds",
+        )
     except FileNotFoundError:
-        return ReviewResult(model=model, error=f"'{model}' CLI tool not found")
+        return ReviewResult(
+            model=model_id,
+            error=f"'{tool}' CLI tool not found",
+        )
     except OSError as e:
-        return ReviewResult(model=model, error=f"Failed to run '{model}': {e}")
+        return ReviewResult(
+            model=model_id,
+            error=f"Failed to run '{tool}': {e}",
+        )
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
         return ReviewResult(
-            model=model,
-            error=f"'{model}' exited with code {result.returncode}: {stderr}",
+            model=model_id,
+            error=f"'{tool}' exited with code {result.returncode}"
+            + (f": {stderr}" if stderr else ""),
         )
 
-    return _parse_review_response(result.stdout, model)
+    return _parse_review_response(result.stdout, model_id)

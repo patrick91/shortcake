@@ -1509,8 +1509,11 @@ export function mockApi(): Plugin {
         if (url.pathname === '/api/review/models') {
           return json(res, 200, {
             models: [
-              { id: 'claude', name: 'Claude', available: true },
-              { id: 'codex', name: 'Codex', available: true },
+              { id: 'claude:sonnet', name: 'Claude Sonnet', tool: 'claude', variant: 'sonnet', available: true },
+              { id: 'claude:opus', name: 'Claude Opus', tool: 'claude', variant: 'opus', available: true },
+              { id: 'claude:haiku', name: 'Claude Haiku', tool: 'claude', variant: 'haiku', available: true },
+              { id: 'codex:o3', name: 'Codex o3', tool: 'codex', variant: 'o3', available: true },
+              { id: 'codex:o4-mini', name: 'Codex o4-mini', tool: 'codex', variant: 'o4-mini', available: true },
             ],
           });
         }

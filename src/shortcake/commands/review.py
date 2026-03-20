@@ -46,6 +46,33 @@ def _print_review_result(result: ReviewResult) -> None:
         typer.echo("")
 
 
+def _resolve_model_id(raw: str, available_ids: list[str]) -> str | None:
+    """Resolve a user-supplied model string to a full model ID.
+
+    Accepts:
+      - Full IDs like "claude:sonnet" -> returned as-is if available
+      - Bare tool names like "claude" -> first available variant
+      - Bare variant names like "sonnet" -> first matching tool variant
+
+    Returns None if no match is found.
+    """
+    # Exact match
+    if raw in available_ids:
+        return raw
+
+    # Bare tool name -> first available variant for that tool
+    for mid in available_ids:
+        if mid.startswith(f"{raw}:"):
+            return mid
+
+    # Bare variant name -> first tool that has it
+    for mid in available_ids:
+        if mid.endswith(f":{raw}"):
+            return mid
+
+    return None
+
+
 def review(
     branch: Annotated[
         str | None,
@@ -53,7 +80,10 @@ def review(
     ] = None,
     model: Annotated[
         list[str] | None,
-        typer.Option("--model", "-m", help="Models to use (e.g. claude, codex)"),
+        typer.Option(
+            "--model", "-m",
+            help="Models to use (e.g. claude:sonnet, codex:o3)",
+        ),
     ] = None,
 ) -> None:
     """Review a branch's changes using AI models."""
@@ -66,7 +96,10 @@ def review(
     # Get tracked branches and find parent
     tracked = _tracked_branch_parents(repo)
     if branch not in tracked:
-        typer.echo(f"Error: Branch '{branch}' is not tracked by Shortcake.", err=True)
+        typer.echo(
+            f"Error: Branch '{branch}' is not tracked by Shortcake.",
+            err=True,
+        )
         raise typer.Exit(1)
 
     parent = tracked[branch]
@@ -87,27 +120,39 @@ def review(
     available_ids = [m["id"] for m in all_models if m["available"]]
     if not available_ids:
         typer.echo(
-            "Error: No AI review tools found. Install 'claude' or 'codex' CLI.",
+            "Error: No AI review tools found. "
+            "Install 'claude' or 'codex' CLI.",
             err=True,
         )
         raise typer.Exit(1)
 
     # Determine which models to use
     if model is not None:
-        invalid = [m for m in model if m not in available_ids]
-        if invalid:
-            typer.echo(
-                f"Error: Unavailable model(s): {', '.join(invalid)}. "
-                f"Available: {', '.join(available_ids)}",
-                err=True,
-            )
-            raise typer.Exit(1)
-        selected_models = model
+        selected_models: list[str] = []
+        for m in model:
+            resolved = _resolve_model_id(m, available_ids)
+            if resolved is None:
+                typer.echo(
+                    f"Error: Unknown model '{m}'. "
+                    f"Available: {', '.join(available_ids)}",
+                    err=True,
+                )
+                raise typer.Exit(1)
+            selected_models.append(resolved)
     else:
-        selected_models = available_ids
+        # Default: first variant of each available tool
+        seen_tools: set[str] = set()
+        selected_models = []
+        for mid in available_ids:
+            tool = mid.split(":")[0]
+            if tool not in seen_tools:
+                seen_tools.add(tool)
+                selected_models.append(mid)
 
     models_str = ", ".join(selected_models)
-    typer.echo(f"Reviewing '{branch}' (vs '{parent}') with: {models_str}")
+    typer.echo(
+        f"Reviewing '{branch}' (vs '{parent}') with: {models_str}",
+    )
     typer.echo("")
 
     # Run reviews in parallel
@@ -116,7 +161,8 @@ def review(
 
     with ThreadPoolExecutor(max_workers=len(selected_models)) as executor:
         future_to_model = {
-            executor.submit(_run_review, patch, m): m for m in selected_models
+            executor.submit(_run_review, patch, m): m
+            for m in selected_models
         }
 
         for future in as_completed(future_to_model):

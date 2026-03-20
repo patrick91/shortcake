@@ -26,6 +26,7 @@ type DiffComment = {
 type ReviewModel = {
   id: string;
   name: string;
+  tool: string;
   available: boolean;
 };
 
@@ -624,7 +625,8 @@ function AIComment({
 }) {
   const [copied, setCopied] = useState(false);
   const source = comment.source!;
-  const borderClass = MODEL_COLORS[source.model] ?? 'border-l-accent';
+  const tool = source.model.split(':')[0] ?? source.model;
+  const borderClass = MODEL_COLORS[tool] ?? 'border-l-accent';
   const severityClass = SEVERITY_COLORS[source.severity] ?? 'text-text-muted';
   const handleCopy = useCallback(() => {
     void navigator.clipboard.writeText(comment.text).then(() => {
@@ -683,9 +685,18 @@ function ReviewDialog({
   onClose: () => void;
   isReviewing: boolean;
 }) {
-  const [selected, setSelected] = useState<Set<string>>(
-    () => new Set(models.filter((m) => m.available).map((m) => m.id)),
-  );
+  const [selected, setSelected] = useState<Set<string>>(() => {
+    // Default: first variant of each available tool
+    const seen = new Set<string>();
+    const defaults = new Set<string>();
+    for (const m of models) {
+      if (m.available && !seen.has(m.tool)) {
+        seen.add(m.tool);
+        defaults.add(m.id);
+      }
+    }
+    return defaults;
+  });
 
   const toggle = (id: string) => {
     setSelected((prev) => {
@@ -695,6 +706,17 @@ function ReviewDialog({
       return next;
     });
   };
+
+  // Group models by tool
+  const groups = useMemo(() => {
+    const map = new Map<string, ReviewModel[]>();
+    for (const m of models) {
+      let arr = map.get(m.tool);
+      if (!arr) { arr = []; map.set(m.tool, arr); }
+      arr.push(m);
+    }
+    return map;
+  }, [models]);
 
   return (
     <div className="bg-surface border border-border rounded-lg shadow-lg p-4 flex flex-col gap-3">
@@ -708,19 +730,30 @@ function ReviewDialog({
           ✕
         </button>
       </div>
-      <div className="flex flex-col gap-2">
-        {models.map((m) => (
-          <label key={m.id} className={`flex items-center gap-2 font-mono text-[0.75rem] ${m.available ? 'text-text-primary cursor-pointer' : 'text-text-muted cursor-not-allowed'}`}>
-            <input
-              type="checkbox"
-              checked={selected.has(m.id)}
-              onChange={() => toggle(m.id)}
-              disabled={!m.available || isReviewing}
-              className="accent-accent"
-            />
-            {m.name}
-            {!m.available && <span className="text-[0.6rem] text-text-muted">(not installed)</span>}
-          </label>
+      <div className="flex flex-col gap-3">
+        {[...groups.entries()].map(([tool, toolModels]) => (
+          <div key={tool}>
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <span className="font-mono text-[0.68rem] text-text-secondary font-semibold capitalize">{tool}</span>
+              {!toolModels[0]?.available && (
+                <span className="font-mono text-[0.58rem] text-text-muted">(not installed)</span>
+              )}
+            </div>
+            <div className="flex flex-col gap-1 pl-1">
+              {toolModels.map((m) => (
+                <label key={m.id} className={`flex items-center gap-2 font-mono text-[0.75rem] ${m.available ? 'text-text-primary cursor-pointer' : 'text-text-muted cursor-not-allowed'}`}>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(m.id)}
+                    onChange={() => toggle(m.id)}
+                    disabled={!m.available || isReviewing}
+                    className="accent-accent"
+                  />
+                  {m.name.replace(`${tool.charAt(0).toUpperCase() + tool.slice(1)} `, '')}
+                </label>
+              ))}
+            </div>
+          </div>
         ))}
       </div>
       <button
@@ -729,7 +762,7 @@ function ReviewDialog({
         disabled={selected.size === 0 || isReviewing}
         onClick={() => onStart([...selected])}
       >
-        {isReviewing ? 'Reviewing...' : 'Start Review'}
+        {isReviewing ? 'Reviewing...' : `Review with ${selected.size} model${selected.size === 1 ? '' : 's'}`}
       </button>
     </div>
   );
