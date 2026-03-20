@@ -40,6 +40,7 @@ class ReviewResult:
     summary: str = ""
     comments: list[ReviewComment] = field(default_factory=list)
     error: str | None = None
+    fix_prompt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +136,9 @@ def _build_synthesis_prompt(
         "2. Resolve disagreements — note when reviewers conflict\n"
         "3. Prioritize — surface the most important issues first\n"
         "4. Add anything the prior reviewers missed\n"
+        "5. Write a fix_prompt — a single actionable instruction "
+        "that a developer or AI coding agent can follow to fix "
+        "all the issues you found\n"
         "\n"
         "Respond with ONLY valid JSON:\n"
         "{\n"
@@ -142,7 +146,11 @@ def _build_synthesis_prompt(
         '  "comments": [\n'
         '    {"file": "path", "start_line": N, "end_line": N, '
         '"side": "additions", "text": "...", "severity": "suggestion"}\n'
-        "  ]\n"
+        "  ],\n"
+        '  "fix_prompt": "A concrete, actionable prompt describing '
+        "all changes needed to fix the issues above. Reference specific "
+        "files and line numbers. This will be pasted directly into an "
+        'AI coding tool."\n'
         "}\n"
         "Rules: line numbers = new side of diff. "
         "severity = info|warning|error|suggestion. "
@@ -281,7 +289,14 @@ def _build_result_from_parsed(data: dict, model: str) -> ReviewResult:
         except (TypeError, ValueError):
             continue
 
-    return ReviewResult(model=model, summary=summary, comments=comments)
+    fix_prompt = data.get("fix_prompt") or None
+
+    return ReviewResult(
+        model=model,
+        summary=summary,
+        comments=comments,
+        fix_prompt=fix_prompt,
+    )
 
 
 def _parse_model_id(model_id: str) -> tuple[str, str | None]:

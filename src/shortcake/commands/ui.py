@@ -788,6 +788,7 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
                                 for c in result.comments
                             ],
                             "error": result.error,
+                            "fix_prompt": result.fix_prompt,
                         })
                         self.wfile.write(
                             f"event: {event_type}\ndata: {event_data}\n\n"

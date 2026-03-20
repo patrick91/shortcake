@@ -833,11 +833,22 @@ function ReviewDialog({
 
 function ReviewSummaryPanel({
   summaries,
+  fixPrompt,
   onClose,
 }: {
   summaries: Map<string, string>;
+  fixPrompt: string | null;
   onClose: () => void;
 }) {
+  const [copiedFix, setCopiedFix] = useState(false);
+  const handleCopyFix = useCallback(() => {
+    if (!fixPrompt) return;
+    void navigator.clipboard.writeText(fixPrompt).then(() => {
+      setCopiedFix(true);
+      setTimeout(() => setCopiedFix(false), 2000);
+    });
+  }, [fixPrompt]);
+
   if (summaries.size === 0) return null;
   return (
     <div className="mx-4 mt-3 mb-1 bg-surface-hover border border-border rounded-lg overflow-hidden">
@@ -857,6 +868,21 @@ function ReviewSummaryPanel({
           <p className="font-mono text-[0.72rem] text-text-secondary m-0 mt-1">{summary}</p>
         </div>
       ))}
+      {fixPrompt && (
+        <div className="px-3 py-2.5 border-t border-purple-500/20 bg-purple-500/[0.04]">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="font-mono text-[0.65rem] text-purple-400 font-semibold">Fix prompt</span>
+            <button
+              type="button"
+              className="appearance-none border border-purple-500/30 bg-purple-500/10 text-purple-400 text-[0.65rem] font-mono px-2 py-0.5 rounded cursor-pointer hover:bg-purple-500/20 transition-colors duration-100"
+              onClick={handleCopyFix}
+            >
+              {copiedFix ? 'Copied!' : 'Copy prompt'}
+            </button>
+          </div>
+          <p className="font-mono text-[0.72rem] text-text-primary m-0 whitespace-pre-wrap break-words leading-relaxed select-text">{fixPrompt}</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -1847,6 +1873,7 @@ export default function App() {
   const [reviewModelStatus, setReviewModelStatus] = useState<Map<string, 'pending' | 'done' | 'error'>>(new Map());
   const [reviewModels, setReviewModels] = useState<ReviewModel[]>([]);
   const [reviewSummaries, setReviewSummaries] = useState<Map<string, string>>(new Map());
+  const [reviewFixPrompt, setReviewFixPrompt] = useState<string | null>(null);
   const isReviewing = reviewModelStatus.size > 0 && [...reviewModelStatus.values()].some((s) => s === 'pending');
 
   const setSelection = useCallback((sel: DiffSelection | null) => {
@@ -2018,6 +2045,7 @@ export default function App() {
     setIsReviewDialogOpen(false);
     setReviewModelStatus(new Map());
     setReviewSummaries(new Map());
+    setReviewFixPrompt(null);
   }, [selection]);
 
   const activePatch = selection?.type === 'working' ? workingPatch : diff?.patch;
@@ -2632,6 +2660,9 @@ export default function App() {
                     ]);
                     // Keep only synthesis summary
                     setReviewSummaries(new Map([[summaryLabel, data.summary ?? '']]));
+                    if (data.fix_prompt) {
+                      setReviewFixPrompt(data.fix_prompt);
+                    }
                   } else {
                     setComments((prev) => [...prev, ...newComments]);
                   }
@@ -3018,7 +3049,8 @@ export default function App() {
               {reviewSummaries.size > 0 && (
                 <ReviewSummaryPanel
                   summaries={reviewSummaries}
-                  onClose={() => setReviewSummaries(new Map())}
+                  fixPrompt={reviewFixPrompt}
+                  onClose={() => { setReviewSummaries(new Map()); setReviewFixPrompt(null); }}
                 />
               )}
               {diffPatches.map((patch, index) => {
