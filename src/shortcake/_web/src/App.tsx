@@ -617,6 +617,18 @@ const SEVERITY_COLORS: Record<string, string> = {
   info: 'text-text-muted',
 };
 
+function formatModelLabel(model: string): string {
+  // "synthesis:claude:opus" -> "Synthesis"
+  // "claude:sonnet" -> "Claude Sonnet"
+  // "codex:gpt-5.4" -> "Codex GPT-5.4"
+  if (model.startsWith('synthesis:')) return 'Synthesis';
+  const parts = model.split(':');
+  if (parts.length === 2) {
+    return `${parts[0]!.charAt(0).toUpperCase() + parts[0]!.slice(1)} ${parts[1]!.toUpperCase().startsWith('GPT') ? parts[1] : parts[1]!.charAt(0).toUpperCase() + parts[1]!.slice(1)}`;
+  }
+  return model;
+}
+
 function AIComment({
   comment,
   onDelete,
@@ -630,6 +642,7 @@ function AIComment({
   const tool = source.model.split(':')[0] ?? source.model;
   const borderClass = MODEL_COLORS[tool] ?? 'border-l-accent';
   const severityClass = SEVERITY_COLORS[source.severity] ?? 'text-text-muted';
+  const modelLabel = formatModelLabel(source.model);
   const handleCopy = useCallback(() => {
     const ref = formatLineRef(comment.file, comment.startLine, comment.endLine);
     const copyText = `${ref}\n${comment.text}`;
@@ -649,47 +662,45 @@ function AIComment({
     });
   }, [comment.file, comment.startLine, comment.endLine, comment.text]);
   return (
-    <div className={`flex items-start gap-2 p-3 my-1 bg-yellow-500/[0.06] border border-yellow-500/20 ${borderClass} border-l-2 max-w-[720px] group`}>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 mb-1">
-          <span className="font-mono text-[0.6rem] text-text-primary bg-surface-active px-1.5 py-0.5 rounded-sm font-semibold">
-            {source.model}
-          </span>
-          <span className={`font-mono text-[0.6rem] uppercase tracking-wider font-semibold ${severityClass}`}>
-            {source.severity}
-          </span>
-          <span className="font-mono text-[0.6rem] text-text-muted ml-auto">
-            {formatLineLabel(comment.startLine, comment.endLine)}
-          </span>
-        </div>
-        <p className="text-text-primary font-mono text-[0.78rem] m-0 mt-0.5 whitespace-pre-wrap break-words leading-relaxed select-text">
-          {comment.text}
-        </p>
+    <div className={`flex flex-col gap-1.5 p-3 my-1.5 bg-yellow-500/[0.06] border border-yellow-500/20 ${borderClass} border-l-2 max-w-[720px] group`}>
+      <div className="flex items-center gap-1.5">
+        <span className="font-mono text-[0.62rem] text-text-primary bg-surface-active px-1.5 py-0.5 rounded-sm font-medium">
+          {modelLabel}
+        </span>
+        <span className={`font-mono text-[0.58rem] uppercase tracking-wider font-semibold ${severityClass}`}>
+          {source.severity}
+        </span>
+        <span className="font-mono text-[0.58rem] text-text-muted ml-auto">
+          {formatLineLabel(comment.startLine, comment.endLine)}
+        </span>
       </div>
-      <div className="flex gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-100">
+      <p className="text-text-primary font-mono text-[0.78rem] m-0 whitespace-pre-wrap break-words leading-relaxed select-text">
+        {comment.text}
+      </p>
+      <div className="flex items-center gap-2 pt-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-100">
         <button
           type="button"
-          className="appearance-none border-none bg-transparent text-text-muted text-[0.6rem] cursor-pointer hover:text-accent p-0.5"
+          className="appearance-none border border-accent/30 bg-accent/5 text-accent text-[0.6rem] font-mono px-2 py-[2px] rounded cursor-pointer hover:bg-accent/15 transition-colors duration-100"
           onClick={(e) => { e.stopPropagation(); handleCopyFix(); }}
-          title="Copy as fix prompt"
+          title="Copy fix prompt to clipboard"
         >
-          {copiedFix ? '✓' : 'Fix'}
+          {copiedFix ? 'Copied!' : 'Copy fix prompt'}
         </button>
         <button
           type="button"
-          className="appearance-none border-none bg-transparent text-text-muted text-[0.65rem] cursor-pointer hover:text-text-primary p-0.5"
+          className="appearance-none border border-border bg-transparent text-text-muted text-[0.6rem] font-mono px-2 py-[2px] rounded cursor-pointer hover:bg-surface-hover hover:text-text-primary transition-colors duration-100"
           onClick={(e) => { e.stopPropagation(); handleCopy(); }}
-          title="Copy"
+          title="Copy comment"
         >
-          {copied ? '✓' : '⎘'}
+          {copied ? 'Copied!' : 'Copy'}
         </button>
         <button
           type="button"
-          className="appearance-none border-none bg-transparent text-text-muted text-[0.65rem] cursor-pointer hover:text-danger p-0.5"
+          className="appearance-none border-none bg-transparent text-text-muted text-[0.6rem] font-mono px-1 py-[2px] cursor-pointer hover:text-danger transition-colors duration-100 ml-auto"
           onClick={(e) => { e.stopPropagation(); onDelete(comment.id); }}
           title="Dismiss"
         >
-          ✕
+          Dismiss
         </button>
       </div>
     </div>
