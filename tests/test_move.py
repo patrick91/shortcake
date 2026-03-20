@@ -1,11 +1,15 @@
 """Tests for move command."""
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
 from shortcake import _git as git
+from shortcake._github import GitHubClient, PRInfo
+from shortcake._pr_stack import STACK_END_MARKER, STACK_START_MARKER
 from shortcake._restack_state import RestackState
 from shortcake._trailers import Trailers
 from shortcake.cli import app
@@ -17,10 +21,16 @@ from tests._git_helpers import (
     get_ref,
     reset_hard,
     set_ref,
+    set_remote,
     switch_branch,
 )
 
 runner = CliRunner()
+
+
+def setup_origin_remote(repo: Repo, url: str = "git@github.com:owner/repo.git") -> None:
+    """Configure origin remote for a repo."""
+    set_remote(repo, "origin", url)
 
 
 def _create_stack_3(repo: Repo, tmp_path: Path) -> None:
@@ -271,6 +281,172 @@ def test_move_preserves_file_contents(repo_with_stack: Repo, tmp_path: Path) -> 
     assert (tmp_path / "b.txt").read_text() == "branch b content"
     # a.txt should NOT be present since branch_b is now directly on main
     assert not (tmp_path / "a.txt").exists()
+
+
+def test_move_updates_pr_bases_and_descriptions(
+    repo_with_stack: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Move updates affected PR bases and stack descriptions."""
+    setup_origin_remote(repo_with_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    switch_branch(repo_with_stack, "branch_a")
+
+    old_stack_body_b = (
+        f"{STACK_START_MARKER}\n"
+        "## Stack\n"
+        "\n"
+        "- **#20** (`branch_b`) <-- this PR\n"
+        "- #10 (`branch_a`)\n"
+        f"{STACK_END_MARKER}\n"
+        "\n"
+        "Original branch_b description"
+    )
+    old_stack_body_a = (
+        f"{STACK_START_MARKER}\n"
+        "## Stack\n"
+        "\n"
+        "- #20 (`branch_b`)\n"
+        "- **#10** (`branch_a`) <-- this PR\n"
+        f"{STACK_END_MARKER}\n"
+        "\n"
+        "Original branch_a description"
+    )
+
+    mock_pr_a = PRInfo(
+        number=10,
+        url="https://github.com/owner/repo/pull/10",
+        base="main",
+        title="feat: branch a",
+        body=old_stack_body_a,
+        state="open",
+        is_draft=False,
+    )
+    mock_pr_b = PRInfo(
+        number=20,
+        url="https://github.com/owner/repo/pull/20",
+        base="branch_a",
+        title="feat: branch b",
+        body=old_stack_body_b,
+        state="open",
+        is_draft=False,
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.side_effect = lambda b: {
+        "branch_a": mock_pr_a,
+        "branch_b": mock_pr_b,
+    }.get(b)
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("shortcake.commands.move.GitHubClient", return_value=mock_client):
+        _move(repo_with_stack, "branch_b", "main")
+
+    base_updates_for_b = [
+        call
+        for call in mock_client.update_pr.call_args_list
+        if call[0][0] == 20 and call[1].get("base") == "main"
+    ]
+    assert base_updates_for_b, "branch_b's PR base was not updated to main"
+
+    body_updates_for_b = [
+        call
+        for call in mock_client.update_pr.call_args_list
+        if call[0][0] == 20 and call[1].get("body") is not None
+    ]
+    assert body_updates_for_b, "branch_b's PR body was not updated after move"
+    new_body_b = body_updates_for_b[-1][1]["body"]
+    assert "branch_a" not in new_body_b
+    assert "branch_b" in new_body_b
+    assert "Original branch_b description" in new_body_b
+
+    body_updates_for_a = [
+        call
+        for call in mock_client.update_pr.call_args_list
+        if call[0][0] == 10 and call[1].get("body") is not None
+    ]
+    assert body_updates_for_a, "branch_a's PR body was not updated after move"
+    new_body_a = body_updates_for_a[-1][1]["body"]
+    assert "branch_b" not in new_body_a
+    assert "branch_a" in new_body_a
+    assert "Original branch_a description" in new_body_a
+
+
+def test_move_pr_sync_errors_are_non_fatal(
+    repo_with_stack: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """GitHub sync failures should not make the move fail."""
+    setup_origin_remote(repo_with_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    switch_branch(repo_with_stack, "branch_a")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.side_effect = httpx.RequestError("network down")
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("shortcake.commands.move.GitHubClient", return_value=mock_client):
+        result = _move(repo_with_stack, "branch_b", "main")
+
+    assert result.new_parent == "main"
+    all_branches = set(git.get_all_local_branches(repo_with_stack))
+    assert git.get_branch_parent(repo_with_stack, "branch_b", all_branches) == "main"
+
+
+def test_move_pr_sync_skipped_without_token(
+    repo_with_stack: Repo,
+) -> None:
+    """PR sync is skipped when no GitHub token is available."""
+    setup_origin_remote(repo_with_stack)
+    switch_branch(repo_with_stack, "branch_a")
+
+    with (
+        patch("shortcake.commands.move.get_github_token", return_value=None),
+        patch("shortcake.commands.move.GitHubClient") as mock_cls,
+    ):
+        result = _move(repo_with_stack, "branch_b", "main")
+
+    assert result.new_parent == "main"
+    mock_cls.assert_not_called()
+
+
+def test_move_pr_sync_skipped_without_repo_info(
+    repo_with_stack: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR sync is skipped when origin URL is not a GitHub repo."""
+    set_remote(repo_with_stack, "origin", "https://gitlab.com/owner/repo.git")
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    switch_branch(repo_with_stack, "branch_a")
+
+    with patch("shortcake.commands.move.GitHubClient") as mock_cls:
+        result = _move(repo_with_stack, "branch_b", "main")
+
+    assert result.new_parent == "main"
+    mock_cls.assert_not_called()
+
+
+def test_move_pr_sync_catches_outer_httpx_error(
+    repo_with_stack: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Outer httpx errors from _sync_pr_descriptions_for_branches are caught."""
+    setup_origin_remote(repo_with_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    switch_branch(repo_with_stack, "branch_a")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.move.GitHubClient", return_value=mock_client),
+        patch(
+            "shortcake.commands.move._sync_pr_descriptions_for_branches",
+            side_effect=httpx.RequestError("network down"),
+        ),
+    ):
+        result = _move(repo_with_stack, "branch_b", "main")
+
+    assert result.new_parent == "main"
 
 
 # --- CLI tests ---

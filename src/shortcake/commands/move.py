@@ -3,11 +3,14 @@
 from dataclasses import dataclass, field
 from typing import Annotated
 
+import httpx
 import typer
 
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
 from shortcake._git._core import Repo
+from shortcake._github import GitHubClient, get_github_token, get_repo_info
+from shortcake._pr_stack import _sync_pr_descriptions_for_branches
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 from shortcake.commands.reorder import _update_branch_trailer
 from shortcake.commands.restack import (
@@ -34,6 +37,40 @@ class MoveResult:
     new_parent: str
     restacked_children: list[str] = field(default_factory=list)
     conflict_branch: str | None = None
+
+
+def _sync_prs_after_move(
+    repo: Repo,
+    branch: str,
+    old_parent: str,
+    new_parent: str,
+) -> None:
+    """Best-effort PR base/body sync after a successful move."""
+    if not git.has_remote(repo, "origin"):
+        return
+
+    token = get_github_token()
+    if not token:
+        return
+
+    repo_info = get_repo_info(repo)
+    if not repo_info:
+        return
+
+    owner, repo_name = repo_info
+
+    try:
+        with GitHubClient(token, owner, repo_name) as gh:
+            _sync_pr_descriptions_for_branches(
+                repo,
+                gh,
+                owner,
+                [old_parent, branch, new_parent],
+                sync_bases=True,
+            )
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        # Keep move as a local-first operation even if GitHub sync fails.
+        pass
 
 
 def _move(
@@ -200,6 +237,8 @@ def _move(
 
     # Return to original branch
     git.switch_branch(repo, current_branch, force=True)
+
+    _sync_prs_after_move(repo, branch, old_parent, parent)
 
     return MoveResult(
         branch=branch,
