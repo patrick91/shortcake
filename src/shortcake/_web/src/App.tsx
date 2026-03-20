@@ -1783,9 +1783,10 @@ export default function App() {
   const [githubInfo, setGithubInfo] = useState<Record<string, GitHubBranchInfo>>({});
   const [isGithubInfoLoading, setIsGithubInfoLoading] = useState(true);
   const [isReviewDialogOpen, setIsReviewDialogOpen] = useState(false);
-  const [isReviewing, setIsReviewing] = useState(false);
+  const [reviewModelStatus, setReviewModelStatus] = useState<Map<string, 'pending' | 'done' | 'error'>>(new Map());
   const [reviewModels, setReviewModels] = useState<ReviewModel[]>([]);
   const [reviewSummaries, setReviewSummaries] = useState<Map<string, string>>(new Map());
+  const isReviewing = reviewModelStatus.size > 0 && [...reviewModelStatus.values()].some((s) => s === 'pending');
 
   const setSelection = useCallback((sel: DiffSelection | null) => {
     setSelectionRaw(sel);
@@ -1954,7 +1955,7 @@ export default function App() {
     setSplitLinesError(null);
     setViewedFiles(new Set());
     setIsReviewDialogOpen(false);
-    setIsReviewing(false);
+    setReviewModelStatus(new Map());
     setReviewSummaries(new Map());
   }, [selection]);
 
@@ -2492,7 +2493,7 @@ export default function App() {
   const handleStartReview = useCallback(
     async (selectedModels: string[]) => {
       if (!selection || selection.type !== 'branch') return;
-      setIsReviewing(true);
+      setReviewModelStatus(new Map(selectedModels.map((m) => [m, 'pending'])));
       setIsReviewDialogOpen(false);
 
       try {
@@ -2503,7 +2504,7 @@ export default function App() {
         });
 
         if (!response.ok || !response.body) {
-          setIsReviewing(false);
+          setReviewModelStatus(new Map(selectedModels.map((m) => [m, 'error'])));
           return;
         }
 
@@ -2526,23 +2527,30 @@ export default function App() {
             } else if (line.startsWith('data: ') && eventType === 'review') {
               try {
                 const data = JSON.parse(line.slice(6));
+                const modelId: string = data.model;
+                // Mark model as done or error
+                setReviewModelStatus((prev) => {
+                  const next = new Map(prev);
+                  next.set(modelId, data.error ? 'error' : 'done');
+                  return next;
+                });
                 if (data.summary) {
                   setReviewSummaries((prev) => {
                     const next = new Map(prev);
-                    next.set(data.model, data.summary);
+                    next.set(modelId, data.summary);
                     return next;
                   });
                 }
                 if (data.comments && Array.isArray(data.comments)) {
                   const newComments: DiffComment[] = data.comments.map(
                     (c: { file: string; start_line: number; end_line: number; side: string; text: string; severity: string }) => ({
-                      id: `ai-${data.model}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                      id: `ai-${modelId}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
                       file: c.file,
                       startLine: c.start_line,
                       endLine: c.end_line,
                       side: (c.side === 'deletions' ? 'deletions' : 'additions') as AnnotationSide,
                       text: c.text,
-                      source: { type: 'ai' as const, model: data.model, severity: c.severity },
+                      source: { type: 'ai' as const, model: modelId, severity: c.severity },
                     }),
                   );
                   setComments((prev) => [...prev, ...newComments]);
@@ -2555,9 +2563,13 @@ export default function App() {
           }
         }
       } catch {
-        // Network error — silently fail
-      } finally {
-        setIsReviewing(false);
+        setReviewModelStatus((prev) => {
+          const next = new Map(prev);
+          for (const [k, v] of next) {
+            if (v === 'pending') next.set(k, 'error');
+          }
+          return next;
+        });
       }
     },
     [selection],
@@ -2780,14 +2792,29 @@ export default function App() {
               </span>
             )}
             {selection?.type === 'branch' && !isDiffLoading && diffPatches.length > 0 && (
-              <button
-                type="button"
-                className="appearance-none border border-border bg-transparent text-text-secondary text-[0.7rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-surface-hover hover:text-text-primary transition-colors duration-100 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
-                onClick={handleOpenReviewDialog}
-                disabled={isReviewing}
-              >
-                {isReviewing ? 'Reviewing...' : aiCommentCount > 0 ? `Review (${aiCommentCount})` : 'Review'}
-              </button>
+              isReviewing ? (
+                <div className="flex items-center gap-1.5 border border-border rounded-md px-2.5 py-1">
+                  {[...reviewModelStatus.entries()].map(([model, status]) => {
+                    const label = model.includes(':') ? model.split(':')[1] : model;
+                    return (
+                      <span key={model} className="flex items-center gap-1 font-mono text-[0.65rem] whitespace-nowrap">
+                        {status === 'pending' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />}
+                        {status === 'done' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400" />}
+                        {status === 'error' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-400" />}
+                        <span className={status === 'pending' ? 'text-text-muted' : status === 'done' ? 'text-green-400' : 'text-red-400'}>{label}</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="appearance-none border border-border bg-transparent text-text-secondary text-[0.7rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-surface-hover hover:text-text-primary transition-colors duration-100 whitespace-nowrap"
+                  onClick={handleOpenReviewDialog}
+                >
+                  {aiCommentCount > 0 ? `Review (${aiCommentCount})` : 'Review'}
+                </button>
+              )
             )}
             {comments.length > 0 && (
               <button
@@ -3101,14 +3128,29 @@ export default function App() {
               </span>
             )}
             {selection?.type === 'branch' && !isDiffLoading && diffPatches.length > 0 && (
-              <button
-                type="button"
-                className="appearance-none border border-border bg-transparent text-text-secondary text-[0.7rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-surface-hover hover:text-text-primary transition-colors duration-100 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
-                onClick={handleOpenReviewDialog}
-                disabled={isReviewing}
-              >
-                {isReviewing ? 'Reviewing...' : aiCommentCount > 0 ? `Review (${aiCommentCount})` : 'Review'}
-              </button>
+              isReviewing ? (
+                <div className="flex items-center gap-1.5 border border-border rounded-md px-2.5 py-1">
+                  {[...reviewModelStatus.entries()].map(([model, status]) => {
+                    const label = model.includes(':') ? model.split(':')[1] : model;
+                    return (
+                      <span key={model} className="flex items-center gap-1 font-mono text-[0.65rem] whitespace-nowrap">
+                        {status === 'pending' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />}
+                        {status === 'done' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400" />}
+                        {status === 'error' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-400" />}
+                        <span className={status === 'pending' ? 'text-text-muted' : status === 'done' ? 'text-green-400' : 'text-red-400'}>{label}</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="appearance-none border border-border bg-transparent text-text-secondary text-[0.7rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-surface-hover hover:text-text-primary transition-colors duration-100 whitespace-nowrap"
+                  onClick={handleOpenReviewDialog}
+                >
+                  {aiCommentCount > 0 ? `Review (${aiCommentCount})` : 'Review'}
+                </button>
+              )
             )}
             {comments.length > 0 && (
               <button
