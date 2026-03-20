@@ -393,6 +393,62 @@ def test_move_pr_sync_errors_are_non_fatal(
     assert git.get_branch_parent(repo_with_stack, "branch_b", all_branches) == "main"
 
 
+def test_move_pr_sync_skipped_without_token(
+    repo_with_stack: Repo,
+) -> None:
+    """PR sync is skipped when no GitHub token is available."""
+    setup_origin_remote(repo_with_stack)
+    switch_branch(repo_with_stack, "branch_a")
+
+    with (
+        patch("shortcake.commands.move.get_github_token", return_value=None),
+        patch("shortcake.commands.move.GitHubClient") as mock_cls,
+    ):
+        result = _move(repo_with_stack, "branch_b", "main")
+
+    assert result.new_parent == "main"
+    mock_cls.assert_not_called()
+
+
+def test_move_pr_sync_skipped_without_repo_info(
+    repo_with_stack: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PR sync is skipped when origin URL is not a GitHub repo."""
+    set_remote(repo_with_stack, "origin", "https://gitlab.com/owner/repo.git")
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    switch_branch(repo_with_stack, "branch_a")
+
+    with patch("shortcake.commands.move.GitHubClient") as mock_cls:
+        result = _move(repo_with_stack, "branch_b", "main")
+
+    assert result.new_parent == "main"
+    mock_cls.assert_not_called()
+
+
+def test_move_pr_sync_catches_outer_httpx_error(
+    repo_with_stack: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Outer httpx errors from _sync_pr_descriptions_for_branches are caught."""
+    setup_origin_remote(repo_with_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    switch_branch(repo_with_stack, "branch_a")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.move.GitHubClient", return_value=mock_client),
+        patch(
+            "shortcake.commands.move._sync_pr_descriptions_for_branches",
+            side_effect=httpx.RequestError("network down"),
+        ),
+    ):
+        result = _move(repo_with_stack, "branch_b", "main")
+
+    assert result.new_parent == "main"
+
+
 # --- CLI tests ---
 
 
