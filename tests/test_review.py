@@ -192,12 +192,14 @@ def test_parse_review_response_json_in_prose() -> None:
 
 
 def test_parse_review_response_comment_with_bad_types() -> None:
-    raw = json.dumps({
-        "summary": "OK",
-        "comments": [
-            {"file": "x.py", "start_line": "not_a_number"},
-        ],
-    })
+    raw = json.dumps(
+        {
+            "summary": "OK",
+            "comments": [
+                {"file": "x.py", "start_line": "not_a_number"},
+            ],
+        }
+    )
     result = _parse_review_response(raw, "claude:sonnet")
     assert result.error is None
     assert result.comments == []
@@ -212,8 +214,10 @@ def test_run_review_claude_default(
     response_json = _make_valid_response(summary="Claude review.")
     mock_run = MagicMock(
         return_value=subprocess.CompletedProcess(
-            args=[], returncode=0,
-            stdout=response_json, stderr="",
+            args=[],
+            returncode=0,
+            stdout=response_json,
+            stderr="",
         )
     )
     monkeypatch.setattr("subprocess.run", mock_run)
@@ -234,8 +238,10 @@ def test_run_review_claude_with_variant(
     response_json = _make_valid_response(summary="Opus review.")
     mock_run = MagicMock(
         return_value=subprocess.CompletedProcess(
-            args=[], returncode=0,
-            stdout=response_json, stderr="",
+            args=[],
+            returncode=0,
+            stdout=response_json,
+            stderr="",
         )
     )
     monkeypatch.setattr("subprocess.run", mock_run)
@@ -255,8 +261,10 @@ def test_run_review_codex_with_variant(
     response_json = _make_valid_response(summary="Codex review.")
     mock_run = MagicMock(
         return_value=subprocess.CompletedProcess(
-            args=[], returncode=0,
-            stdout=response_json, stderr="",
+            args=[],
+            returncode=0,
+            stdout=response_json,
+            stderr="",
         )
     )
     monkeypatch.setattr("subprocess.run", mock_run)
@@ -285,8 +293,10 @@ def test_run_review_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_run_review_nonzero_exit(monkeypatch: pytest.MonkeyPatch) -> None:
     mock_run = MagicMock(
         return_value=subprocess.CompletedProcess(
-            args=[], returncode=1,
-            stdout="", stderr="Something went wrong",
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr="Something went wrong",
         )
     )
     monkeypatch.setattr("subprocess.run", mock_run)
@@ -302,8 +312,10 @@ def test_run_review_nonzero_exit_no_stderr(
 ) -> None:
     mock_run = MagicMock(
         return_value=subprocess.CompletedProcess(
-            args=[], returncode=1,
-            stdout="", stderr="",
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr="",
         )
     )
     monkeypatch.setattr("subprocess.run", mock_run)
@@ -397,25 +409,29 @@ def test_cli_review_success(
         "shortcake.commands._review.shutil.which",
         lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
     )
-    review_json = json.dumps({
-        "summary": "Looks good overall.",
-        "comments": [
-            {
-                "file": "feature.txt",
-                "start_line": 1,
-                "end_line": 1,
-                "side": "additions",
-                "text": "Needs docs.",
-                "severity": "suggestion",
-            },
-        ],
-    })
+    review_json = json.dumps(
+        {
+            "summary": "Looks good overall.",
+            "comments": [
+                {
+                    "file": "feature.txt",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "side": "additions",
+                    "text": "Needs docs.",
+                    "severity": "suggestion",
+                },
+            ],
+        }
+    )
     monkeypatch.setattr(
         "shortcake.commands._review.subprocess.run",
         MagicMock(
             return_value=subprocess.CompletedProcess(
-                args=[], returncode=0,
-                stdout=review_json, stderr="",
+                args=[],
+                returncode=0,
+                stdout=review_json,
+                stderr="",
             )
         ),
     )
@@ -441,8 +457,10 @@ def test_cli_review_bare_tool_name_resolves(
         "shortcake.commands._review.subprocess.run",
         MagicMock(
             return_value=subprocess.CompletedProcess(
-                args=[], returncode=0,
-                stdout=review_json, stderr="",
+                args=[],
+                returncode=0,
+                stdout=review_json,
+                stderr="",
             )
         ),
     )
@@ -467,8 +485,10 @@ def test_cli_review_bare_variant_resolves(
         "shortcake.commands._review.subprocess.run",
         MagicMock(
             return_value=subprocess.CompletedProcess(
-                args=[], returncode=0,
-                stdout=review_json, stderr="",
+                args=[],
+                returncode=0,
+                stdout=review_json,
+                stderr="",
             )
         ),
     )
@@ -500,9 +520,7 @@ def test_cli_review_diff_error(
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(
         "shortcake.commands.review._git_diff_patch",
-        lambda *a, **kw: (_ for _ in ()).throw(
-            ValueError("diff failed")
-        ),
+        lambda *a, **kw: (_ for _ in ()).throw(ValueError("diff failed")),
     )
     result = runner.invoke(app, ["review"])
     assert result.exit_code == 1
@@ -542,21 +560,26 @@ def test_cli_review_explicit_branch(
         "shortcake.commands._review.shutil.which",
         lambda cmd: "/usr/bin/claude" if cmd == "claude" else None,
     )
-    review_json = json.dumps({
-        "summary": "Branch A review.",
-        "comments": [],
-    })
+    review_json = json.dumps(
+        {
+            "summary": "Branch A review.",
+            "comments": [],
+        }
+    )
     monkeypatch.setattr(
         "shortcake.commands._review.subprocess.run",
         MagicMock(
             return_value=subprocess.CompletedProcess(
-                args=[], returncode=0,
-                stdout=review_json, stderr="",
+                args=[],
+                returncode=0,
+                stdout=review_json,
+                stderr="",
             )
         ),
     )
     result = runner.invoke(
-        app, ["review", "branch_a", "-m", "claude"],
+        app,
+        ["review", "branch_a", "-m", "claude"],
     )
     assert result.exit_code == 0
     assert "branch_a" in result.output
@@ -579,8 +602,10 @@ def test_cli_review_default_models(
         "shortcake.commands._review.subprocess.run",
         MagicMock(
             return_value=subprocess.CompletedProcess(
-                args=[], returncode=0,
-                stdout=review_json, stderr="",
+                args=[],
+                returncode=0,
+                stdout=review_json,
+                stderr="",
             )
         ),
     )
@@ -605,8 +630,10 @@ def test_cli_review_multiple_models(
         "shortcake.commands._review.subprocess.run",
         MagicMock(
             return_value=subprocess.CompletedProcess(
-                args=[], returncode=0,
-                stdout=review_json, stderr="",
+                args=[],
+                returncode=0,
+                stdout=review_json,
+                stderr="",
             )
         ),
     )
@@ -634,7 +661,8 @@ def test_cli_review_executor_exception(
         raise RuntimeError("unexpected crash")
 
     monkeypatch.setattr(
-        "shortcake.commands.review._run_review", boom,
+        "shortcake.commands.review._run_review",
+        boom,
     )
     result = runner.invoke(app, ["review", "-m", "claude"])
     assert result.exit_code == 1
@@ -732,29 +760,35 @@ def test_build_synthesis_prompt_truncates_large_patch() -> None:
 def test_run_synthesis_success(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    synth_json = json.dumps({
-        "summary": "Consolidated: credentials are the top issue.",
-        "comments": [
-            {
-                "file": "auth.py",
-                "start_line": 5,
-                "end_line": 5,
-                "side": "additions",
-                "text": "All reviewers flagged hard-coded creds.",
-                "severity": "error",
-            },
-        ],
-    })
+    synth_json = json.dumps(
+        {
+            "summary": "Consolidated: credentials are the top issue.",
+            "comments": [
+                {
+                    "file": "auth.py",
+                    "start_line": 5,
+                    "end_line": 5,
+                    "side": "additions",
+                    "text": "All reviewers flagged hard-coded creds.",
+                    "severity": "error",
+                },
+            ],
+        }
+    )
     mock_run = MagicMock(
         return_value=subprocess.CompletedProcess(
-            args=[], returncode=0,
-            stdout=synth_json, stderr="",
+            args=[],
+            returncode=0,
+            stdout=synth_json,
+            stderr="",
         )
     )
     monkeypatch.setattr("subprocess.run", mock_run)
 
     result = _run_synthesis(
-        "some patch", _make_prior_reviews(), "claude:opus",
+        "some patch",
+        _make_prior_reviews(),
+        "claude:opus",
     )
     assert result.model == "claude:opus"
     assert "Consolidated" in result.summary
@@ -816,7 +850,10 @@ def test_run_synthesis_nonzero_exit(
 ) -> None:
     mock_run = MagicMock(
         return_value=subprocess.CompletedProcess(
-            args=[], returncode=1, stdout="", stderr="err",
+            args=[],
+            returncode=1,
+            stdout="",
+            stderr="err",
         )
     )
     monkeypatch.setattr("subprocess.run", mock_run)
@@ -831,8 +868,10 @@ def test_run_synthesis_codex(
     synth_json = json.dumps({"summary": "Codex synth.", "comments": []})
     mock_run = MagicMock(
         return_value=subprocess.CompletedProcess(
-            args=[], returncode=0,
-            stdout=synth_json, stderr="",
+            args=[],
+            returncode=0,
+            stdout=synth_json,
+            stderr="",
         )
     )
     monkeypatch.setattr("subprocess.run", mock_run)

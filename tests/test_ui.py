@@ -1555,3 +1555,201 @@ def test_post_split_lines_unexpected_error(repo_with_stack: Repo) -> None:
         fake = _make_post_handler(repo_with_stack, "/api/split-lines", body)
     assert fake._status == 500
     assert "oops" in fake.response_json()["error"]
+
+
+# --- review endpoints ---
+
+
+def test_handler_review_models(temp_repo: Repo) -> None:
+    """GET /api/review/models returns available models."""
+    with patch("shortcake.commands._review.shutil.which", return_value=None):
+        fake = _make_handler(temp_repo, "/api/review/models")
+    assert fake._status == 200
+    data = fake.response_json()
+    assert "models" in data
+    assert isinstance(data["models"], list)
+    assert all(not m["available"] for m in data["models"])
+
+
+def test_post_review_missing_fields(temp_repo: Repo) -> None:
+    """POST /api/review with missing fields returns 400."""
+    fake = _make_post_handler(temp_repo, "/api/review", {"branch": "x"})
+    assert fake._status == 400
+    assert "Missing" in fake.response_json()["error"]
+
+
+def test_post_review_invalid_json(temp_repo: Repo) -> None:
+    """POST /api/review with invalid JSON returns 400."""
+    fake = _make_post_handler(temp_repo, "/api/review", "not json{{{")
+    assert fake._status == 400
+    assert "Invalid JSON" in fake.response_json()["error"]
+
+
+def test_post_review_untracked_branch(temp_repo: Repo) -> None:
+    """POST /api/review for untracked branch returns 400."""
+    fake = _make_post_handler(
+        temp_repo,
+        "/api/review",
+        {"branch": "nope", "models": ["claude:sonnet"]},
+    )
+    assert fake._status == 400
+    assert "not tracked" in fake.response_json()["error"]
+
+
+def _parse_sse_events(raw: bytes) -> list[tuple[str, dict]]:
+    """Parse SSE events from raw bytes into (event_type, data) tuples."""
+    events: list[tuple[str, dict]] = []
+    text = raw.decode()
+    event_type = ""
+    for line in text.split("\n"):
+        if line.startswith("event: "):
+            event_type = line[7:].strip()
+        elif line.startswith("data: "):
+            try:
+                data = json.loads(line[6:])
+            except json.JSONDecodeError:
+                data = {}
+            events.append((event_type, data))
+            event_type = ""
+    return events
+
+
+def test_post_review_success_sse(repo_with_stack: Repo) -> None:
+    """POST /api/review streams SSE events for each model."""
+    from shortcake.commands._review import ReviewComment, ReviewResult
+
+    mock_result = ReviewResult(
+        model="claude:sonnet",
+        summary="Test review.",
+        comments=[
+            ReviewComment(
+                file="a.txt",
+                start_line=1,
+                end_line=1,
+                side="additions",
+                text="Looks good.",
+                severity="info",
+            ),
+        ],
+    )
+    with patch("shortcake.commands.ui._run_review", return_value=mock_result):
+        fake = _make_post_handler(
+            repo_with_stack,
+            "/api/review",
+            {"branch": "branch_b", "models": ["claude:sonnet"]},
+        )
+    assert fake._status == 200
+    events = _parse_sse_events(fake.wfile.getvalue())
+    review_events = [e for e in events if e[0] == "review"]
+    done_events = [e for e in events if e[0] == "done"]
+    assert len(review_events) == 1
+    assert review_events[0][1]["model"] == "claude:sonnet"
+    assert review_events[0][1]["summary"] == "Test review."
+    assert len(done_events) == 1
+
+
+def test_post_review_with_synthesis(repo_with_stack: Repo) -> None:
+    """POST /api/review with synthesize runs synthesis after reviews."""
+    from shortcake.commands._review import ReviewResult
+
+    mock_review = ReviewResult(
+        model="claude:sonnet",
+        summary="Individual.",
+        comments=[],
+    )
+    mock_synth = ReviewResult(
+        model="claude:opus",
+        summary="Synthesized.",
+        comments=[],
+        fix_prompt="Fix all the things.",
+    )
+    with (
+        patch("shortcake.commands.ui._run_review", return_value=mock_review),
+        patch("shortcake.commands.ui._run_synthesis", return_value=mock_synth),
+    ):
+        fake = _make_post_handler(
+            repo_with_stack,
+            "/api/review",
+            {
+                "branch": "branch_b",
+                "models": ["claude:sonnet"],
+                "synthesize": "claude:opus",
+            },
+        )
+    assert fake._status == 200
+    events = _parse_sse_events(fake.wfile.getvalue())
+    synth_events = [e for e in events if e[0] == "synthesis"]
+    assert len(synth_events) == 1
+    assert synth_events[0][1]["summary"] == "Synthesized."
+    assert synth_events[0][1]["fix_prompt"] == "Fix all the things."
+
+
+def test_post_review_diff_error(repo_with_stack: Repo) -> None:
+    """POST /api/review returns 500 if diff generation fails."""
+    with patch(
+        "shortcake.commands.ui._git_diff_patch",
+        side_effect=RuntimeError("diff boom"),
+    ):
+        fake = _make_post_handler(
+            repo_with_stack,
+            "/api/review",
+            {"branch": "branch_b", "models": ["claude:sonnet"]},
+        )
+    assert fake._status == 500
+    assert "diff boom" in fake.response_json()["error"]
+
+
+def test_post_review_run_review_exception(repo_with_stack: Repo) -> None:
+    """POST /api/review handles exception in _run_review gracefully."""
+    with patch(
+        "shortcake.commands.ui._run_review",
+        side_effect=RuntimeError("review crash"),
+    ):
+        fake = _make_post_handler(
+            repo_with_stack,
+            "/api/review",
+            {"branch": "branch_b", "models": ["claude:sonnet"]},
+        )
+    assert fake._status == 200
+    events = _parse_sse_events(fake.wfile.getvalue())
+    # No review events since it crashed, but done event should still appear
+    review_events = [e for e in events if e[0] == "review"]
+    done_events = [e for e in events if e[0] == "done"]
+    assert len(review_events) == 0
+    assert len(done_events) == 1
+
+
+def test_post_review_synthesis_exception(repo_with_stack: Repo) -> None:
+    """POST /api/review handles synthesis exception gracefully."""
+    from shortcake.commands._review import ReviewResult
+
+    mock_review = ReviewResult(
+        model="claude:sonnet",
+        summary="OK.",
+        comments=[],
+    )
+    with (
+        patch("shortcake.commands.ui._run_review", return_value=mock_review),
+        patch(
+            "shortcake.commands.ui._run_synthesis",
+            side_effect=RuntimeError("synth crash"),
+        ),
+    ):
+        fake = _make_post_handler(
+            repo_with_stack,
+            "/api/review",
+            {
+                "branch": "branch_b",
+                "models": ["claude:sonnet"],
+                "synthesize": "claude:opus",
+            },
+        )
+    assert fake._status == 200
+    events = _parse_sse_events(fake.wfile.getvalue())
+    # Review event should still be there
+    review_events = [e for e in events if e[0] == "review"]
+    synth_events = [e for e in events if e[0] == "synthesis"]
+    done_events = [e for e in events if e[0] == "done"]
+    assert len(review_events) == 1
+    assert len(synth_events) == 0
+    assert len(done_events) == 1

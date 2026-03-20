@@ -771,28 +771,30 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
                     from concurrent.futures import as_completed
 
                     def _write_result_event(
-                        event_type: str, result: ReviewResult,
+                        event_type: str,
+                        result: ReviewResult,
                     ) -> None:
-                        event_data = json.dumps({
-                            "model": result.model,
-                            "summary": result.summary,
-                            "comments": [
-                                {
-                                    "file": c.file,
-                                    "start_line": c.start_line,
-                                    "end_line": c.end_line,
-                                    "side": c.side,
-                                    "text": c.text,
-                                    "severity": c.severity,
-                                }
-                                for c in result.comments
-                            ],
-                            "error": result.error,
-                            "fix_prompt": result.fix_prompt,
-                        })
+                        event_data = json.dumps(
+                            {
+                                "model": result.model,
+                                "summary": result.summary,
+                                "comments": [
+                                    {
+                                        "file": c.file,
+                                        "start_line": c.start_line,
+                                        "end_line": c.end_line,
+                                        "side": c.side,
+                                        "text": c.text,
+                                        "severity": c.severity,
+                                    }
+                                    for c in result.comments
+                                ],
+                                "error": result.error,
+                                "fix_prompt": result.fix_prompt,
+                            }
+                        )
                         self.wfile.write(
-                            f"event: {event_type}\ndata: {event_data}\n\n"
-                            .encode()
+                            f"event: {event_type}\ndata: {event_data}\n\n".encode()
                         )
                         self.wfile.flush()
 
@@ -802,8 +804,7 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
                         max_workers=len(models),
                     ) as executor:
                         futures = {
-                            executor.submit(_run_review, patch, m): m
-                            for m in models
+                            executor.submit(_run_review, patch, m): m for m in models
                         }
                         for future in as_completed(futures):
                             try:
@@ -819,14 +820,13 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
                         and isinstance(synthesize, str)
                         and len(completed_reviews) > 0
                     ):
-                        self.wfile.write(
-                            b'event: synthesis-start\n'
-                            b'data: {}\n\n'
-                        )
+                        self.wfile.write(b"event: synthesis-start\ndata: {}\n\n")
                         self.wfile.flush()
                         try:
                             synth = _run_synthesis(
-                                patch, completed_reviews, synthesize,
+                                patch,
+                                completed_reviews,
+                                synthesize,
                             )
                             _write_result_event("synthesis", synth)
                         except Exception:
@@ -834,7 +834,7 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
 
                     self.wfile.write(b"event: done\ndata: {}\n\n")
                     self.wfile.flush()
-                except (BrokenPipeError, ConnectionError):
+                except (BrokenPipeError, ConnectionError):  # pragma: no cover
                     pass
                 return
 
