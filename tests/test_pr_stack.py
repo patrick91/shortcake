@@ -59,9 +59,7 @@ def test_sync_bases_skips_branch_with_no_parent(
     )
     gh.get_pr_for_branch.return_value = pr
 
-    _sync_stack_pr_descriptions(
-        temp_repo, gh, "owner", ["untracked"], sync_bases=True
-    )
+    _sync_stack_pr_descriptions(temp_repo, gh, "owner", ["untracked"], sync_bases=True)
     # update_pr should only be called for body, not for base
     for call in gh.update_pr.call_args_list:
         assert "base" not in call[1]
@@ -290,9 +288,7 @@ def test_sync_pr_descriptions_for_branches_deduplicates_stacks(
 
     # get_pr_for_branch is called once per branch in the stack (from
     # _sync_stack_pr_descriptions), not twice.
-    branch_lookups = [
-        c[0][0] for c in gh.get_pr_for_branch.call_args_list
-    ]
+    branch_lookups = [c[0][0] for c in gh.get_pr_for_branch.call_args_list]
     # Should see branch_a and branch_b exactly once each (from a single sync)
     assert branch_lookups.count("branch_a") == 1
     assert branch_lookups.count("branch_b") == 1
