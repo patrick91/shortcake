@@ -2904,13 +2904,6 @@ export default function App() {
           </p>
         ) : null}
 
-        {reviewSummaries.size > 0 && (
-          <ReviewSummaryPanel
-            summaries={reviewSummaries}
-            onClose={() => setReviewSummaries(new Map())}
-          />
-        )}
-
         {!isDiffLoading && activePatch && diffPatches.length > 0 && (
           <div className="flex flex-1 min-h-0">
             <aside className="w-[260px] min-w-[260px] border-r border-border flex flex-col overflow-hidden max-[1100px]:hidden">
@@ -2941,6 +2934,12 @@ export default function App() {
             </aside>
 
             <div className="diff-content flex-1 min-w-0 overflow-auto">
+              {reviewSummaries.size > 0 && (
+                <ReviewSummaryPanel
+                  summaries={reviewSummaries}
+                  onClose={() => setReviewSummaries(new Map())}
+                />
+              )}
               {diffPatches.map((patch, index) => {
                 const info = fileInfos[index];
                 if (!info) return null;
@@ -3240,15 +3239,14 @@ export default function App() {
           </p>
         ) : null}
 
-        {reviewSummaries.size > 0 && (
-          <ReviewSummaryPanel
-            summaries={reviewSummaries}
-            onClose={() => setReviewSummaries(new Map())}
-          />
-        )}
-
         {!isDiffLoading && activePatch && diffPatches.length > 0 && (
           <div className="diff-content flex-1 min-w-0 min-h-0 overflow-auto">
+            {reviewSummaries.size > 0 && (
+              <ReviewSummaryPanel
+                summaries={reviewSummaries}
+                onClose={() => setReviewSummaries(new Map())}
+              />
+            )}
             {diffPatches.map((patch, index) => {
               const info = fileInfos[index];
               if (!info) return null;
