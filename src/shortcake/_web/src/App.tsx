@@ -622,9 +622,16 @@ function AIComment({
   comment: DiffComment;
   onDelete: (id: string) => void;
 }) {
+  const [copied, setCopied] = useState(false);
   const source = comment.source!;
   const borderClass = MODEL_COLORS[source.model] ?? 'border-l-accent';
   const severityClass = SEVERITY_COLORS[source.severity] ?? 'text-text-muted';
+  const handleCopy = useCallback(() => {
+    void navigator.clipboard.writeText(comment.text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [comment.text]);
   return (
     <div className={`flex items-start gap-2 p-3 my-1 bg-yellow-500/[0.06] border border-yellow-500/20 ${borderClass} border-l-2 max-w-[720px] group`}>
       <div className="flex-1 min-w-0">
@@ -639,11 +646,19 @@ function AIComment({
             {formatLineLabel(comment.startLine, comment.endLine)}
           </span>
         </div>
-        <p className="text-text-primary font-mono text-[0.78rem] m-0 mt-0.5 whitespace-pre-wrap break-words leading-relaxed">
+        <p className="text-text-primary font-mono text-[0.78rem] m-0 mt-0.5 whitespace-pre-wrap break-words leading-relaxed select-text">
           {comment.text}
         </p>
       </div>
       <div className="flex gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-100">
+        <button
+          type="button"
+          className="appearance-none border-none bg-transparent text-text-muted text-[0.65rem] cursor-pointer hover:text-text-primary p-0.5"
+          onClick={(e) => { e.stopPropagation(); handleCopy(); }}
+          title="Copy"
+        >
+          {copied ? '✓' : '⎘'}
+        </button>
         <button
           type="button"
           className="appearance-none border-none bg-transparent text-text-muted text-[0.65rem] cursor-pointer hover:text-danger p-0.5"
