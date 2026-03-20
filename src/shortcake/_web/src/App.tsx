@@ -20,6 +20,14 @@ type DiffComment = {
   endLine: number;
   side: AnnotationSide;
   text: string;
+  source?: { type: 'ai'; model: string; severity: string };
+};
+
+type ReviewModel = {
+  id: string;
+  name: string;
+  tool: string;
+  available: boolean;
 };
 
 type CommentMeta = {
@@ -592,6 +600,322 @@ function SavedComment({
           ✕
         </button>
       </div>
+    </div>
+  );
+}
+
+const MODEL_COLORS: Record<string, string> = {
+  claude: 'border-l-orange-400',
+  codex: 'border-l-green-400',
+  synthesis: 'border-l-purple-400',
+};
+
+const SEVERITY_COLORS: Record<string, string> = {
+  error: 'text-red-400',
+  warning: 'text-yellow-400',
+  suggestion: 'text-blue-400',
+  info: 'text-text-muted',
+};
+
+function formatModelLabel(model: string): string {
+  // "synthesis:claude:opus" -> "Synthesis"
+  // "claude:sonnet" -> "Claude Sonnet"
+  // "codex:gpt-5.4" -> "Codex GPT-5.4"
+  if (model.startsWith('synthesis:')) return 'Synthesis';
+  const parts = model.split(':');
+  if (parts.length === 2) {
+    return `${parts[0]!.charAt(0).toUpperCase() + parts[0]!.slice(1)} ${parts[1]!.toUpperCase().startsWith('GPT') ? parts[1] : parts[1]!.charAt(0).toUpperCase() + parts[1]!.slice(1)}`;
+  }
+  return model;
+}
+
+function AIComment({
+  comment,
+  onDelete,
+}: {
+  comment: DiffComment;
+  onDelete: (id: string) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [copiedFix, setCopiedFix] = useState(false);
+  const source = comment.source!;
+  const tool = source.model.split(':')[0] ?? source.model;
+  const borderClass = MODEL_COLORS[tool] ?? 'border-l-accent';
+  const severityClass = SEVERITY_COLORS[source.severity] ?? 'text-text-muted';
+  const modelLabel = formatModelLabel(source.model);
+  const handleCopy = useCallback(() => {
+    const ref = formatLineRef(comment.file, comment.startLine, comment.endLine);
+    const copyText = `${ref}\n${comment.text}`;
+    void navigator.clipboard.writeText(copyText).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }, [comment.file, comment.startLine, comment.endLine, comment.text]);
+  const handleCopyFix = useCallback(() => {
+    const lineRange = comment.startLine === comment.endLine
+      ? `line ${comment.startLine}`
+      : `lines ${comment.startLine}-${comment.endLine}`;
+    const fixPrompt = `In ${comment.file} at ${lineRange}: ${comment.text}`;
+    void navigator.clipboard.writeText(fixPrompt).then(() => {
+      setCopiedFix(true);
+      setTimeout(() => setCopiedFix(false), 1500);
+    });
+  }, [comment.file, comment.startLine, comment.endLine, comment.text]);
+  return (
+    <div className={`flex flex-col gap-1.5 p-3 my-1.5 bg-yellow-500/[0.06] border border-yellow-500/20 ${borderClass} border-l-2 max-w-[720px] group`}>
+      <div className="flex items-center gap-1.5">
+        <span className="font-mono text-[0.62rem] text-text-primary bg-surface-active px-1.5 py-0.5 rounded-sm font-medium">
+          {modelLabel}
+        </span>
+        <span className={`font-mono text-[0.58rem] uppercase tracking-wider font-semibold ${severityClass}`}>
+          {source.severity}
+        </span>
+        <span className="font-mono text-[0.58rem] text-text-muted ml-auto">
+          {formatLineLabel(comment.startLine, comment.endLine)}
+        </span>
+      </div>
+      <p className="text-text-primary font-mono text-[0.78rem] m-0 whitespace-pre-wrap break-words leading-relaxed select-text">
+        {comment.text}
+      </p>
+      <div className="flex items-center gap-2 pt-0.5 opacity-0 group-hover:opacity-100 transition-opacity duration-100">
+        <button
+          type="button"
+          className="appearance-none border border-accent/30 bg-accent/5 text-accent text-[0.6rem] font-mono px-2 py-[2px] rounded cursor-pointer hover:bg-accent/15 transition-colors duration-100"
+          onClick={(e) => { e.stopPropagation(); handleCopyFix(); }}
+          title="Copy fix prompt to clipboard"
+        >
+          {copiedFix ? 'Copied!' : 'Copy fix prompt'}
+        </button>
+        <button
+          type="button"
+          className="appearance-none border border-border bg-transparent text-text-muted text-[0.6rem] font-mono px-2 py-[2px] rounded cursor-pointer hover:bg-surface-hover hover:text-text-primary transition-colors duration-100"
+          onClick={(e) => { e.stopPropagation(); handleCopy(); }}
+          title="Copy comment"
+        >
+          {copied ? 'Copied!' : 'Copy'}
+        </button>
+        <button
+          type="button"
+          className="appearance-none border-none bg-transparent text-text-muted text-[0.6rem] font-mono px-1 py-[2px] cursor-pointer hover:text-danger transition-colors duration-100 ml-auto"
+          onClick={(e) => { e.stopPropagation(); onDelete(comment.id); }}
+          title="Dismiss"
+        >
+          Dismiss
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ReviewDialog({
+  models,
+  onStart,
+  onClose,
+  isReviewing,
+}: {
+  models: ReviewModel[];
+  onStart: (selectedModels: string[], synthesizeWith: string | null) => void;
+  onClose: () => void;
+  isReviewing: boolean;
+}) {
+  const [selected, setSelected] = useState<Set<string>>(() => {
+    // Default: first variant of each available tool
+    const seen = new Set<string>();
+    const defaults = new Set<string>();
+    for (const m of models) {
+      if (m.available && !seen.has(m.tool)) {
+        seen.add(m.tool);
+        defaults.add(m.id);
+      }
+    }
+    return defaults;
+  });
+  const [synthesize, setSynthesize] = useState(false);
+  const [synthesisModel, setSynthesisModel] = useState<string>(() => {
+    const first = models.find((m) => m.available);
+    return first?.id ?? '';
+  });
+
+  const toggle = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Group models by tool
+  const groups = useMemo(() => {
+    const map = new Map<string, ReviewModel[]>();
+    for (const m of models) {
+      let arr = map.get(m.tool);
+      if (!arr) { arr = []; map.set(m.tool, arr); }
+      arr.push(m);
+    }
+    return map;
+  }, [models]);
+
+  const availableModels = useMemo(
+    () => models.filter((m) => m.available),
+    [models],
+  );
+
+  return (
+    <div className="bg-surface border border-border rounded-lg shadow-lg p-4 flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-[0.8rem] text-text-primary font-medium">AI Review</span>
+        <button
+          type="button"
+          className="appearance-none border-none bg-transparent text-text-muted text-[0.65rem] cursor-pointer hover:text-text-primary p-0.5"
+          onClick={onClose}
+        >
+          ✕
+        </button>
+      </div>
+      <div className="flex flex-col gap-3">
+        {[...groups.entries()].map(([tool, toolModels]) => (
+          <div key={tool}>
+            <div className="flex items-center gap-1.5 mb-1.5">
+              <span className="font-mono text-[0.68rem] text-text-secondary font-semibold capitalize">{tool}</span>
+              {!toolModels[0]?.available && (
+                <span className="font-mono text-[0.58rem] text-text-muted">(not installed)</span>
+              )}
+            </div>
+            <div className="flex flex-col gap-1 pl-1">
+              {toolModels.map((m) => (
+                <label key={m.id} className={`flex items-center gap-2 font-mono text-[0.75rem] ${m.available ? 'text-text-primary cursor-pointer' : 'text-text-muted cursor-not-allowed'}`}>
+                  <input
+                    type="checkbox"
+                    checked={selected.has(m.id)}
+                    onChange={() => toggle(m.id)}
+                    disabled={!m.available || isReviewing}
+                    className="accent-accent"
+                  />
+                  {m.name.replace(`${tool.charAt(0).toUpperCase() + tool.slice(1)} `, '')}
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      {selected.size >= 2 && (
+        <div className="border-t border-border pt-3 flex flex-col gap-2">
+          <label className="flex items-center gap-2 font-mono text-[0.75rem] text-text-primary cursor-pointer">
+            <input
+              type="checkbox"
+              checked={synthesize}
+              onChange={() => setSynthesize((p) => !p)}
+              disabled={isReviewing}
+              className="accent-accent"
+            />
+            Final synthesis pass
+          </label>
+          {synthesize && (
+            <select
+              className="appearance-none bg-surface-hover border border-border rounded-md text-text-primary font-mono text-[0.72rem] px-2 py-1 outline-none cursor-pointer"
+              value={synthesisModel}
+              onChange={(e) => setSynthesisModel(e.target.value)}
+              disabled={isReviewing}
+            >
+              {availableModels.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          )}
+          {synthesize && (
+            <p className="font-mono text-[0.6rem] text-text-muted m-0">
+              After all reviews complete, one model reads all findings and produces a consolidated review.
+            </p>
+          )}
+        </div>
+      )}
+      <button
+        type="button"
+        className="appearance-none border border-accent bg-accent/10 text-accent text-[0.72rem] font-mono px-3 py-1.5 rounded-md cursor-pointer hover:bg-accent/20 transition-colors duration-100 disabled:opacity-40 disabled:cursor-not-allowed self-end"
+        disabled={selected.size === 0 || isReviewing}
+        onClick={() => onStart([...selected], synthesize ? synthesisModel : null)}
+      >
+        {isReviewing ? 'Reviewing...' : `Review with ${selected.size} model${selected.size === 1 ? '' : 's'}${synthesize ? ' + synthesis' : ''}`}
+      </button>
+    </div>
+  );
+}
+
+function ReviewSummaryPanel({
+  summaries,
+  fixPrompt,
+  onClose,
+}: {
+  summaries: Map<string, string>;
+  fixPrompt: string | null;
+  onClose: () => void;
+}) {
+  const [copiedFix, setCopiedFix] = useState(false);
+  const handleCopyFix = useCallback(() => {
+    if (!fixPrompt) return;
+    void navigator.clipboard.writeText(fixPrompt).then(() => {
+      setCopiedFix(true);
+      setTimeout(() => setCopiedFix(false), 2000);
+    });
+  }, [fixPrompt]);
+
+  if (summaries.size === 0) return null;
+
+  const individual = [...summaries.entries()].filter(([k]) => !k.startsWith('synthesis'));
+  const synthesis = [...summaries.entries()].filter(([k]) => k.startsWith('synthesis'));
+
+  return (
+    <div className="mx-4 mt-3 mb-1 bg-surface-hover border border-border rounded-lg overflow-hidden">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border">
+        <span className="font-mono text-[0.7rem] text-text-primary font-medium">Review Summary</span>
+        <button
+          type="button"
+          className="appearance-none border-none bg-transparent text-text-muted text-[0.6rem] cursor-pointer hover:text-text-primary"
+          onClick={onClose}
+        >
+          ✕
+        </button>
+      </div>
+      {individual.length > 0 && synthesis.length > 0 && (
+        <div className="px-3 py-1.5 border-b border-border">
+          <span className="font-mono text-[0.6rem] text-text-muted uppercase tracking-wider">Individual reviews</span>
+        </div>
+      )}
+      {individual.map(([model, summary]) => (
+        <div key={model} className="px-3 py-2 border-b border-border last:border-b-0">
+          <span className="font-mono text-[0.6rem] text-text-muted bg-surface-active px-1.5 py-0.5 rounded mr-2">{model}</span>
+          <p className="font-mono text-[0.72rem] text-text-secondary m-0 mt-1">{summary}</p>
+        </div>
+      ))}
+      {synthesis.length > 0 && (
+        <div className="border-t-2 border-purple-500/20 bg-purple-500/[0.03]">
+          <div className="px-3 py-1.5 border-b border-purple-500/10">
+            <span className="font-mono text-[0.6rem] text-purple-400 uppercase tracking-wider font-semibold">Synthesis</span>
+          </div>
+          {synthesis.map(([model, summary]) => (
+            <div key={model} className="px-3 py-2 border-b border-purple-500/10 last:border-b-0">
+              <span className="font-mono text-[0.6rem] text-purple-300 bg-purple-500/10 px-1.5 py-0.5 rounded mr-2">{model}</span>
+              <p className="font-mono text-[0.72rem] text-text-primary m-0 mt-1">{summary}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      {fixPrompt && (
+        <div className="px-3 py-2.5 border-t border-purple-500/20 bg-purple-500/[0.04]">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="font-mono text-[0.65rem] text-purple-400 font-semibold">Fix prompt</span>
+            <button
+              type="button"
+              className="appearance-none border border-purple-500/30 bg-purple-500/10 text-purple-400 text-[0.65rem] font-mono px-2 py-0.5 rounded cursor-pointer hover:bg-purple-500/20 transition-colors duration-100"
+              onClick={handleCopyFix}
+            >
+              {copiedFix ? 'Copied!' : 'Copy prompt'}
+            </button>
+          </div>
+          <p className="font-mono text-[0.72rem] text-text-primary m-0 whitespace-pre-wrap break-words leading-relaxed select-text">{fixPrompt}</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -1407,6 +1731,15 @@ const DiffFileSection = React.memo(function DiffFileSection({
         );
       }
 
+      if (comment.source?.type === 'ai') {
+        return (
+          <AIComment
+            comment={comment}
+            onDelete={onDeleteComment}
+          />
+        );
+      }
+
       return (
         <SavedComment
           comment={comment}
@@ -1569,6 +1902,12 @@ export default function App() {
   const [expandedLargeFiles, setExpandedLargeFiles] = useState<Set<string>>(new Set());
   const [githubInfo, setGithubInfo] = useState<Record<string, GitHubBranchInfo>>({});
   const [isGithubInfoLoading, setIsGithubInfoLoading] = useState(true);
+  const [isReviewDialogOpen, setIsReviewDialogOpen] = useState(false);
+  const [reviewModelStatus, setReviewModelStatus] = useState<Map<string, 'pending' | 'done' | 'error'>>(new Map());
+  const [reviewModels, setReviewModels] = useState<ReviewModel[]>([]);
+  const [reviewSummaries, setReviewSummaries] = useState<Map<string, string>>(new Map());
+  const [reviewFixPrompt, setReviewFixPrompt] = useState<string | null>(null);
+  const isReviewing = reviewModelStatus.size > 0 && [...reviewModelStatus.values()].some((s) => s === 'pending');
 
   const setSelection = useCallback((sel: DiffSelection | null) => {
     setSelectionRaw(sel);
@@ -1736,6 +2075,10 @@ export default function App() {
     setShowSplitLinesDialog(false);
     setSplitLinesError(null);
     setViewedFiles(new Set());
+    setIsReviewDialogOpen(false);
+    setReviewModelStatus(new Map());
+    setReviewSummaries(new Map());
+    setReviewFixPrompt(null);
   }, [selection]);
 
   const activePatch = selection?.type === 'working' ? workingPatch : diff?.patch;
@@ -2238,13 +2581,148 @@ export default function App() {
   const handleCopyComments = useCallback(() => {
     if (comments.length === 0) return;
     const markdown = comments
-      .map((c) => `- \`${formatLineRef(c.file, c.startLine, c.endLine)}\` - ${c.text}`)
+      .map((c) => {
+        const ref = `\`${formatLineRef(c.file, c.startLine, c.endLine)}\``;
+        const prefix = c.source?.type === 'ai' ? `[${c.source.model}] ` : '';
+        return `- ${ref} - ${prefix}${c.text}`;
+      })
       .join('\n');
     void navigator.clipboard.writeText(markdown).then(() => {
       setCopyFeedback(true);
       setTimeout(() => setCopyFeedback(false), 2000);
     });
   }, [comments]);
+
+  const aiCommentCount = useMemo(
+    () => comments.filter((c) => c.source?.type === 'ai').length,
+    [comments],
+  );
+
+  const handleOpenReviewDialog = useCallback(async () => {
+    try {
+      const data = await fetchJSON<{ models: ReviewModel[] }>('/api/review/models');
+      setReviewModels(data.models);
+      setIsReviewDialogOpen(true);
+    } catch {
+      setReviewModels([
+        { id: 'claude', name: 'Claude', available: false },
+        { id: 'codex', name: 'Codex', available: false },
+      ]);
+      setIsReviewDialogOpen(true);
+    }
+  }, []);
+
+  const handleStartReview = useCallback(
+    async (selectedModels: string[], synthesizeWith: string | null) => {
+      if (!selection || selection.type !== 'branch') return;
+      const statusMap = new Map(selectedModels.map((m) => [m, 'pending' as const]));
+      if (synthesizeWith) statusMap.set('synthesis', 'pending');
+      setReviewModelStatus(statusMap);
+      setIsReviewDialogOpen(false);
+
+      try {
+        const response = await fetch(`${API_BASE}/api/review`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            branch: selection.name,
+            models: selectedModels,
+            synthesize: synthesizeWith,
+          }),
+        });
+
+        if (!response.ok || !response.body) {
+          setReviewModelStatus(new Map(selectedModels.map((m) => [m, 'error'])));
+          return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split('\n');
+          buffer = lines.pop() ?? '';
+
+          let eventType = '';
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              eventType = line.slice(7).trim();
+            } else if (line.startsWith('data: ') && (eventType === 'review' || eventType === 'synthesis')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                const modelId: string = data.model;
+                const isSynthesis = eventType === 'synthesis';
+                const statusKey = isSynthesis ? 'synthesis' : modelId;
+                // Mark model as done or error
+                setReviewModelStatus((prev) => {
+                  const next = new Map(prev);
+                  next.set(statusKey, data.error ? 'error' : 'done');
+                  return next;
+                });
+                const summaryLabel = isSynthesis ? `synthesis (${modelId})` : modelId;
+                if (data.summary) {
+                  setReviewSummaries((prev) => {
+                    const next = new Map(prev);
+                    next.set(summaryLabel, data.summary);
+                    return next;
+                  });
+                }
+                if (data.comments && Array.isArray(data.comments)) {
+                  const sourceModel = isSynthesis ? `synthesis:${modelId}` : modelId;
+                  const newComments: DiffComment[] = data.comments.map(
+                    (c: { file: string; start_line: number; end_line: number; side: string; text: string; severity: string }) => ({
+                      id: `ai-${sourceModel}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                      file: c.file,
+                      startLine: c.start_line,
+                      endLine: c.end_line,
+                      side: (c.side === 'deletions' ? 'deletions' : 'additions') as AnnotationSide,
+                      text: c.text,
+                      source: { type: 'ai' as const, model: sourceModel, severity: c.severity },
+                    }),
+                  );
+                  if (isSynthesis) {
+                    // Replace individual AI comments with synthesis-only
+                    setComments((prev) => [
+                      ...prev.filter((c) => !c.source || c.source.model.startsWith('synthesis:')),
+                      ...newComments,
+                    ]);
+                    // Add synthesis summary alongside individual ones
+                    setReviewSummaries((prev) => {
+                      const next = new Map(prev);
+                      next.set(summaryLabel, data.summary ?? '');
+                      return next;
+                    });
+                    if (data.fix_prompt) {
+                      setReviewFixPrompt(data.fix_prompt);
+                    }
+                  } else {
+                    setComments((prev) => [...prev, ...newComments]);
+                  }
+                }
+              } catch {
+                // Skip malformed SSE data
+              }
+              eventType = '';
+            }
+          }
+        }
+      } catch {
+        setReviewModelStatus((prev) => {
+          const next = new Map(prev);
+          for (const [k, v] of next) {
+            if (v === 'pending') next.set(k, 'error');
+          }
+          return next;
+        });
+      }
+    },
+    [selection],
+  );
 
   const branches = stack?.branches ?? [];
 
@@ -2462,6 +2940,31 @@ export default function App() {
                 {moveSuccess}
               </span>
             )}
+            {selection?.type === 'branch' && !isDiffLoading && diffPatches.length > 0 && (
+              isReviewing ? (
+                <div className="flex items-center gap-1.5 border border-border rounded-md px-2.5 py-1">
+                  {[...reviewModelStatus.entries()].map(([model, status]) => {
+                    const label = model.includes(':') ? model.split(':')[1] : model;
+                    return (
+                      <span key={model} className="flex items-center gap-1 font-mono text-[0.65rem] whitespace-nowrap">
+                        {status === 'pending' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />}
+                        {status === 'done' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400" />}
+                        {status === 'error' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-400" />}
+                        <span className={status === 'pending' ? 'text-text-muted' : status === 'done' ? 'text-green-400' : 'text-red-400'}>{label}</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="appearance-none border border-border bg-transparent text-text-secondary text-[0.7rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-surface-hover hover:text-text-primary transition-colors duration-100 whitespace-nowrap"
+                  onClick={handleOpenReviewDialog}
+                >
+                  {aiCommentCount > 0 ? `Review (${aiCommentCount})` : 'Review'}
+                </button>
+              )
+            )}
             {comments.length > 0 && (
               <button
                 type="button"
@@ -2580,6 +3083,13 @@ export default function App() {
             </aside>
 
             <div className="diff-content flex-1 min-w-0 overflow-auto">
+              {reviewSummaries.size > 0 && (
+                <ReviewSummaryPanel
+                  summaries={reviewSummaries}
+                  fixPrompt={reviewFixPrompt}
+                  onClose={() => { setReviewSummaries(new Map()); setReviewFixPrompt(null); }}
+                />
+              )}
               {diffPatches.map((patch, index) => {
                 const info = fileInfos[index];
                 if (!info) return null;
@@ -2766,6 +3276,31 @@ export default function App() {
                 {moveSuccess}
               </span>
             )}
+            {selection?.type === 'branch' && !isDiffLoading && diffPatches.length > 0 && (
+              isReviewing ? (
+                <div className="flex items-center gap-1.5 border border-border rounded-md px-2.5 py-1">
+                  {[...reviewModelStatus.entries()].map(([model, status]) => {
+                    const label = model.includes(':') ? model.split(':')[1] : model;
+                    return (
+                      <span key={model} className="flex items-center gap-1 font-mono text-[0.65rem] whitespace-nowrap">
+                        {status === 'pending' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />}
+                        {status === 'done' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400" />}
+                        {status === 'error' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-400" />}
+                        <span className={status === 'pending' ? 'text-text-muted' : status === 'done' ? 'text-green-400' : 'text-red-400'}>{label}</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="appearance-none border border-border bg-transparent text-text-secondary text-[0.7rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-surface-hover hover:text-text-primary transition-colors duration-100 whitespace-nowrap"
+                  onClick={handleOpenReviewDialog}
+                >
+                  {aiCommentCount > 0 ? `Review (${aiCommentCount})` : 'Review'}
+                </button>
+              )
+            )}
             {comments.length > 0 && (
               <button
                 type="button"
@@ -2856,6 +3391,12 @@ export default function App() {
 
         {!isDiffLoading && activePatch && diffPatches.length > 0 && (
           <div className="diff-content flex-1 min-w-0 min-h-0 overflow-auto">
+            {reviewSummaries.size > 0 && (
+              <ReviewSummaryPanel
+                summaries={reviewSummaries}
+                onClose={() => setReviewSummaries(new Map())}
+              />
+            )}
             {diffPatches.map((patch, index) => {
               const info = fileInfos[index];
               if (!info) return null;
@@ -3018,6 +3559,17 @@ export default function App() {
             onCancel={handleSplitLinesCancel}
             isSplitting={isSplittingLines}
             splitError={splitLinesError}
+          />
+        </div>
+      )}
+
+      {isReviewDialogOpen && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[320px]">
+          <ReviewDialog
+            models={reviewModels}
+            onStart={handleStartReview}
+            onClose={() => setIsReviewDialogOpen(false)}
+            isReviewing={isReviewing}
           />
         </div>
       )}
