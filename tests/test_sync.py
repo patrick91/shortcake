@@ -562,6 +562,17 @@ def test_sync_reparents_children(
     assert new_parent == "main"
 
 
+def test_sync_restores_original_branch_after_reparenting_children(
+    repo_with_merged_and_children: Repo, tmp_path: Path
+) -> None:
+    """Test sync restores the original branch after child reparenting."""
+    git.switch_branch(repo_with_merged_and_children, "main")
+
+    _sync(repo_with_merged_and_children, force=True)
+
+    assert git.get_current_branch(repo_with_merged_and_children) == "main"
+
+
 def test_sync_prompt_fn_decline(repo_with_merged_branch: Repo, tmp_path: Path) -> None:
     """Test sync respects user declining deletion."""
     git.switch_branch(repo_with_merged_branch, "main")
@@ -1488,6 +1499,7 @@ def test_sync_reparents_branch_with_deleted_parent(
         result = _sync(temp_repo, force=True)
 
     assert result.reparented_branches == {"feature": "main"}
+    assert git.get_current_branch(temp_repo) == "main"
     # Verify the trailer was updated
     all_branches = set(git.get_all_local_branches(temp_repo))
     new_parent = git.get_branch_parent(temp_repo, "feature", all_branches)

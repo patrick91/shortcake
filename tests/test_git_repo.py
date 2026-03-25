@@ -156,7 +156,7 @@ def test_fetch_and_fast_forward_trunk_no_remote(temp_repo: Repo) -> None:
 def test_fetch_and_fast_forward_trunk_with_new_remote_commits(
     tmp_path: Path,
 ) -> None:
-    """Test fast-forward works when remote has new commits."""
+    """Test fast-forward updates the checked-out trunk cleanly."""
     # Set up a "remote" repo
     remote_path = tmp_path / "remote"
     remote_repo = init_repo(remote_path)
@@ -200,6 +200,10 @@ def test_fetch_and_fast_forward_trunk_with_new_remote_commits(
     success, new_sha = git.fetch_and_fast_forward_trunk(local_repo, "main")
     assert success is True
     assert new_sha is not None
+    assert git.get_current_branch(local_repo) == "main"
+    assert not git.has_uncommitted_changes(local_repo)
+    assert (local_path / "file1.txt").read_text() == "content 1"
+    assert (local_path / "file2.txt").read_text() == "content 2"
 
 
 def test_fetch_and_fast_forward_trunk_falls_back_to_git_cli(
