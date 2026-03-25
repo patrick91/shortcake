@@ -101,6 +101,14 @@ def _reparent_branch(repo: Repo, child: str, new_parent: str) -> bool:
     return True
 
 
+def _restore_current_branch(repo: Repo, current_branch: str | None) -> None:
+    """Restore the branch sync intends to leave checked out."""
+    if current_branch is None:
+        return
+    if git.get_current_branch(repo) != current_branch:
+        git.switch_branch(repo, current_branch)
+
+
 def _delete_and_reparent(
     repo: Repo,
     branch: str,
@@ -139,6 +147,7 @@ def _delete_and_reparent(
                     err=True,
                 )
 
+    _restore_current_branch(repo, current_branch)
     git.delete_branch(repo, branch)
     return current_branch
 
@@ -412,6 +421,7 @@ def _sync(
                     )
                 else:
                     success = _reparent_branch(repo, branch, resolved_parent)
+                    _restore_current_branch(repo, current_branch)
                     if success:
                         result.reparented_branches[branch] = resolved_parent
                         typer.echo(
