@@ -2622,7 +2622,7 @@ export default function App() {
 
   const handleStartReview = useCallback(
     async (selectedModels: string[], synthesizeWith: string | null) => {
-      if (!selection || selection.type !== 'branch') return;
+      if (!selection) return;
       const statusMap = new Map(selectedModels.map((m) => [m, 'pending' as const]));
       if (synthesizeWith) statusMap.set('synthesis', 'pending');
       setReviewModelStatus(statusMap);
@@ -2633,7 +2633,7 @@ export default function App() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            branch: selection.name,
+            branch: selection.type === 'working' ? '__working__' : selection.name,
             models: selectedModels,
             synthesize: synthesizeWith,
           }),
@@ -2948,7 +2948,7 @@ export default function App() {
                 {moveSuccess}
               </span>
             )}
-            {selection?.type === 'branch' && !isDiffLoading && diffPatches.length > 0 && (
+            {selection && !isDiffLoading && diffPatches.length > 0 && (
               isReviewing ? (
                 <div className="flex items-center gap-1.5 border border-border rounded-md px-2.5 py-1">
                   {[...reviewModelStatus.entries()].map(([model, status]) => {
@@ -3301,7 +3301,7 @@ export default function App() {
                 {moveSuccess}
               </span>
             )}
-            {selection?.type === 'branch' && !isDiffLoading && diffPatches.length > 0 && (
+            {selection && !isDiffLoading && diffPatches.length > 0 && (
               isReviewing ? (
                 <div className="flex items-center gap-1.5 border border-border rounded-md px-2.5 py-1">
                   {[...reviewModelStatus.entries()].map(([model, status]) => {
