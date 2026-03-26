@@ -179,7 +179,7 @@ def _build_diff_payload(repo: Repo, branch: str) -> dict[str, Any]:
 
 
 def _git_working_diff(repo_path: Path) -> str:
-    """Return git diff for uncommitted changes (staged + unstaged vs HEAD)."""
+    """Return git diff for uncommitted changes (staged + unstaged + untracked vs HEAD)."""
     result = subprocess.run(
         ["git", "diff", "--no-color", "--find-renames", "--full-index", "HEAD"],
         cwd=repo_path,
@@ -190,7 +190,38 @@ def _git_working_diff(repo_path: Path) -> str:
     if result.returncode != 0:
         message = result.stderr.strip() or "Failed to build working diff"
         raise ValueError(message)
-    return result.stdout
+    diff = result.stdout
+
+    # Include untracked files as new-file diffs
+    untracked = subprocess.run(
+        ["git", "ls-files", "--others", "--exclude-standard"],
+        cwd=repo_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    for filepath in untracked.stdout.splitlines():
+        filepath = filepath.strip()
+        if not filepath:
+            continue
+        full_path = repo_path / filepath
+        try:
+            content = full_path.read_text()
+        except (OSError, UnicodeDecodeError):
+            continue
+        lines = content.splitlines(True)
+        line_count = len(lines)
+        body = "".join(f"+{line}" if line.endswith("\n") else f"+{line}\n\\ No newline at end of file\n" for line in lines)
+        diff += (
+            f"diff --git a/{filepath} b/{filepath}\n"
+            f"new file mode 100644\n"
+            f"--- /dev/null\n"
+            f"+++ b/{filepath}\n"
+            f"@@ -0,0 +1,{line_count} @@\n"
+            f"{body}"
+        )
+
+    return diff
 
 
 def _build_working_diff_payload(repo: Repo) -> dict[str, Any]:
@@ -744,16 +775,19 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
 
                 try:
                     repo = _open_repo()
-                    tracked = _tracked_branch_parents(repo)
-                    if branch not in tracked:
-                        _write_json(
-                            self,
-                            400,
-                            {"error": f"Branch '{branch}' is not tracked"},
-                        )
-                        return
-                    parent = tracked[branch]
-                    patch = _git_diff_patch(repo_path, parent, branch)
+                    if branch == "__working__":
+                        patch = _git_working_diff(repo_path)
+                    else:
+                        tracked = _tracked_branch_parents(repo)
+                        if branch not in tracked:
+                            _write_json(
+                                self,
+                                400,
+                                {"error": f"Branch '{branch}' is not tracked"},
+                            )
+                            return
+                        parent = tracked[branch]
+                        patch = _git_diff_patch(repo_path, parent, branch)
                 except Exception as exc:
                     _write_json(self, 500, {"error": str(exc)})
                     return
