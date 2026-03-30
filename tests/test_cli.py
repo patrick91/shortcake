@@ -1,4 +1,5 @@
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -236,6 +237,37 @@ def test_cli_create_hook_failure(
 
     assert result.exit_code == 1
     assert "Pre-commit hook failed" in result.output
+
+
+def test_cli_create_hook_preserves_partial_staging(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Create should commit only the staged version when hooks run."""
+    monkeypatch.chdir(tmp_path)
+
+    hooks_dir = Path(temp_repo.path.rstrip("/")) / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_path = hooks_dir / "pre-commit"
+    hook_path.write_text("#!/bin/sh\nexit 0\n")
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
+
+    tracked_file = tmp_path / "README.md"
+    tracked_file.write_text("# Test\nstaged change\n")
+    add_paths(temp_repo, tracked_file)
+    tracked_file.write_text("# Test\nstaged change\nunstaged change\n")
+
+    result = runner.invoke(app, ["create", "-m", "feat: partial staging"])
+
+    assert result.exit_code == 0
+    committed_content = subprocess.run(
+        ["git", "show", "HEAD:README.md"],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert committed_content == "# Test\nstaged change\n"
+    assert tracked_file.read_text() == "# Test\nstaged change\nunstaged change\n"
 
 
 def test_cli_create_prompts_for_branch_name(

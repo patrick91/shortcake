@@ -1,5 +1,4 @@
 import stat
-import subprocess
 from pathlib import Path
 
 import pytest
@@ -18,7 +17,7 @@ from shortcake.commands.create import (
     _validate_branch_name,
 )
 from shortcake.commands.ls import _ls
-from tests._git_helpers import Repo, add_paths, get_ref, set_ref, switch_branch
+from tests._git_helpers import Repo, add_paths, get_ref, run_git, set_ref, switch_branch
 
 # Slugify tests
 
@@ -259,6 +258,29 @@ def test_run_precommit_hook_missing(temp_repo: Repo) -> None:
     assert error is None
 
 
+def test_run_precommit_hook_preserves_partial_staging(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Running hooks must not promote unstaged hunks into the index."""
+    hooks_dir = Path(temp_repo.path.rstrip("/")) / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_path = hooks_dir / "pre-commit"
+    hook_path.write_text("#!/bin/sh\nexit 0\n")
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
+
+    tracked_file = tmp_path / "README.md"
+    tracked_file.write_text("# Test\nstaged change\n")
+    add_paths(temp_repo, tracked_file)
+    tracked_file.write_text("# Test\nstaged change\nunstaged change\n")
+
+    success, error = git.run_precommit_hook(temp_repo)
+
+    assert success is True
+    assert error is None
+    assert run_git(temp_repo, "show", ":README.md").stdout == "# Test\nstaged change\n"
+    assert tracked_file.read_text() == "# Test\nstaged change\nunstaged change\n"
+
+
 def test_run_precommit_hook_exception(temp_repo: Repo, tmp_path: Path) -> None:
     """Test pre-commit hook when subprocess raises an exception."""
     from unittest.mock import patch
@@ -270,21 +292,10 @@ def test_run_precommit_hook_exception(temp_repo: Repo, tmp_path: Path) -> None:
     hook_path.write_text("#!/bin/sh\nexit 0\n")
     hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
 
-    # Mock subprocess.Popen to raise an exception.
-    # get_staged_files uses subprocess.run (which internally uses Popen),
-    # so we must let the first Popen call through and fail on the hook call.
-    original_popen = subprocess.Popen
-    call_count = 0
-
-    def popen_side_effect(*args, **kwargs):
-        nonlocal call_count
-        call_count += 1
-        if call_count == 1:
-            # First call is from get_staged_files via subprocess.run
-            return original_popen(*args, **kwargs)
-        raise OSError("Permission denied")
-
-    with patch("shortcake._git._core.subprocess.Popen", side_effect=popen_side_effect):
+    with patch(
+        "shortcake._git._core.subprocess.Popen",
+        side_effect=OSError("Permission denied"),
+    ):
         success, error = git.run_precommit_hook(temp_repo)
 
     assert success is False

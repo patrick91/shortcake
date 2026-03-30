@@ -211,8 +211,6 @@ def run_precommit_hook(repo: Repo) -> tuple[bool, str | None]:
     if not hook_path.exists():
         return True, None
 
-    staged_files = get_staged_files(repo)
-
     try:
         # Don't capture stdout - let it flow directly to terminal
         # This preserves ANSI escape sequences and carriage returns
@@ -221,14 +219,6 @@ def run_precommit_hook(repo: Repo) -> tuple[bool, str | None]:
             cwd=_repo_workdir(repo),
         )
         process.wait()
-
-        # Re-stage files modified by hooks (e.g., formatters)
-        if staged_files:
-            subprocess.run(
-                ["git", "add", *staged_files],
-                cwd=_repo_workdir(repo),
-                capture_output=True,
-            )
 
         if process.returncode != 0:
             return False, "Pre-commit hook failed"
