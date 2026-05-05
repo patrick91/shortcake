@@ -80,7 +80,28 @@ const MOCK_STACK = {
       isCurrent: false,
       commitCount: 2,
     },
-  ],
+  ].map((branch, index) => {
+    const commit = String(index + 1).repeat(40).slice(0, 40);
+    const subjects = [
+      'Add password session middleware',
+      'Build login form shell',
+      'Validate login payloads',
+      'Persist remember-me preference',
+      'Add OAuth provider abstraction',
+      'Wire GitHub OAuth callback',
+      'Restrict GitHub org access',
+      'Add Google OAuth profile sync',
+      'Create notification preference model',
+      'Send email alert digest',
+      'Register push notification devices',
+    ];
+    return {
+      ...branch,
+      commit,
+      commitShort: commit.slice(0, 7),
+      commitSubject: subjects[index] ?? 'Update branch',
+    };
+  }),
 };
 
 const MOCK_PATCHES: Record<string, { parent: string; patch: string }> = {

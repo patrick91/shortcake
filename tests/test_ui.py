@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from shortcake import _git as git
 from shortcake._github import BranchGitHubInfo
 from shortcake.commands.ui import (
     _build_diff_payload,
@@ -46,10 +47,20 @@ def test_build_stack_payload_linear_stack(repo_with_stack: Repo) -> None:
 
     assert branch_a["parent"] == "main"
     assert branch_a["commitCount"] == 1
+    assert (
+        branch_a["commit"] == git.get_branch_head(repo_with_stack, "branch_a").decode()
+    )
+    assert branch_a["commitShort"] == branch_a["commit"][:7]
+    assert branch_a["commitSubject"] == "feat: branch a"
     assert branch_a["isCurrent"] is False
 
     assert branch_b["parent"] == "branch_a"
     assert branch_b["commitCount"] == 1
+    assert (
+        branch_b["commit"] == git.get_branch_head(repo_with_stack, "branch_b").decode()
+    )
+    assert branch_b["commitShort"] == branch_b["commit"][:7]
+    assert branch_b["commitSubject"] == "feat: branch b"
     assert branch_b["isCurrent"] is True
 
 

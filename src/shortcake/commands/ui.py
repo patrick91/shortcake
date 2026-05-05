@@ -54,6 +54,9 @@ class StackDiffBranch:
     depth: int
     is_current: bool
     commit_count: int
+    commit: str
+    commit_short: str
+    commit_subject: str
 
 
 def _tracked_branch_parents(repo: Repo) -> dict[str, str]:
@@ -106,6 +109,7 @@ def _get_stack_diff_branches(repo: Repo) -> list[StackDiffBranch]:
             branch_head = git.get_branch_head(repo, node.name)
             parent_head = git.get_branch_head(repo, parent)
             commit_count = len(git.get_commits_between(repo, branch_head, parent_head))
+        latest_commit = git.get_branch_latest_commit(repo, node.name)
 
         result.append(
             StackDiffBranch(
@@ -114,6 +118,9 @@ def _get_stack_diff_branches(repo: Repo) -> list[StackDiffBranch]:
                 depth=depth,
                 is_current=node.is_current,
                 commit_count=commit_count,
+                commit=latest_commit.sha,
+                commit_short=latest_commit.short_sha,
+                commit_subject=latest_commit.subject,
             )
         )
 
@@ -132,6 +139,9 @@ def _build_stack_payload(repo: Repo) -> dict[str, Any]:
                 "depth": item.depth,
                 "isCurrent": item.is_current,
                 "commitCount": item.commit_count,
+                "commit": item.commit,
+                "commitShort": item.commit_short,
+                "commitSubject": item.commit_subject,
             }
             for item in branches
         ],
@@ -179,7 +189,7 @@ def _build_diff_payload(repo: Repo, branch: str) -> dict[str, Any]:
 
 
 def _git_working_diff(repo_path: Path) -> str:
-    """Return git diff for uncommitted changes (staged + unstaged + untracked vs HEAD)."""
+    """Return git diff for uncommitted changes."""
     result = subprocess.run(
         ["git", "diff", "--no-color", "--find-renames", "--full-index", "HEAD"],
         cwd=repo_path,
@@ -211,7 +221,12 @@ def _git_working_diff(repo_path: Path) -> str:
             continue
         lines = content.splitlines(True)
         line_count = len(lines)
-        body = "".join(f"+{line}" if line.endswith("\n") else f"+{line}\n\\ No newline at end of file\n" for line in lines)
+        body = "".join(
+            f"+{line}"
+            if line.endswith("\n")
+            else f"+{line}\n\\ No newline at end of file\n"
+            for line in lines
+        )
         diff += (
             f"diff --git a/{filepath} b/{filepath}\n"
             f"new file mode 100644\n"

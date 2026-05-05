@@ -559,6 +559,39 @@ def test_branch_node_pr_defaults() -> None:
     assert node.pr_number is None
     assert node.pr_is_draft is False
     assert node.pr_is_merged is False
+    assert node.latest_commit_subject is None
+
+
+def test_render_latest_commit_subject() -> None:
+    """Test rendering branch with latest commit subject."""
+    child = BranchNode(
+        name="feature",
+        is_current=True,
+        latest_commit_subject="Add [bracketed] feature",
+    )
+    root = BranchNode(name="main", children=[child])
+
+    tree = StackTree(roots=[root])
+    output = tree.render()
+
+    assert "◉ feature (current)\n│ [dim]Add \\[bracketed] feature[/]" in output
+
+
+def test_render_parent_with_multiple_children_and_latest_commit_subject() -> None:
+    """Test latest commit line aligns under parent names with merge connectors."""
+    root = BranchNode(
+        name="main",
+        latest_commit_subject="Merge feature branches",
+        children=[
+            BranchNode(name="feature-a"),
+            BranchNode(name="feature-b"),
+        ],
+    )
+
+    tree = StackTree(roots=[root])
+    output = tree.render()
+
+    assert "◯─┘ main\n    [dim]Merge feature branches[/]" in output
 
 
 def test_render_pr_number() -> None:

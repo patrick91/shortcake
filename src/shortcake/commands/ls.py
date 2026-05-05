@@ -41,6 +41,11 @@ def _build_tree(repo: Repo) -> tuple[StackTree, set[str]]:
             branches[branch] = parent
 
     tree = StackTree.build(branches, all_branches, current)
+    for node in _collect_nodes(tree):
+        if node.name in all_branches:
+            node.latest_commit_subject = git.get_branch_latest_commit(
+                repo, node.name
+            ).subject
     return tree, set(branches.keys())
 
 

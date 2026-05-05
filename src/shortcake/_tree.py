@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from enum import Enum, auto
 
+from rich.markup import escape
+
 
 class BranchWarning(Enum):
     """Warning types for branch nodes."""
@@ -24,6 +26,7 @@ class BranchNode:
     pr_is_merged: bool = False
     pr_is_closed: bool = False
     pr_url: str | None = None
+    latest_commit_subject: str | None = None
 
 
 @dataclass
@@ -155,7 +158,7 @@ class StackTree:
         if not self.roots:
             return ""
 
-        def get_node_label(node: BranchNode) -> str:
+        def get_node_label(node: BranchNode, connector: str = "") -> str:
             """Get the display label for a node."""
             marker = "◉" if node.is_current else "◯"
 
@@ -180,30 +183,60 @@ class StackTree:
             elif node.warning == BranchWarning.CYCLE:
                 suffix += " (circular ref)"
 
-            return f"{marker} {node.name}{pr_suffix}{suffix}"
+            return f"{marker}{connector} {node.name}{pr_suffix}{suffix}"
 
-        def render_branch(node: BranchNode, prefix: str = "") -> list[str]:
+        def append_node_lines(
+            result: list[str],
+            node: BranchNode,
+            prefix: str = "",
+            connector: str = "",
+            connects_below: bool = False,
+        ) -> None:
+            """Append a node label and optional latest commit line."""
+            result.append(f"{prefix}{get_node_label(node, connector)}")
+            if node.latest_commit_subject:
+                subject = escape(node.latest_commit_subject)
+                detail_indent = " " * (len(connector) + 2)
+                if connects_below:
+                    detail_indent = "│" + detail_indent[1:]
+                result.append(f"{prefix}{detail_indent}[dim]{subject}[/]")
+
+        def render_branch(
+            node: BranchNode,
+            prefix: str = "",
+            connects_below: bool = False,
+        ) -> list[str]:
             """Render a single branch and its children, bottom-up."""
             result: list[str] = []
 
             if not node.children:
                 # Leaf node
-                result.append(f"{prefix}{get_node_label(node)}")
+                append_node_lines(
+                    result,
+                    node,
+                    prefix,
+                    connects_below=connects_below,
+                )
                 return result
 
             if len(node.children) == 1:
                 # Single child - linear stack rendering
                 child = node.children[0]
-                child_lines = render_branch(child, prefix)
+                child_lines = render_branch(child, prefix, connects_below=True)
                 result.extend(child_lines)
                 result.append(f"{prefix}│")
-                result.append(f"{prefix}{get_node_label(node)}")
+                append_node_lines(
+                    result,
+                    node,
+                    prefix,
+                    connects_below=connects_below,
+                )
                 return result
 
             # Multiple children - parallel stacks rendering
             for i, child in enumerate(node.children):
                 # Render child's subtree with no local prefix
-                child_lines = render_branch(child, "")
+                child_lines = render_branch(child, "", connects_below=True)
 
                 # Add connector line at the end of this stack
                 child_lines.append("│")
@@ -216,36 +249,17 @@ class StackTree:
                     result.append(f"{column_prefix}{line}")
 
             # Render the parent with merge connectors
-            # Format: ◉─┴─┴─ name (for 3 children)
-            marker = "◉" if node.is_current else "◯"
-
-            # PR suffix with Rich link if URL available
-            pr_suffix = ""
-            if node.pr_number:
-                pr_text = f"#{node.pr_number}"
-                if node.pr_url:
-                    pr_text = f"[cyan underline link={node.pr_url}]{pr_text}[/]"
-                pr_suffix = f" {pr_text}"
-                if node.pr_is_merged:
-                    pr_suffix += " [dim]merged[/]"
-                elif node.pr_is_closed:
-                    pr_suffix += " [dim]closed[/]"
-                elif node.pr_is_draft:
-                    pr_suffix += " [dim]draft[/]"
-
-            suffix = " (current)" if node.is_current else ""
-            if node.warning == BranchWarning.ORPHAN:
-                suffix += " (parent missing)"
-            elif node.warning == BranchWarning.CYCLE:
-                suffix += " (circular ref)"
-
             # Format: ◯─┘ (2 children), ◯─┴─┘ (3 children), etc.
             if len(node.children) == 2:
                 merge_connector = "─┘"
             else:
                 merge_connector = "─" + "┴─" * (len(node.children) - 2) + "┘"
-            result.append(
-                f"{prefix}{marker}{merge_connector} {node.name}{pr_suffix}{suffix}"
+            append_node_lines(
+                result,
+                node,
+                prefix,
+                merge_connector,
+                connects_below=connects_below,
             )
 
             return result
