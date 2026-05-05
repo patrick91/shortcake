@@ -2,12 +2,23 @@
 
 import subprocess
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pygit2
 
 type Repo = Any
+
+
+@dataclass(frozen=True)
+class CommitSummary:
+    """Small display-oriented summary of a commit."""
+
+    sha: str
+    short_sha: str
+    subject: str
+
 
 # Error tuples — kept for backward compatibility with command-level handlers.
 # These previously listed ~20 dulwich exception types; now they cover the
@@ -103,6 +114,18 @@ def get_commits_between(repo: Repo, head: bytes, base: bytes) -> list[bytes]:
 def get_commit_message(repo: Repo, sha: bytes) -> str:
     """Get commit message."""
     return repo.get(_oid(sha)).message
+
+
+def get_branch_latest_commit(repo: Repo, branch: str) -> CommitSummary:
+    """Get the HEAD commit summary for a branch."""
+    sha = _oid(get_branch_head(repo, branch))
+    commit = repo.get(sha)
+    subject = (commit.message or "").splitlines()[0].strip()
+    return CommitSummary(
+        sha=sha,
+        short_sha=sha[:7],
+        subject=subject or "(no subject)",
+    )
 
 
 def amend_commit_message(repo: Repo, sha: bytes, new_message: str) -> bytes:

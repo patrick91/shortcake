@@ -125,6 +125,9 @@ type StackBranch = {
   depth: number;
   isCurrent: boolean;
   commitCount: number;
+  commit: string;
+  commitShort: string;
+  commitSubject: string;
 };
 
 type StackResponse = {
@@ -2842,15 +2845,25 @@ export default function App() {
                   onClick={() => setSelection({ type: 'branch', name: branch.name })}
                   type="button"
                 >
-                  <span className="relative z-[2] flex items-center gap-[7px] w-full">
-                    <span className="text-[0.88rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
-                      {branch.name}
-                    </span>
-                    {branch.isCurrent && (
-                      <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-accent/10 border border-accent/18 ml-1.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
-                        current
+                  <span className="relative z-[2] flex items-center gap-[7px] w-full min-w-0">
+                    <span className="min-w-0 flex-1 flex flex-col gap-[1px]">
+                      <span className="flex items-center gap-[7px] min-w-0">
+                        <span className="text-[0.88rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
+                          {branch.name}
+                        </span>
+                        {branch.isCurrent && (
+                          <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-accent/10 border border-accent/18 ml-1.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
+                            current
+                          </span>
+                        )}
                       </span>
-                    )}
+                      <span
+                        className="font-mono text-[0.62rem] text-text-muted whitespace-nowrap overflow-hidden text-ellipsis"
+                        title={`${branch.commitShort} ${branch.commitSubject}`}
+                      >
+                        {branch.commitShort} {branch.commitSubject}
+                      </span>
+                    </span>
                     {isGithubInfoLoading ? (
                       <span className="ml-auto flex items-center gap-[5px] shrink-0">
                         <span className="inline-block w-[32px] h-[14px] rounded-full bg-surface-hover animate-pulse" />
@@ -3228,15 +3241,25 @@ export default function App() {
                 onClick={() => setSelection({ type: 'branch', name: branch.name })}
                 type="button"
               >
-                <span className="relative z-[2] flex items-center gap-[7px] w-full">
-                  <span className="text-[0.88rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
-                    {branch.name}
-                  </span>
-                  {branch.isCurrent && (
-                    <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-accent/10 border border-accent/18 ml-1.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
-                      current
+                <span className="relative z-[2] flex items-center gap-[7px] w-full min-w-0">
+                  <span className="min-w-0 flex-1 flex flex-col gap-[1px]">
+                    <span className="flex items-center gap-[7px] min-w-0">
+                      <span className="text-[0.88rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
+                        {branch.name}
+                      </span>
+                      {branch.isCurrent && (
+                        <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-accent/10 border border-accent/18 ml-1.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
+                          current
+                        </span>
+                      )}
                     </span>
-                  )}
+                    <span
+                      className="font-mono text-[0.62rem] text-text-muted whitespace-nowrap overflow-hidden text-ellipsis"
+                      title={`${branch.commitShort} ${branch.commitSubject}`}
+                    >
+                      {branch.commitShort} {branch.commitSubject}
+                    </span>
+                  </span>
                   {isGithubInfoLoading ? (
                     <span className="ml-auto flex items-center gap-[5px] shrink-0">
                       <span className="inline-block w-[32px] h-[14px] rounded-full bg-surface-hover animate-pulse" />

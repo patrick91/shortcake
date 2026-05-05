@@ -35,8 +35,10 @@ def test_ls_single_tracked(repo_with_feature: Repo) -> None:
 
     assert result == snapshot("""\
 ◉ feature (current)
+│ [dim]Add feature[/]
 │
-◯ main""")
+◯ main
+  [dim]Initial commit[/]""")
 
 
 def test_ls_current_highlighted(repo_with_feature: Repo) -> None:
@@ -47,16 +49,20 @@ def test_ls_current_highlighted(repo_with_feature: Repo) -> None:
     result = _ls(repo_with_feature)
     assert result == snapshot("""\
 ◉ feature (current)
+│ [dim]Add feature[/]
 │
-◯ main""")
+◯ main
+  [dim]Initial commit[/]""")
 
     # Switch to main and check
     repo_with_feature.set_head("refs/heads/main")
     result = _ls(repo_with_feature)
     assert result == snapshot("""\
 ◯ feature
+│ [dim]Add feature[/]
 │
-◉ main (current)""")
+◉ main (current)
+  [dim]Initial commit[/]""")
 
 
 def test_ls_multi_commit_branch(temp_repo: Repo, tmp_path: Path) -> None:
@@ -84,8 +90,10 @@ def test_ls_multi_commit_branch(temp_repo: Repo, tmp_path: Path) -> None:
     result = _ls(temp_repo)
     assert result == snapshot("""\
 ◉ feature (current)
+│ [dim]Second feature commit[/]
 │
-◯ main""")
+◯ main
+  [dim]Initial commit[/]""")
 
 
 def test_ls_chain_of_branches(temp_repo: Repo, tmp_path: Path) -> None:
@@ -118,10 +126,13 @@ def test_ls_chain_of_branches(temp_repo: Repo, tmp_path: Path) -> None:
 
     assert result == snapshot("""\
 ◉ feature-b (current)
+│ [dim]Add feature-b[/]
 │
 ◯ feature-a
+│ [dim]Add feature-a[/]
 │
-◯ main""")
+◯ main
+  [dim]Initial commit[/]""")
 
 
 def test_ls_parallel_stacks(temp_repo: Repo, tmp_path: Path) -> None:
@@ -178,14 +189,19 @@ def test_ls_parallel_stacks(temp_repo: Repo, tmp_path: Path) -> None:
 
     assert result == snapshot("""\
 ◯ stack-1-b
+│ [dim]Add stack-1-b[/]
 │
 ◯ stack-1-a
+│ [dim]Add stack-1-a[/]
 │
 │ ◉ stack-2-b (current)
+│ │ [dim]Add stack-2-b[/]
 │ │
 │ ◯ stack-2-a
+│ │ [dim]Add stack-2-a[/]
 │ │
-◯─┘ main\
+◯─┘ main
+    [dim]Initial commit[/]\
 """)
 
 
@@ -218,8 +234,10 @@ def test_ls_detached_head(repo_with_feature: Repo, tmp_path: Path) -> None:
     # Should still show the tree, just without current marker
     assert result == snapshot("""\
 ◯ feature
+│ [dim]Add feature[/]
 │
-◯ main""")
+◯ main
+  [dim]Initial commit[/]""")
 
 
 def test_get_branch_parent_stops_at_other_branch_head(
