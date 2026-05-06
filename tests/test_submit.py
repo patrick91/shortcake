@@ -1328,11 +1328,11 @@ def test_submit_merged_pr_lookup_error_ignored(
 def test_submit_preserves_merged_prs_from_existing_body(
     repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test that merged PRs from existing PR bodies are preserved."""
+    """Merged historical PRs are kept below active stack branches."""
     setup_origin_remote(repo_with_tracked_feature)
     monkeypatch.setenv("GH_TOKEN", "test-token")
 
-    # Existing PR body has historical merged PRs
+    # Existing PR body has historical merged PRs from an older stack.
     existing_body = f"""{STACK_START_MARKER}
 ## Stack
 
@@ -1373,27 +1373,25 @@ Original description."""
     ):
         _submit(repo_with_tracked_feature)
 
-    # Verify the updated body preserves the merged PRs
+    # Verify the updated body preserves the merged PRs.
     assert len(updated_bodies) > 0
     updated_body = updated_bodies[-1]
     assert "#100 (merged)" in updated_body
     assert "old-merged-branch" in updated_body
     assert "#99 (merged)" in updated_body
     assert "another-old-branch" in updated_body
+    assert "**#456** (`feature`) <-- this PR" in updated_body
 
 
-def test_submit_appends_historical_branch_at_end(
+def test_submit_moves_top_merged_historical_branch_below_active_stack(
     repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test that historical branches are appended at end when no position found."""
+    """Merged historical branches are kept below active stack branches."""
     setup_origin_remote(repo_with_tracked_feature)
     monkeypatch.setenv("GH_TOKEN", "test-token")
 
-    # Historical stack order has a merged branch at the TOP (display order)
-    # which means it comes AFTER the local branch in bottom-to-top order.
-    # Display order (top to bottom): merged-top, feature
-    # Bottom-to-top order: feature, merged-top
-    # So merged-top should be appended at the end of full_stack_branches.
+    # Historical stack order has a merged branch at the top of display order.
+    # It should move below the active branch when the stack is regenerated.
     existing_body = f"""{STACK_START_MARKER}
 ## Stack
 
@@ -1432,28 +1430,28 @@ Description."""
     ):
         _submit(repo_with_tracked_feature)
 
-    # Verify the merged branch is preserved
+    # Verify the merged branch is preserved below the active branch.
     assert len(updated_bodies) > 0
     updated_body = updated_bodies[-1]
     assert "#100 (merged)" in updated_body
     assert "top-merged-branch" in updated_body
+    assert "**#456** (`feature`) <-- this PR" in updated_body
 
-    # In display order (top to bottom), merged branch should appear before feature
     feature_pos = updated_body.find("`feature`")
     merged_pos = updated_body.find("`top-merged-branch`")
     assert feature_pos > 0
     assert merged_pos > 0
-    assert merged_pos < feature_pos  # Merged is above (before) feature in display
+    assert feature_pos < merged_pos
 
 
-def test_submit_preserves_stack_order_from_existing_body(
+def test_submit_places_merged_branches_below_active_stack_order(
     repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test that stack order from existing PR bodies is preserved."""
+    """Merged-only historical stack order is retained below active branches."""
     setup_origin_remote(repo_with_tracked_feature)
     monkeypatch.setenv("GH_TOKEN", "test-token")
 
-    # Existing PR body has historical stack order with merged branches
+    # Existing PR body has historical stack order with merged branches.
     existing_body = f"""{STACK_START_MARKER}
 ## Stack
 
@@ -1493,23 +1491,17 @@ Description."""
     ):
         _submit(repo_with_tracked_feature)
 
-    # Verify the order is preserved (merged branches should appear after feature)
+    # Verify merged branches remain below the active stack branch.
     assert len(updated_bodies) > 0
     updated_body = updated_bodies[-1]
+    assert "**#456** (`feature`) <-- this PR" in updated_body
+    assert "first-merged" in updated_body
+    assert "second-merged" in updated_body
 
-    # Find positions of branches in the body
     feature_pos = updated_body.find("`feature`")
     first_merged_pos = updated_body.find("`first-merged`")
     second_merged_pos = updated_body.find("`second-merged`")
-
-    # All should be present
-    assert feature_pos > 0
-    assert first_merged_pos > 0
-    assert second_merged_pos > 0
-
-    # Order should be preserved (feature at top, then merged branches below)
-    assert feature_pos < first_merged_pos
-    assert first_merged_pos < second_merged_pos
+    assert feature_pos < first_merged_pos < second_merged_pos
 
 
 def test_submit_preserves_historical_prs_from_existing_body(
@@ -1578,6 +1570,77 @@ Description."""
     # The parent-branch PR number should be preserved from the existing body
     assert "#789" in updated_body
     assert "`parent-branch`" in updated_body
+
+
+def test_submit_marks_historical_pr_merged_when_github_reports_merged(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Historical PR entries are marked merged when GitHub says they merged.
+
+    This covers old stack bodies where the branch was listed as an open PR
+    when the body was last written, but has since merged and disappeared
+    locally.
+    """
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    existing_body = f"""{STACK_START_MARKER}
+## Stack
+
+- #789 (`merged-parent-branch`)
+- **#456** (`feature`) <-- this PR
+{STACK_END_MARKER}
+
+Description."""
+
+    mock_pr = PRInfo(
+        number=456,
+        url="https://github.com/owner/repo/pull/456",
+        base="main",
+        title="feat: add feature",
+        body=existing_body,
+        state="open",
+        is_draft=False,
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+
+    def get_pr_side_effect(branch: str):
+        if branch == "feature":
+            return mock_pr
+        return None
+
+    mock_client.get_pr_for_branch.side_effect = get_pr_side_effect
+    mock_client.get_merged_pr_number.side_effect = lambda branch: {
+        "merged-parent-branch": 789,
+    }.get(branch)
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    updated_bodies: list[str] = []
+
+    def track_update(pr_num: int, body: str | None = None, base: str | None = None):
+        if body is not None:
+            updated_bodies.append(body)
+
+    mock_client.update_pr.side_effect = track_update
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        _submit(repo_with_tracked_feature)
+
+    assert len(updated_bodies) > 0
+    updated_body = updated_bodies[-1]
+    assert "`merged-parent-branch`" in updated_body
+    assert "#789 (merged)" in updated_body
+    assert "**#456** (`feature`) <-- this PR" in updated_body
+
+    feature_pos = updated_body.find("`feature`")
+    merged_pos = updated_body.find("`merged-parent-branch`")
+    assert feature_pos < merged_pos
 
 
 def test_submit_looks_up_historical_branch_on_github(

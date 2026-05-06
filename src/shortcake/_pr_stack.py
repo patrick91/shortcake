@@ -201,6 +201,15 @@ def _sync_stack_pr_descriptions(
             and hist_branch not in all_branches
             and hist_branch not in historical_merged_prs
         ):
+            try:
+                merged_num = gh.get_merged_pr_number(hist_branch)
+            except (httpx.HTTPStatusError, httpx.RequestError):
+                merged_num = None
+            if isinstance(merged_num, int):
+                historical_merged_prs[hist_branch] = merged_num
+                known_pr_numbers.pop(hist_branch, None)
+                continue
+
             if hist_branch in historical_prs:
                 known_pr_numbers[hist_branch] = historical_prs[hist_branch]
             else:
@@ -219,7 +228,7 @@ def _sync_stack_pr_descriptions(
             merged_num = gh.get_merged_pr_number(branch)
         except (httpx.HTTPStatusError, httpx.RequestError):
             continue
-        if merged_num:
+        if isinstance(merged_num, int):
             merged_pr_numbers[branch] = merged_num
 
     full_stack_branches = list(stack_branches)
@@ -228,8 +237,14 @@ def _sync_stack_pr_descriptions(
         historical_positions = {
             branch: index for index, branch in enumerate(historical_bottom_to_top)
         }
+        merged_historical_bottom: list[str] = []
+
         for hist_branch in historical_bottom_to_top:
             if hist_branch in full_stack_branches or hist_branch in all_branches:
+                continue
+
+            if hist_branch in historical_merged_prs:
+                merged_historical_bottom.append(hist_branch)
                 continue
 
             inserted = False
@@ -243,6 +258,8 @@ def _sync_stack_pr_descriptions(
                     break
             if not inserted:
                 full_stack_branches.append(hist_branch)
+
+        full_stack_branches = merged_historical_bottom + full_stack_branches
 
     for branch, existing_pr in open_prs.items():
         stack_section = _build_stack_section(
