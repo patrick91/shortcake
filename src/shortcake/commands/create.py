@@ -1,14 +1,17 @@
 import re
 import subprocess
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Annotated
 
+import httpx
 import typer
 
 from shortcake import _git as git
 from shortcake._editor import open_editor
 from shortcake._exceptions import ShortcakeError
 from shortcake._git._core import Repo
+from shortcake._github import GitHubClient, get_github_token, get_repo_info
 from shortcake._gitmoji import pick_gitmoji
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 from shortcake._trailers import Trailers
@@ -51,6 +54,9 @@ class CreateResult:
     conflict_branch: str | None = None
 
 
+_DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-")
+
+
 def _slugify(message: str) -> str:
     """Convert commit message to branch name."""
     # Take first line only
@@ -62,6 +68,51 @@ def _slugify(message: str) -> str:
     slug = slug.strip("-")
     # Max 50 characters, strip trailing hyphen from truncation
     return slug[:50].rstrip("-")
+
+
+def _with_date_prefix(slug: str) -> str:
+    """Prefix a slug with today's date unless it already has a date prefix."""
+    if not slug or _DATE_PREFIX_RE.match(slug):
+        return slug
+    return f"{date.today().isoformat()}-{slug}"
+
+
+def _slugify_branch_name(message: str) -> str:
+    """Convert user text to a date-prefixed branch name."""
+    return _with_date_prefix(_slugify(message))
+
+
+def _branch_has_merged_pr(repo: Repo, branch: str) -> bool:
+    """Return whether GitHub has a merged PR for branch, if checkable."""
+    token = get_github_token()
+    if not token:
+        return False
+
+    repo_info = get_repo_info(repo)
+    if not repo_info:
+        return False
+
+    owner, repo_name = repo_info
+    try:
+        with GitHubClient(token, owner, repo_name) as gh:
+            return gh.has_merged_pr(branch)
+    except (httpx.HTTPStatusError, httpx.RequestError):
+        return False
+
+
+def _resolve_available_branch_name(repo: Repo, branch_name: str) -> str:
+    """Find an available branch name, suffixing with -2, -3, etc. as needed."""
+    if not branch_name:
+        raise EmptyBranchNameError("Cannot generate branch name from message")
+
+    suffix = 1
+    while True:
+        candidate = branch_name if suffix == 1 else f"{branch_name}-{suffix}"
+        if not git.branch_exists(repo, candidate) and not _branch_has_merged_pr(
+            repo, candidate
+        ):
+            return candidate
+        suffix += 1
 
 
 def _validate_branch_name(repo: Repo, branch: str) -> None:
@@ -443,23 +494,15 @@ def create(
             typer.echo("Aborted: empty message.", err=True)
             raise typer.Exit(1)
 
-    # Get valid branch name (loop until we have one)
-    branch_name = _slugify(message)
+    # Get valid branch name (prompt only when the message cannot produce a slug)
+    branch_name = _slugify_branch_name(message)
     while True:
         try:
-            _validate_branch_name(repo, branch_name)
+            branch_name = _resolve_available_branch_name(repo, branch_name)
             break
         except EmptyBranchNameError:
             user_input = typer.prompt("Could not generate branch name. Enter a name")
-            branch_name = _slugify(user_input)
-            if not branch_name:
-                typer.echo("Error: Invalid branch name", err=True)
-                raise typer.Exit(1) from None
-        except BranchExistsError as e:
-            user_input = typer.prompt(
-                f"Branch '{e.branch}' already exists. Enter a name"
-            )
-            branch_name = _slugify(user_input)
+            branch_name = _slugify_branch_name(user_input)
             if not branch_name:
                 typer.echo("Error: Invalid branch name", err=True)
                 raise typer.Exit(1) from None

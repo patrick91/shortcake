@@ -1,5 +1,7 @@
 import stat
+from datetime import date
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from typer.testing import CliRunner
@@ -13,10 +15,15 @@ from tests._git_helpers import (
     init_repo,
     reset_hard,
     set_ref,
+    set_remote,
     switch_branch,
 )
 
 runner = CliRunner()
+
+
+def _dated(slug: str) -> str:
+    return f"{date.today().isoformat()}-{slug}"
 
 
 def test_cli_adopt_success(
@@ -122,7 +129,10 @@ def test_cli_create_success(
     )
 
     assert result.exit_code == 0
-    assert "Created branch 'feat-add-new-feature' from 'main'" in result.output
+    assert (
+        f"Created branch '{_dated('feat-add-new-feature')}' from 'main'"
+        in result.output
+    )
 
 
 def test_cli_create_no_staged_changes_error(
@@ -138,27 +148,53 @@ def test_cli_create_no_staged_changes_error(
     assert "--allow-empty" in result.output
 
 
-def test_cli_create_prompts_when_branch_exists(
+def test_cli_create_suffixes_when_branch_exists(
     temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test CLI prompts for new name when branch exists."""
+    """Test CLI suffixes the generated name when the branch exists."""
     monkeypatch.chdir(tmp_path)
 
     # Create a branch first
     set_ref(
-        temp_repo, "refs/heads/feat-existing", get_ref(temp_repo, "refs/heads/main")
+        temp_repo,
+        f"refs/heads/{_dated('feat-existing')}",
+        get_ref(temp_repo, "refs/heads/main"),
     )
 
-    # Provide alternative name via input
     result = runner.invoke(
         app,
         ["create", "-m", "feat: existing", "--allow-empty"],
-        input="my-new-branch\n",
     )
 
     assert result.exit_code == 0
-    assert "already exists" in result.output
-    assert "Created branch 'my-new-branch'" in result.output
+    assert f"Created branch '{_dated('feat-existing')}-2'" in result.output
+
+
+def test_cli_create_suffixes_when_branch_has_merged_pr(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI suffixes the generated name when GitHub has a merged PR."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
+
+    base_name = _dated("feat-merged-before")
+    mock_client = MagicMock()
+    mock_client.has_merged_pr.side_effect = lambda branch: branch == base_name
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+
+    with patch(
+        "shortcake.commands.create.GitHubClient",
+        return_value=mock_client,
+        create=True,
+    ):
+        result = runner.invoke(
+            app, ["create", "-m", "feat: merged before", "--allow-empty"]
+        )
+
+    assert result.exit_code == 0
+    assert f"Created branch '{base_name}-2'" in result.output
 
 
 def test_cli_create_error_detached_head(
@@ -251,7 +287,7 @@ def test_cli_create_prompts_for_branch_name(
 
     assert result.exit_code == 0
     assert "Could not generate branch name" in result.output
-    assert "Created branch 'my-custom-branch'" in result.output
+    assert f"Created branch '{_dated('my-custom-branch')}'" in result.output
 
 
 def test_cli_create_invalid_branch_name_after_empty_prompt(
@@ -268,33 +304,33 @@ def test_cli_create_invalid_branch_name_after_empty_prompt(
     assert "Invalid branch name" in result.output
 
 
-def test_cli_create_invalid_branch_name_after_exists_prompt(
+def test_cli_create_suffixes_past_multiple_existing_branches(
     temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test error when user enters invalid name after branch exists prompt."""
+    """Test CLI keeps incrementing suffixes until a name is available."""
     monkeypatch.chdir(tmp_path)
 
-    # Create existing branch
     set_ref(
-        temp_repo, "refs/heads/feat-existing", get_ref(temp_repo, "refs/heads/main")
+        temp_repo,
+        f"refs/heads/{_dated('feat-existing')}",
+        get_ref(temp_repo, "refs/heads/main"),
+    )
+    set_ref(
+        temp_repo,
+        f"refs/heads/{_dated('feat-existing')}-2",
+        get_ref(temp_repo, "refs/heads/main"),
     )
 
-    # User enters invalid name (only special chars)
-    result = runner.invoke(
-        app, ["create", "-m", "feat: existing", "--allow-empty"], input="...\n"
-    )
+    result = runner.invoke(app, ["create", "-m", "feat: existing", "--allow-empty"])
 
-    assert result.exit_code == 1
-    assert "already exists" in result.output
-    assert "Invalid branch name" in result.output
+    assert result.exit_code == 0
+    assert f"Created branch '{_dated('feat-existing')}-3'" in result.output
 
 
 def test_cli_create_interactive_mode(
     temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Test CLI create in interactive mode (opens editor)."""
-    from unittest.mock import patch
-
     monkeypatch.chdir(tmp_path)
 
     with patch("shortcake.commands.create.open_editor") as mock_editor:
@@ -302,7 +338,7 @@ def test_cli_create_interactive_mode(
         result = runner.invoke(app, ["create", "--allow-empty"])
 
     assert result.exit_code == 0
-    assert "Created branch 'feat-interactive-feature'" in result.output
+    assert f"Created branch '{_dated('feat-interactive-feature')}'" in result.output
 
 
 def test_cli_create_interactive_cancelled(
@@ -375,8 +411,8 @@ def test_cli_create_before(
     )
 
     assert result.exit_code == 0
-    assert "Created branch 'fix-before-b' from 'branch_a'" in result.output
-    assert "Rebased 'branch_b' onto 'fix-before-b'" in result.output
+    assert f"Created branch '{_dated('fix-before-b')}' from 'branch_a'" in result.output
+    assert f"Rebased 'branch_b' onto '{_dated('fix-before-b')}'" in result.output
 
 
 def test_cli_create_after(
@@ -394,8 +430,8 @@ def test_cli_create_after(
     )
 
     assert result.exit_code == 0
-    assert "Created branch 'fix-after-a' from 'branch_a'" in result.output
-    assert "Rebased 'branch_b' onto 'fix-after-a'" in result.output
+    assert f"Created branch '{_dated('fix-after-a')}' from 'branch_a'" in result.output
+    assert f"Rebased 'branch_b' onto '{_dated('fix-after-a')}'" in result.output
 
 
 def test_cli_create_before_and_after_error(
@@ -439,7 +475,7 @@ def test_cli_create_after_no_children(
     )
 
     assert result.exit_code == 0
-    assert "Created branch 'fix-leaf' from 'branch_b'" in result.output
+    assert f"Created branch '{_dated('fix-leaf')}' from 'branch_b'" in result.output
     # No rebase message since there are no children
     assert "Rebased" not in result.output
 
@@ -458,8 +494,8 @@ def test_cli_create_before_with_staged_changes(
     result = runner.invoke(app, ["create", "-m", "fix: staged", "--before"])
 
     assert result.exit_code == 0
-    assert "Created branch 'fix-staged' from 'branch_a'" in result.output
-    assert "Rebased 'branch_b' onto 'fix-staged'" in result.output
+    assert f"Created branch '{_dated('fix-staged')}' from 'branch_a'" in result.output
+    assert f"Rebased 'branch_b' onto '{_dated('fix-staged')}'" in result.output
 
 
 def test_cli_create_after_multiple_children_error(
