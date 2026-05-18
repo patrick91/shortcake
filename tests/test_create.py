@@ -1,7 +1,10 @@
 import stat
 import subprocess
+from datetime import date
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from shortcake import _git as git
@@ -11,10 +14,13 @@ from shortcake.commands.create import (
     BranchExistsError,
     EmptyBranchNameError,
     InsertError,
+    _branch_has_merged_pr,
     _create,
     _create_insert_after,
     _create_insert_before,
+    _resolve_available_branch_name,
     _slugify,
+    _slugify_branch_name,
     _validate_branch_name,
 )
 from shortcake.commands.ls import _ls
@@ -70,6 +76,126 @@ def test_slugify_truncation_strips_trailing_hyphen() -> None:
 def test_slugify_gitmoji() -> None:
     """Test handling emoji prefix."""
     assert _slugify("✨ add new feature") == "add-new-feature"
+
+
+def test_slugify_branch_name_adds_date_prefix() -> None:
+    """Test branch names get today's date prefix."""
+    today = date.today().isoformat()
+
+    assert _slugify_branch_name("Add user model") == f"{today}-add-user-model"
+
+
+def test_slugify_branch_name_keeps_existing_date_prefix() -> None:
+    """Test branch names are not double-prefixed when already dated."""
+    assert (
+        _slugify_branch_name("2026-05-18-add-user-model") == "2026-05-18-add-user-model"
+    )
+
+
+def test_resolve_available_branch_name_returns_base(temp_repo: Repo) -> None:
+    """Test available branch names are returned unchanged."""
+    with patch("shortcake.commands.create._branch_has_merged_pr", return_value=False):
+        result = _resolve_available_branch_name(temp_repo, "feature")
+
+    assert result == "feature"
+
+
+def test_resolve_available_branch_name_suffixes_local_branch(
+    temp_repo: Repo,
+) -> None:
+    """Test local branch collisions are resolved with numeric suffixes."""
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    set_ref(temp_repo, "refs/heads/feature-2", main_sha)
+
+    with patch("shortcake.commands.create._branch_has_merged_pr", return_value=False):
+        result = _resolve_available_branch_name(temp_repo, "feature")
+
+    assert result == "feature-3"
+
+
+def test_resolve_available_branch_name_suffixes_merged_pr(
+    temp_repo: Repo,
+) -> None:
+    """Test GitHub merged PR collisions are resolved with numeric suffixes."""
+
+    def has_merged_pr(_repo: Repo, branch: str) -> bool:
+        return branch in {"feature", "feature-2"}
+
+    with patch("shortcake.commands.create._branch_has_merged_pr", has_merged_pr):
+        result = _resolve_available_branch_name(temp_repo, "feature")
+
+    assert result == "feature-3"
+
+
+def test_resolve_available_branch_name_empty(temp_repo: Repo) -> None:
+    """Test empty branch names are rejected."""
+    with pytest.raises(EmptyBranchNameError):
+        _resolve_available_branch_name(temp_repo, "")
+
+
+def test_branch_has_merged_pr_returns_false_without_token(temp_repo: Repo) -> None:
+    """Test GitHub merged PR checks are skipped when no token exists."""
+    with patch("shortcake.commands.create.get_github_token", return_value=None):
+        result = _branch_has_merged_pr(temp_repo, "feature")
+
+    assert result is False
+
+
+def test_branch_has_merged_pr_returns_false_without_repo_info(
+    temp_repo: Repo,
+) -> None:
+    """Test GitHub merged PR checks are skipped without GitHub repo info."""
+    with (
+        patch("shortcake.commands.create.get_github_token", return_value="token"),
+        patch("shortcake.commands.create.get_repo_info", return_value=None),
+    ):
+        result = _branch_has_merged_pr(temp_repo, "feature")
+
+    assert result is False
+
+
+def test_branch_has_merged_pr_returns_api_result(temp_repo: Repo) -> None:
+    """Test GitHub merged PR checks return the API result."""
+    mock_client = MagicMock()
+    mock_client.has_merged_pr.return_value = True
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+
+    with (
+        patch("shortcake.commands.create.get_github_token", return_value="token"),
+        patch(
+            "shortcake.commands.create.get_repo_info",
+            return_value=("owner", "repo"),
+        ),
+        patch("shortcake.commands.create.GitHubClient", return_value=mock_client),
+    ):
+        result = _branch_has_merged_pr(temp_repo, "feature")
+
+    assert result is True
+
+
+def test_branch_has_merged_pr_handles_github_error(temp_repo: Repo) -> None:
+    """Test GitHub errors make merged PR checks non-fatal."""
+    response = httpx.Response(500, request=httpx.Request("GET", "https://api.github"))
+    mock_client = MagicMock()
+    mock_client.has_merged_pr.side_effect = httpx.HTTPStatusError(
+        "error", request=response.request, response=response
+    )
+    mock_client.__enter__.return_value = mock_client
+    mock_client.__exit__.return_value = False
+
+    with (
+        patch("shortcake.commands.create.get_github_token", return_value="token"),
+        patch(
+            "shortcake.commands.create.get_repo_info",
+            return_value=("owner", "repo"),
+        ),
+        patch("shortcake.commands.create.GitHubClient", return_value=mock_client),
+    ):
+        result = _branch_has_merged_pr(temp_repo, "feature")
+
+    assert result is False
 
 
 # Create tests
