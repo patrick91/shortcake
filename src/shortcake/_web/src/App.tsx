@@ -1248,7 +1248,6 @@ function AcceptBanner({
 
 function BranchPicker({
   branches,
-  currentBranch,
   sourceBranch,
   onSelect,
   onCancel,
@@ -1258,7 +1257,6 @@ function BranchPicker({
   suggestedBranch,
 }: {
   branches: StackBranch[];
-  currentBranch: string;
   sourceBranch: string;
   onSelect: (branch: string) => void;
   onCancel: () => void;
@@ -1887,7 +1885,9 @@ export default function App() {
   const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
   const [fileFilter, setFileFilter] = useState('');
   const [activeFileIndex, setActiveFileIndex] = useState<number | null>(null);
+  const diffContentRef = useRef<HTMLDivElement>(null);
   const fileRefs = useRef<Record<number, HTMLDivElement | null>>({});
+  const fileScrollCleanupRef = useRef<(() => void) | null>(null);
   const [comments, setComments] = useState<DiffComment[]>([]);
   const [activeInput, setActiveInput] = useState<ActiveInput>(null);
   const [editingComment, setEditingComment] = useState<DiffComment | null>(null);
@@ -2195,6 +2195,20 @@ export default function App() {
     });
   }, []);
 
+  const alignFileInDiffPane = useCallback((index: number): boolean => {
+    const scroller = diffContentRef.current;
+    const target = fileRefs.current[index];
+    if (!scroller || !target) return false;
+
+    const scrollerRect = scroller.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    scroller.scrollTo({
+      top: scroller.scrollTop + targetRect.top - scrollerRect.top,
+      behavior: 'auto',
+    });
+    return true;
+  }, []);
+
   const scrollToFile = useCallback((index: number) => {
     const info = fileInfos[index];
     if (info && viewedFiles.has(info.path)) {
@@ -2205,10 +2219,47 @@ export default function App() {
       });
     }
     setActiveFileIndex(index);
+
+    fileScrollCleanupRef.current?.();
+    fileScrollCleanupRef.current = null;
+
     requestAnimationFrame(() => {
-      fileRefs.current[index]?.scrollIntoView({ behavior: 'instant', block: 'start' });
+      if (!alignFileInDiffPane(index) || typeof ResizeObserver === 'undefined') {
+        return;
+      }
+
+      let frameId: number | null = null;
+      let timeoutId: number;
+      const observer = new ResizeObserver(() => {
+        if (frameId !== null) cancelAnimationFrame(frameId);
+        frameId = requestAnimationFrame(() => {
+          frameId = null;
+          alignFileInDiffPane(index);
+        });
+      });
+      const cleanup = () => {
+        observer.disconnect();
+        if (frameId !== null) cancelAnimationFrame(frameId);
+        window.clearTimeout(timeoutId);
+        if (fileScrollCleanupRef.current === cleanup) {
+          fileScrollCleanupRef.current = null;
+        }
+      };
+
+      for (let i = 0; i <= index; i++) {
+        const section = fileRefs.current[i];
+        if (section) observer.observe(section);
+      }
+      timeoutId = window.setTimeout(cleanup, 600);
+      fileScrollCleanupRef.current = cleanup;
     });
-  }, [fileInfos, viewedFiles]);
+  }, [alignFileInDiffPane, fileInfos, viewedFiles]);
+
+  useEffect(() => {
+    return () => {
+      fileScrollCleanupRef.current?.();
+    };
+  }, []);
 
   const handleRangeSelected = useCallback(
     (file: string, startLine: number, endLine: number, side: AnnotationSide) => {
@@ -2616,8 +2667,8 @@ export default function App() {
       setIsReviewDialogOpen(true);
     } catch {
       setReviewModels([
-        { id: 'claude', name: 'Claude', available: false },
-        { id: 'codex', name: 'Codex', available: false },
+        { id: 'claude', name: 'Claude', tool: 'claude', available: false },
+        { id: 'codex', name: 'Codex', tool: 'codex', available: false },
       ]);
       setIsReviewDialogOpen(true);
     }
@@ -3120,7 +3171,7 @@ export default function App() {
               </div>
             </aside>
 
-            <div className="diff-content flex-1 min-w-0 overflow-auto">
+            <div ref={diffContentRef} className="diff-content flex-1 min-w-0 overflow-auto">
               {reviewSummaries.size > 0 && (
                 <ReviewSummaryPanel
                   summaries={reviewSummaries}
@@ -3136,6 +3187,8 @@ export default function App() {
                   <div
                     className={index > 0 ? 'border-t border-border' : undefined}
                     key={`${selection?.type === 'working' ? 'working' : diff?.branch}-${index}`}
+                    data-file-path={info.path}
+                    data-file-index={index}
                     ref={(el) => { fileRefs.current[index] = el; }}
                   >
                     {isViewed ? (
@@ -3438,11 +3491,12 @@ export default function App() {
         ) : null}
 
         {!isDiffLoading && activePatch && diffPatches.length > 0 && (
-          <div className="diff-content flex-1 min-w-0 min-h-0 overflow-auto">
+          <div ref={diffContentRef} className="diff-content flex-1 min-w-0 min-h-0 overflow-auto">
             {reviewSummaries.size > 0 && (
               <ReviewSummaryPanel
                 summaries={reviewSummaries}
-                onClose={() => setReviewSummaries(new Map())}
+                fixPrompt={reviewFixPrompt}
+                onClose={() => { setReviewSummaries(new Map()); setReviewFixPrompt(null); }}
               />
             )}
             {diffPatches.map((patch, index) => {
@@ -3453,6 +3507,9 @@ export default function App() {
                 <div
                   className={index > 0 ? 'border-t border-border' : undefined}
                   key={`mobile-${selection?.type === 'working' ? 'working' : diff?.branch}-${index}`}
+                  data-file-path={info.path}
+                  data-file-index={index}
+                  ref={(el) => { fileRefs.current[index] = el; }}
                 >
                   {isViewed ? (
                     <ViewedFileHeader fileInfo={info} isViewed={isViewed} onToggle={toggleViewed} />
@@ -3535,7 +3592,6 @@ export default function App() {
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[320px]">
           <BranchPicker
             branches={branches}
-            currentBranch=""
             sourceBranch=""
             onSelect={handleAcceptBranchSelect}
             onCancel={handleAcceptCancelPicker}
@@ -3551,7 +3607,6 @@ export default function App() {
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[320px]">
           <BranchPicker
             branches={branches}
-            currentBranch={selection.name}
             sourceBranch={selection.name}
             onSelect={handleMoveHunksBranchSelect}
             onCancel={handleMoveCancelPicker}

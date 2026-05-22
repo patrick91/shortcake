@@ -7,6 +7,19 @@ from playwright.sync_api import Page, expect
 pytestmark = pytest.mark.e2e
 
 
+def _new_file_patch(path: str, marker: str, line_count: int = 80) -> str:
+    lines = "\n".join(f"+{marker} line {i}" for i in range(1, line_count + 1))
+    return (
+        f"diff --git a/{path} b/{path}\n"
+        "new file mode 100644\n"
+        "index 0000000..abc1234\n"
+        "--- /dev/null\n"
+        f"+++ b/{path}\n"
+        f"@@ -0,0 +1,{line_count} @@\n"
+        f"{lines}\n"
+    )
+
+
 def test_diff_loads_on_branch_click(ui_page: Page):
     """Clicking branch_a loads its diff; header shows 'branch_a -> main'."""
     ui_page.locator("button", has_text="branch_a").first.click()
@@ -39,6 +52,67 @@ def test_file_click_scrolls(ui_page: Page):
 
     # The file button should receive active styling
     expect(file_btn).to_have_class(re.compile(r"bg-accent-bg"))
+
+
+def test_file_click_scrolls_to_clicked_file_section(page: Page, ui_url: str):
+    """Clicking a file in a multi-file diff scrolls to that file's section."""
+    mock_patch = "".join(
+        [
+            _new_file_patch("z_first.py", "FIRST"),
+            _new_file_patch("a_middle.py", "MIDDLE"),
+            _new_file_patch("m_last.py", "LAST"),
+        ]
+    )
+    page.route(
+        re.compile(r"/api/diff\?"),
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {"branch": "branch_b", "parent": "branch_a", "patch": mock_patch}
+            ),
+        ),
+    )
+    page.goto(ui_url)
+    page.wait_for_selector("text=branch_a", timeout=15_000)
+    page.locator("button", has_text="branch_b").first.click()
+    page.wait_for_selector(".diff-content", timeout=10_000)
+
+    page.evaluate("document.querySelector('.diff-content').scrollTop = 0")
+    page.locator("aside button", has_text="a_middle.py").click()
+
+    page.wait_for_function(
+        """
+        () => {
+          const scroller = document.querySelector('.diff-content');
+          const target = scroller?.querySelector('[data-file-path="a_middle.py"]');
+          if (!scroller || !target) return false;
+          const scrollerRect = scroller.getBoundingClientRect();
+          const targetRect = target.getBoundingClientRect();
+          const offset = targetRect.top - scrollerRect.top;
+          return scroller.scrollTop > 0 && Math.abs(offset) <= 8;
+        }
+        """,
+        timeout=5_000,
+    )
+    position = page.evaluate(
+        """
+        () => {
+          const scroller = document.querySelector('.diff-content');
+          const target = scroller.querySelector('[data-file-path="a_middle.py"]');
+          if (!target) return null;
+          const scrollerRect = scroller.getBoundingClientRect();
+          const targetRect = target.getBoundingClientRect();
+          return {
+            offset: targetRect.top - scrollerRect.top,
+            scrollTop: scroller.scrollTop,
+          };
+        }
+        """
+    )
+    assert position is not None
+    assert position["scrollTop"] > 0
+    assert abs(position["offset"]) <= 8
 
 
 def test_unified_split_toggle(ui_page: Page):

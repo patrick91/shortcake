@@ -437,6 +437,33 @@ index 0000000..6f7a8b9
 
 // --- Large working changes mock for performance testing ---
 
+function normalizeMockPatch(patch: string): string {
+  const lines = patch.split('\n');
+  let inHunk = false;
+
+  return lines
+    .map((line, index) => {
+      if (line.startsWith('diff --git ')) {
+        inHunk = false;
+        return line;
+      }
+      if (line.startsWith('@@')) {
+        inHunk = true;
+        return line;
+      }
+      if (
+        inHunk &&
+        line === '' &&
+        index < lines.length - 1 &&
+        !lines[index + 1]?.startsWith('diff --git ')
+      ) {
+        return ' ';
+      }
+      return line;
+    })
+    .join('\n');
+}
+
 function generateWorkingChangesPatch(): string {
   const files: string[] = [];
 
@@ -1368,7 +1395,7 @@ index 0000000..2f3a4b5
   return files.join('\n');
 }
 
-const MOCK_WORKING_PATCH = generateWorkingChangesPatch();
+const MOCK_WORKING_PATCH = normalizeMockPatch(generateWorkingChangesPatch());
 
 const MOCK_WORKING_SUGGESTIONS = [
   { file: 'src/config/settings.py', hunkIndex: 0, suggestedBranch: 'feat/auth', reason: 'Logging config relates to auth middleware' },
@@ -1464,7 +1491,11 @@ export function mockApi(): Plugin {
           if (!mock) {
             return json(res, 400, { error: `Branch '${branch}' is not tracked` });
           }
-          return json(res, 200, { branch, parent: mock.parent, patch: mock.patch });
+          return json(res, 200, {
+            branch,
+            parent: mock.parent,
+            patch: normalizeMockPatch(mock.patch),
+          });
         }
 
         if (req.method === 'POST' && url.pathname === '/api/move-lines') {
