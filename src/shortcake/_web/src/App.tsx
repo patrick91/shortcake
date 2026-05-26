@@ -10,7 +10,7 @@ import { getFiletypeFromFileName, getSingularPatch, setLanguageOverride } from '
 import { preloadDiffHTML } from '@pierre/diffs/ssr';
 import DiffsWorker from '@pierre/diffs/worker/worker.js?worker';
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
+import { Group, Panel, Separator, useDefaultLayout, usePanelRef } from 'react-resizable-panels';
 
 type DiffStyle = 'unified' | 'split';
 type ThemeMode = 'dark' | 'light' | 'system';
@@ -1547,6 +1547,10 @@ export default function App() {
     storage: localStorage,
     panelIds: ['sidebar', 'content'],
   });
+  const stackSidebarPanelRef = usePanelRef();
+  const [isStackSidebarCollapsed, setIsStackSidebarCollapsed] = useState(
+    () => localStorage.getItem('shortcake-stack-sidebar-collapsed') === 'true',
+  );
   const [stack, setStack] = useState<StackResponse | null>(null);
   const [selection, setSelectionRaw] = useState<DiffSelection | null>(
     () => selectionFromHash(window.location.hash),
@@ -1583,6 +1587,15 @@ export default function App() {
   const [reviewSummaries, setReviewSummaries] = useState<Map<string, string>>(new Map());
   const [reviewFixPrompt, setReviewFixPrompt] = useState<string | null>(null);
   const isReviewing = reviewModelStatus.size > 0 && [...reviewModelStatus.values()].some((s) => s === 'pending');
+
+  const toggleStackSidebar = useCallback(() => {
+    setIsStackSidebarCollapsed((collapsed) => !collapsed);
+  }, []);
+
+  const handleStackSidebarResize = useCallback((size: { asPercentage: number }) => {
+    const collapsed = size.asPercentage < 1;
+    setIsStackSidebarCollapsed((current) => (current === collapsed ? current : collapsed));
+  }, []);
 
   const setSelection = useCallback((sel: DiffSelection | null) => {
     setSelectionRaw(sel);
@@ -1644,6 +1657,26 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('shortcake-diff-theme-light', diffThemeLight);
   }, [diffThemeLight]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      'shortcake-stack-sidebar-collapsed',
+      String(isStackSidebarCollapsed),
+    );
+  }, [isStackSidebarCollapsed]);
+
+  useEffect(() => {
+    if (!isWideScreen) return;
+
+    const panel = stackSidebarPanelRef.current;
+    if (!panel) return;
+
+    if (isStackSidebarCollapsed) {
+      panel.collapse();
+    } else {
+      panel.expand();
+    }
+  }, [isWideScreen, isStackSidebarCollapsed, stackSidebarPanelRef]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2270,8 +2303,17 @@ export default function App() {
     <main className={`relative h-screen animate-fade-in overflow-hidden ${isWideScreen ? '' : 'flex flex-col'}`}>
       {isWideScreen ? (
       <Group orientation="horizontal" {...savedLayout}>
-      <Panel id="sidebar" defaultSize="20%" minSize="15%" maxSize="40%">
-      <section className="border-r border-border bg-surface overflow-hidden flex flex-col h-full">
+      <Panel
+        id="sidebar"
+        defaultSize="20%"
+        minSize="15%"
+        maxSize="40%"
+        collapsible
+        collapsedSize="0%"
+        panelRef={stackSidebarPanelRef}
+        onResize={handleStackSidebarResize}
+      >
+      <section id="stack-sidebar" aria-label="Stack sidebar" className="border-r border-border bg-surface overflow-hidden flex flex-col h-full">
         <div className="px-[1.15rem] h-[60px] shrink-0 flex flex-col justify-center border-b border-border">
           <p className="font-mono text-[0.68rem] font-medium uppercase tracking-[0.13em] text-accent m-0 mb-[0.3rem]">
             Shortcake
@@ -2424,23 +2466,39 @@ export default function App() {
           onLightChange={setDiffThemeLight}
         />
         <header className="px-[1.15rem] h-[60px] shrink-0 border-b border-border flex justify-between items-center gap-4">
-          <div>
-            <p className="font-mono text-[0.68rem] font-medium uppercase tracking-[0.13em] text-accent m-0 mb-[0.3rem]">
-              Diff
-            </p>
-            <h2>
-              {selection?.type === 'working' ? (
-                'Uncommitted changes'
-              ) : diff ? (
-                <>
-                  {diff.branch}{' '}
-                  <span className="text-text-muted font-normal">&rarr;</span>{' '}
-                  {diff.parent}
-                </>
-              ) : (
-                'Select a branch'
-              )}
-            </h2>
+          <div className="flex items-center gap-3 min-w-0">
+            <button
+              className="relative appearance-none border border-border bg-transparent text-text-muted hover:bg-surface-hover hover:text-text-primary cursor-pointer size-7 rounded-md flex items-center justify-center shrink-0"
+              onClick={toggleStackSidebar}
+              type="button"
+              aria-controls="stack-sidebar"
+              aria-expanded={!isStackSidebarCollapsed}
+              aria-label={isStackSidebarCollapsed ? 'Show stack sidebar' : 'Hide stack sidebar'}
+              title={isStackSidebarCollapsed ? 'Show stack sidebar' : 'Hide stack sidebar'}
+            >
+              <span aria-hidden="true" className="font-mono text-[1rem] leading-none">
+                {isStackSidebarCollapsed ? '\u203a' : '\u2039'}
+              </span>
+              <span className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-x-1/2 -translate-y-1/2 pointer-fine:hidden" aria-hidden="true" />
+            </button>
+            <div className="min-w-0">
+              <p className="font-mono text-[0.68rem] font-medium uppercase tracking-[0.13em] text-accent m-0 mb-[0.3rem]">
+                Diff
+              </p>
+              <h2>
+                {selection?.type === 'working' ? (
+                  'Uncommitted changes'
+                ) : diff ? (
+                  <>
+                    {diff.branch}{' '}
+                    <span className="text-text-muted font-normal">&rarr;</span>{' '}
+                    {diff.parent}
+                  </>
+                ) : (
+                  'Select a branch'
+                )}
+              </h2>
+            </div>
           </div>
 
           <div className="flex items-center gap-2">
