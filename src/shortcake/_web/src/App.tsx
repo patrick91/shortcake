@@ -318,6 +318,21 @@ function buildChangedFilesTreeUnsafeCSS(): string {
     [data-type='item'][data-item-selected='true'] [data-item-section='decoration'] {
       color: var(--trees-selected-fg);
     }
+    [data-file-tree-search-container] {
+      margin-bottom: 8px;
+    }
+    [data-file-tree-search-input] {
+      border-color: var(--color-border);
+      transition: border-color 150ms ease-in-out;
+    }
+    [data-file-tree-search-input]::placeholder {
+      color: var(--color-text-muted);
+    }
+    [data-file-tree-search-input]:focus-visible,
+    [data-file-tree-search-input][data-file-tree-search-input-fake-focus='true'] {
+      border-color: color-mix(in lab, var(--color-accent) 40%, transparent);
+      outline: none;
+    }
   `;
 }
 
@@ -415,11 +430,13 @@ function ChangedFilesTree({
     initialSearchQuery: fileFilter || null,
     initialSelectedPaths: activePath ? [activePath] : [],
     itemHeight: 26,
+    onSearchChange: (value) => onFilterChange(value ?? ''),
     onSelectionChange: handleSelectionChange,
     overscan: 16,
     paths,
     renderRowDecoration,
     search: true,
+    searchBlurBehavior: 'retain',
     stickyFolders: false,
     unsafeCSS: buildChangedFilesTreeUnsafeCSS(),
   });
@@ -471,6 +488,9 @@ function ChangedFilesTree({
       '--trees-item-padding-x-override': '10px',
       '--trees-level-gap-override': '14px',
       '--trees-padding-inline-override': '0px',
+      '--trees-search-bg-override': 'var(--color-surface-hover)',
+      '--trees-search-fg-override': 'var(--color-text-primary)',
+      '--trees-search-font-weight-override': '400',
       '--trees-selected-bg-override': 'var(--color-accent-bg)',
       '--trees-selected-fg-override': 'var(--color-text-primary)',
       '--trees-status-added-override': 'var(--color-stat-add)',
@@ -482,24 +502,13 @@ function ChangedFilesTree({
   );
 
   return (
-    <>
-      <div className="px-2.5 py-2 border-b border-border">
-        <input
-          className="w-full appearance-none border border-border rounded-md bg-surface-hover text-text-primary font-mono text-[0.72rem] px-2.5 py-1.5 outline-none transition-[border-color] duration-150 ease-in-out focus:border-accent/40 focus:ring-1 focus:ring-accent/10 placeholder:text-text-muted"
-          type="text"
-          placeholder="Filter files..."
-          value={fileFilter}
-          onChange={(e) => onFilterChange(e.target.value)}
-        />
-      </div>
-      <div className="flex-1 min-h-0 overflow-hidden py-1.5">
-        <PierreFileTree
-          className="block h-full w-full"
-          model={model}
-          style={treeStyle}
-        />
-      </div>
-    </>
+    <div className="flex-1 min-h-0 overflow-hidden px-2.5 pt-2 pb-1.5">
+      <PierreFileTree
+        className="block h-full w-full"
+        model={model}
+        style={treeStyle}
+      />
+    </div>
   );
 }
 
