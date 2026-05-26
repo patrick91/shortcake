@@ -34,8 +34,11 @@ def test_diff_loads_on_branch_click(ui_page: Page):
 
 def test_diff_shows_file_tree(ui_page: Page):
     """File tree sidebar shows changed files (feature_b.py for branch_b)."""
-    file_tree = ui_page.locator("aside")
-    expect(file_tree.get_by_text("feature_b.py")).to_be_visible()
+    file_entry = ui_page.locator(
+        'aside file-tree-container '
+        '[data-type="item"][data-item-type="file"][data-item-path="feature_b.py"]'
+    )
+    expect(file_entry).to_be_visible()
 
 
 def test_diff_shows_additions(ui_page: Page):
@@ -58,7 +61,9 @@ def test_diff_syntax_highlights_new_file(ui_page: Page):
     unsafe_css = ui_page.evaluate(
         """
         () => [...document.querySelectorAll('diffs-container')]
-          .flatMap((root) => [...(root.shadowRoot?.querySelectorAll('style[data-unsafe-css]') ?? [])])
+          .flatMap((root) => [
+            ...(root.shadowRoot?.querySelectorAll('style[data-unsafe-css]') ?? [])
+          ])
           .map((style) => style.textContent ?? '')
           .join('\\n')
         """
@@ -71,7 +76,9 @@ def test_diff_syntax_highlights_new_file(ui_page: Page):
         """
         () => new Set(
           [...document.querySelectorAll('diffs-container')]
-            .flatMap((root) => [...(root.shadowRoot?.querySelectorAll('[data-line] span') ?? [])])
+            .flatMap((root) => [
+              ...(root.shadowRoot?.querySelectorAll('[data-line] span') ?? [])
+            ])
             .map((span) => getComputedStyle(span).color)
         ).size > 1
         """,
@@ -81,7 +88,9 @@ def test_diff_syntax_highlights_new_file(ui_page: Page):
         """
         () => [...new Set(
           [...document.querySelectorAll('diffs-container')]
-            .flatMap((root) => [...(root.shadowRoot?.querySelectorAll('[data-line] span') ?? [])])
+            .flatMap((root) => [
+              ...(root.shadowRoot?.querySelectorAll('[data-line] span') ?? [])
+            ])
             .map((span) => getComputedStyle(span).color)
         )]
         """
@@ -91,11 +100,13 @@ def test_diff_syntax_highlights_new_file(ui_page: Page):
 
 def test_file_click_scrolls(ui_page: Page):
     """Clicking a file in the file tree highlights it as active."""
-    file_btn = ui_page.locator("aside button", has_text="feature_b.py")
+    file_btn = ui_page.locator(
+        'aside file-tree-container '
+        '[data-type="item"][data-item-type="file"][data-item-path="feature_b.py"]'
+    )
     file_btn.click()
 
-    # The file button should receive active styling
-    expect(file_btn).to_have_class(re.compile(r"bg-accent-bg"))
+    expect(file_btn).to_have_attribute("data-item-selected", "true")
 
 
 def test_file_click_scrolls_to_clicked_file_section(page: Page, ui_url: str):
@@ -123,7 +134,10 @@ def test_file_click_scrolls_to_clicked_file_section(page: Page, ui_url: str):
     page.wait_for_selector(".diff-content", timeout=10_000)
 
     page.evaluate("document.querySelector('.diff-content').scrollTop = 0")
-    page.locator("aside button", has_text="a_middle.py").click()
+    page.locator(
+        'aside file-tree-container '
+        '[data-type="item"][data-item-type="file"][data-item-path="a_middle.py"]'
+    ).click()
 
     page.wait_for_function(
         """
