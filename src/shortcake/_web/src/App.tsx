@@ -178,6 +178,7 @@ function buildDiffUnsafeCSS(resolvedTheme: 'dark' | 'light'): string {
       position: sticky;
       top: 0;
       z-index: 10;
+      min-height: 44px !important;
       background: ${headerBg} !important;
       border-bottom: 1px solid ${headerBorder} !important;
       box-shadow: ${headerShadow};
@@ -989,9 +990,39 @@ function SavedSplitSelection({
   );
 }
 
+const DIFF_HEADER_HEIGHT = 'min-h-[44px]';
+
+function ViewedToggle({
+  isViewed,
+  onToggle,
+}: {
+  isViewed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`flex items-center gap-1.5 appearance-none border-0 bg-transparent px-1 py-0.5 rounded cursor-pointer select-none font-mono text-[0.7rem] transition-colors duration-100 ${
+        isViewed ? 'text-accent' : 'text-text-secondary hover:text-text-primary'
+      }`}
+      onClick={(e) => { e.stopPropagation(); onToggle(); }}
+    >
+      <span
+        className={`inline-flex items-center justify-center w-[15px] h-[15px] rounded-[3px] border text-[0.6rem] leading-none shrink-0 transition-colors duration-100 ${
+          isViewed
+            ? 'bg-accent border-accent text-white'
+            : 'bg-surface border-border-strong hover:border-text-muted'
+        }`}
+      >
+        {isViewed ? '\u2713' : ''}
+      </span>
+      Viewed
+    </button>
+  );
+}
+
 function ViewedFileHeader({
   fileInfo,
-  isViewed,
   onToggle,
 }: {
   fileInfo: FileInfo;
@@ -1000,31 +1031,14 @@ function ViewedFileHeader({
 }) {
   return (
     <div
-      className={`flex items-center gap-2 px-3 py-1.5 border-b border-border-strong cursor-pointer select-none transition-colors duration-100 ${
-        isViewed
-          ? 'bg-surface-hover hover:bg-surface-active'
-          : 'bg-surface-hover/60 hover:bg-surface-hover'
-      }`}
+      className={`flex items-center gap-3 px-4 ${DIFF_HEADER_HEIGHT} border-b border-border-strong bg-surface-hover hover:bg-surface-active cursor-pointer select-none transition-colors duration-100`}
       onClick={() => onToggle(fileInfo.path)}
     >
-      <span
-        className={`inline-flex items-center justify-center w-4 h-4 rounded border text-[0.6rem] shrink-0 transition-colors duration-100 ${
-          isViewed
-            ? 'bg-accent/15 border-accent/40 text-accent'
-            : 'border-border text-transparent hover:border-border-strong'
-        }`}
-      >
-        {isViewed ? '\u2713' : ''}
-      </span>
-      <span
-        className={`font-mono text-[0.72rem] truncate transition-opacity duration-100 ${
-          isViewed ? 'text-text-muted opacity-60' : 'text-text-secondary'
-        }`}
-      >
+      <span className="font-mono text-[0.72rem] truncate text-text-muted">
         {fileInfo.path}
       </span>
-      {isViewed && (
-        <span className="ml-auto flex gap-[5px] text-[0.6rem] shrink-0 opacity-50">
+      <span className="ml-auto flex items-center gap-3 shrink-0">
+        <span className="flex gap-[5px] text-[0.6rem] opacity-70">
           {fileInfo.additions > 0 && (
             <span className="text-stat-add">+{fileInfo.additions}</span>
           )}
@@ -1032,12 +1046,8 @@ function ViewedFileHeader({
             <span className="text-stat-del">-{fileInfo.deletions}</span>
           )}
         </span>
-      )}
-      {!isViewed && (
-        <span className="ml-auto font-mono text-[0.6rem] text-text-muted opacity-0 group-hover:opacity-100">
-          Mark as viewed
-        </span>
-      )}
+        <ViewedToggle isViewed onToggle={() => onToggle(fileInfo.path)} />
+      </span>
     </div>
   );
 }
@@ -1075,7 +1085,7 @@ function LazyDiffFileSection({
 
   return (
     <div ref={ref}>
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-hover border-b border-border-strong">
+      <div className="flex items-center gap-2 px-4 min-h-[44px] bg-surface-hover border-b border-border-strong">
         <span className="font-mono text-[0.72rem] text-text-secondary truncate">
           {fileInfo.path}
         </span>
@@ -1118,7 +1128,7 @@ function LargeFilePlaceholder({
 }) {
   return (
     <div>
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-hover border-b border-border-strong">
+      <div className="flex items-center gap-2 px-4 min-h-[44px] bg-surface-hover border-b border-border-strong">
         <span className="font-mono text-[0.72rem] text-text-secondary truncate">
           {fileInfo.path}
         </span>
@@ -1483,15 +1493,7 @@ const DiffFileSection = React.memo(function DiffFileSection({
 
   const renderHeaderMetadata = useCallback(() => {
     if (!onToggleViewed) return null;
-    return (
-      <button
-        type="button"
-        className="appearance-none border border-border bg-transparent text-text-muted text-[0.65rem] font-mono px-2 py-0.5 rounded cursor-pointer hover:bg-surface-hover hover:text-text-primary hover:border-border-strong transition-colors duration-100 whitespace-nowrap"
-        onClick={(e) => { e.stopPropagation(); onToggleViewed(fileInfo.path); }}
-      >
-        Viewed
-      </button>
-    );
+    return <ViewedToggle isViewed={false} onToggle={() => onToggleViewed(fileInfo.path)} />;
   }, [onToggleViewed, fileInfo.path]);
 
   return (
