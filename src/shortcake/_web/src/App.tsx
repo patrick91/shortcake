@@ -2725,21 +2725,30 @@ export default function App() {
           onLightChange={setDiffThemeLight}
         />
         <header className="px-[1.15rem] h-[60px] shrink-0 border-b border-border flex justify-between items-center gap-4">
-          <DiffSwitcher
-            diff={diff}
-            open={switcherOpen}
-            onOpenChange={setSwitcherOpen}
-            selection={selection}
-            branches={branches}
-            isStackLoading={isStackLoading}
-            isGithubInfoLoading={isGithubInfoLoading}
-            githubInfo={githubInfo}
-            parentIndexMap={parentIndexMap}
-            lastChildIndexMap={lastChildIndexMap}
-            onSelect={(sel) => { setSelection(sel); setSwitcherOpen(false); }}
-          />
+          <div className="flex items-center gap-3 min-w-0 max-w-[58vw] shrink-0 xl:max-w-none">
+            <img
+              src="/favicon.svg"
+              alt="Shortcake"
+              className="hidden sm:block h-[34px] w-[34px] shrink-0"
+              width="97"
+              height="99"
+            />
+            <DiffSwitcher
+              diff={diff}
+              open={switcherOpen}
+              onOpenChange={setSwitcherOpen}
+              selection={selection}
+              branches={branches}
+              isStackLoading={isStackLoading}
+              isGithubInfoLoading={isGithubInfoLoading}
+              githubInfo={githubInfo}
+              parentIndexMap={parentIndexMap}
+              lastChildIndexMap={lastChildIndexMap}
+              onSelect={(sel) => { setSelection(sel); setSwitcherOpen(false); }}
+            />
+          </div>
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2 min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             {moveSuccess && (
               <span className="font-mono text-[0.7rem] text-accent whitespace-nowrap">
                 {moveSuccess}
