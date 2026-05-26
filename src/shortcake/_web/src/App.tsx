@@ -1623,6 +1623,12 @@ function GitBranchIcon() {
   );
 }
 
+const WORKING_KEY = '__working__';
+
+function diffItemId(key: string): string {
+  return `sc-diff-item-${key.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+}
+
 type StackListProps = {
   branches: StackBranch[];
   selection: DiffSelection | null;
@@ -1634,6 +1640,8 @@ type StackListProps = {
   onSelect: (sel: DiffSelection) => void;
   isFiltering: boolean;
   workingVisible: boolean;
+  activeKey: string | null;
+  onActivateKey: (key: string) => void;
 };
 
 function StackList({
@@ -1647,22 +1655,36 @@ function StackList({
   onSelect,
   isFiltering,
   workingVisible,
+  activeKey,
+  onActivateKey,
 }: StackListProps) {
+  const activeRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [activeKey]);
+
   const renderBranchButton = (branch: StackBranch, index: number | null) => {
     const active = selection?.type === 'branch' && branch.name === selection.name;
+    const isActive = activeKey === branch.name;
     const branchPadding =
       index === null ? 8 : STACK_CARD_INDENT_BASE + branch.depth * STACK_CARD_INDENT_STEP;
     const ghInfo = githubInfo[branch.name];
 
     return (
       <button
-        className={`relative appearance-none rounded-md py-[5px] px-[7px] text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${active ? 'bg-accent-bg' : 'bg-transparent hover:bg-surface-hover'}`}
+        ref={isActive ? activeRef : undefined}
+        id={diffItemId(branch.name)}
+        role="option"
+        aria-selected={active}
+        className={`relative appearance-none rounded-md py-[5px] px-[7px] text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${active ? 'bg-accent-bg' : isActive ? 'bg-surface-hover' : 'bg-transparent hover:bg-surface-hover'} ${isActive ? 'ring-1 ring-inset ring-accent/40' : ''}`}
         style={{
           ...(index === null ? {} : { anchorName: `--branch-${index}` }),
           marginInlineStart: `${branchPadding}px`,
           marginInlineEnd: '8px',
         } as React.CSSProperties}
         onClick={() => onSelect({ type: 'branch', name: branch.name })}
+        onMouseMove={() => { if (!isActive) onActivateKey(branch.name); }}
         type="button"
       >
         <span className="relative z-[2] flex items-center gap-[7px] w-full min-w-0">
@@ -1723,8 +1745,9 @@ function StackList({
 
   return (
     <div
+      id="sc-diff-listbox"
       className="relative flex flex-col gap-0 p-1.5 overflow-y-auto overflow-x-clip flex-1 min-h-0"
-      role="list"
+      role="listbox"
       aria-label="Tracked stack branches"
     >
       {isStackLoading ? (
@@ -1743,8 +1766,13 @@ function StackList({
 
       {workingVisible && (
         <button
-          className={`relative appearance-none rounded-md py-[5px] px-[7px] mx-[8px] mb-1 text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${selection?.type === 'working' ? 'bg-accent-bg' : 'bg-transparent hover:bg-surface-hover'}`}
+          ref={activeKey === WORKING_KEY ? activeRef : undefined}
+          id={diffItemId(WORKING_KEY)}
+          role="option"
+          aria-selected={selection?.type === 'working'}
+          className={`relative appearance-none rounded-md py-[5px] px-[7px] mx-[8px] mb-1 text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${selection?.type === 'working' ? 'bg-accent-bg' : activeKey === WORKING_KEY ? 'bg-surface-hover' : 'bg-transparent hover:bg-surface-hover'} ${activeKey === WORKING_KEY ? 'ring-1 ring-inset ring-accent/40' : ''}`}
           onClick={() => onSelect({ type: 'working' })}
+          onMouseMove={() => { if (activeKey !== WORKING_KEY) onActivateKey(WORKING_KEY); }}
           type="button"
         >
           <span className="relative z-[2] flex items-center gap-[7px]">
@@ -1804,7 +1832,10 @@ function StackList({
   );
 }
 
-type DiffSwitcherProps = Omit<StackListProps, 'isFiltering' | 'workingVisible'> & {
+type DiffSwitcherProps = Omit<
+  StackListProps,
+  'isFiltering' | 'workingVisible' | 'activeKey' | 'onActivateKey'
+> & {
   diff: DiffResponse | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -1815,6 +1846,7 @@ const IS_MAC = typeof navigator !== 'undefined' && navigator.platform.includes('
 function DiffSwitcher({ diff, open, onOpenChange, ...stackProps }: DiffSwitcherProps) {
   const { selection, branches, onSelect } = stackProps;
   const [query, setQuery] = useState('');
+  const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -1842,11 +1874,48 @@ function DiffSwitcher({ diff, open, onOpenChange, ...stackProps }: DiffSwitcherP
       )
     : branches;
 
+  // Flat list of selectable rows, in the same order StackList renders them.
+  const items: DiffSelection[] = [
+    ...(workingVisible ? [{ type: 'working' as const }] : []),
+    ...filteredBranches.map((b) => ({ type: 'branch' as const, name: b.name })),
+  ];
+  const clampedActive = items.length === 0 ? -1 : Math.min(activeIndex, items.length - 1);
+  const activeItem = clampedActive >= 0 ? items[clampedActive] : undefined;
+  const activeKey = activeItem
+    ? activeItem.type === 'working'
+      ? WORKING_KEY
+      : activeItem.name
+    : null;
+  const activeId = activeKey ? diffItemId(activeKey) : undefined;
+
+  // Reset the highlight to the top whenever the result set changes.
+  useEffect(() => {
+    setActiveIndex(0);
+  }, [query, open]);
+
+  const activateKey = (key: string) => {
+    const idx = items.findIndex(
+      (it) => (it.type === 'working' ? WORKING_KEY : it.name) === key,
+    );
+    if (idx >= 0) setActiveIndex(idx);
+  };
+
   const handleInputKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
+    if (e.key === 'ArrowDown') {
       e.preventDefault();
-      if (filteredBranches.length > 0) onSelect({ type: 'branch', name: filteredBranches[0]!.name });
-      else if (workingVisible) onSelect({ type: 'working' });
+      if (items.length > 0) setActiveIndex((i) => Math.min(i + 1, items.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (items.length > 0) setActiveIndex((i) => Math.max(i - 1, 0));
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      setActiveIndex(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      if (items.length > 0) setActiveIndex(items.length - 1);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (activeItem) onSelect(activeItem);
     }
   };
 
@@ -1899,6 +1968,11 @@ function DiffSwitcher({ diff, open, onOpenChange, ...stackProps }: DiffSwitcherP
                 <input
                   ref={inputRef}
                   type="text"
+                  role="combobox"
+                  aria-expanded="true"
+                  aria-controls="sc-diff-listbox"
+                  aria-activedescendant={activeId}
+                  autoComplete="off"
                   className="w-full appearance-none border border-border rounded-md bg-surface-hover text-text-primary font-mono text-[0.72rem] px-2.5 py-1.5 outline-none transition-[border-color] duration-150 ease-in-out focus:border-accent/40 focus:ring-1 focus:ring-accent/10 placeholder:text-text-muted"
                   placeholder="Filter branches…"
                   value={query}
@@ -1912,6 +1986,8 @@ function DiffSwitcher({ diff, open, onOpenChange, ...stackProps }: DiffSwitcherP
               branches={filteredBranches}
               isFiltering={isFiltering}
               workingVisible={workingVisible}
+              activeKey={activeKey}
+              onActivateKey={activateKey}
             />
           </Popover.Popup>
         </Popover.Positioner>
