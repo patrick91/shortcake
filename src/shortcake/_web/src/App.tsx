@@ -170,8 +170,18 @@ const STACK_GUIDE_OFFSET = 6;
 const STACK_GUIDE_STEP = 10;
 
 function buildDiffUnsafeCSS(resolvedTheme: 'dark' | 'light'): string {
+  const headerBg = resolvedTheme === 'light' ? '#ececed' : '#16161c';
+  const headerBorder = resolvedTheme === 'light' ? 'rgba(0, 0, 0, 0.12)' : 'rgba(255, 255, 255, 0.1)';
+  const headerShadow = resolvedTheme === 'light' ? '0 2px 5px rgba(0, 0, 0, 0.06)' : '0 2px 6px rgba(0, 0, 0, 0.35)';
   return `
-    [data-diffs-header] { position: sticky; top: 0; z-index: 10; }
+    [data-diffs-header] {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: ${headerBg} !important;
+      border-bottom: 1px solid ${headerBorder} !important;
+      box-shadow: ${headerShadow};
+    }
     [data-selected-line] { background: rgba(250, 204, 21, 0.10) !important; }
     [data-line] span[style*="--diffs-token-light"],
     [data-line] span[style*="--diffs-token-dark"] {
@@ -990,10 +1000,10 @@ function ViewedFileHeader({
 }) {
   return (
     <div
-      className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer select-none transition-colors duration-100 ${
+      className={`flex items-center gap-2 px-3 py-1.5 border-b border-border-strong cursor-pointer select-none transition-colors duration-100 ${
         isViewed
-          ? 'bg-surface-hover/60 hover:bg-surface-hover'
-          : 'bg-transparent hover:bg-surface-hover/40'
+          ? 'bg-surface-hover hover:bg-surface-active'
+          : 'bg-surface-hover/60 hover:bg-surface-hover'
       }`}
       onClick={() => onToggle(fileInfo.path)}
     >
@@ -1065,7 +1075,7 @@ function LazyDiffFileSection({
 
   return (
     <div ref={ref}>
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-hover/40">
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-hover border-b border-border-strong">
         <span className="font-mono text-[0.72rem] text-text-secondary truncate">
           {fileInfo.path}
         </span>
@@ -1108,7 +1118,7 @@ function LargeFilePlaceholder({
 }) {
   return (
     <div>
-      <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-hover/40">
+      <div className="flex items-center gap-2 px-3 py-1.5 bg-surface-hover border-b border-border-strong">
         <span className="font-mono text-[0.72rem] text-text-secondary truncate">
           {fileInfo.path}
         </span>
@@ -2695,7 +2705,7 @@ export default function App() {
                 const isViewed = viewedFiles.has(info.path);
                 return (
                   <div
-                    className={index > 0 ? 'border-t border-border' : undefined}
+                    className={index > 0 ? 'border-t-2 border-guide' : undefined}
                     key={`${selection?.type === 'working' ? 'working' : diff?.branch}-${index}`}
                     data-file-path={info.path}
                     data-file-index={index}
@@ -3012,7 +3022,7 @@ export default function App() {
               const isViewed = viewedFiles.has(info.path);
               return (
                 <div
-                  className={index > 0 ? 'border-t border-border' : undefined}
+                  className={index > 0 ? 'border-t-2 border-guide' : undefined}
                   key={`mobile-${selection?.type === 'working' ? 'working' : diff?.branch}-${index}`}
                   data-file-path={info.path}
                   data-file-index={index}
