@@ -9,6 +9,8 @@ import {
 import { getFiletypeFromFileName, getSingularPatch, setLanguageOverride } from '@pierre/diffs';
 import { preloadDiffHTML } from '@pierre/diffs/ssr';
 import DiffsWorker from '@pierre/diffs/worker/worker.js?worker';
+import type { FileTreeRowDecoration, GitStatusEntry } from '@pierre/trees';
+import { FileTree as PierreFileTree, useFileTree } from '@pierre/trees/react';
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Group, Panel, Separator, useDefaultLayout, usePanelRef } from 'react-resizable-panels';
 
@@ -156,27 +158,12 @@ type FileInfo = {
   name: string;
   additions: number;
   deletions: number;
+  status: GitStatusEntry['status'];
   patchIndex: number;
 };
 
-type DirEntry = {
-  type: 'dir';
-  name: string;
-  path: string;
-  children: TreeEntry[];
-};
-
-type FileEntry = {
-  type: 'file';
-  name: string;
-  info: FileInfo;
-};
-
-type TreeEntry = DirEntry | FileEntry;
-
 const API_BASE = import.meta.env.VITE_SHORTCAKE_API_URL ?? '';
-const FILE_TREE_INDENT_BASE = 10;
-const FILE_TREE_INDENT_STEP = 14;
+const FILE_TREE_VIEWED_MARK = '\u2713';
 const STACK_CARD_INDENT_BASE = 4;
 const STACK_CARD_INDENT_STEP = 10;
 const STACK_GUIDE_OFFSET = 6;
@@ -269,6 +256,13 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
   return payload as T;
 }
 
+function parsePatchStatus(patch: string): GitStatusEntry['status'] {
+  if (/^new file mode /m.test(patch)) return 'added';
+  if (/^deleted file mode /m.test(patch)) return 'deleted';
+  if (/^rename from /m.test(patch)) return 'renamed';
+  return 'modified';
+}
+
 function parseFileInfo(patch: string, index: number): FileInfo {
   const headerMatch = patch.match(/^diff --git a\/.+ b\/(.+)$/m);
   const path = headerMatch?.[1] ?? `file-${index}`;
@@ -288,163 +282,212 @@ function parseFileInfo(patch: string, index: number): FileInfo {
     else if (line.startsWith('-') && !line.startsWith('---')) deletions++;
   }
 
-  return { path, name, additions, deletions, patchIndex: index };
+  return { path, name, additions, deletions, status: parsePatchStatus(patch), patchIndex: index };
 }
 
-function buildFileTree(files: FileInfo[]): TreeEntry[] {
-  const root: TreeEntry[] = [];
-
-  for (const file of files) {
-    const parts = file.path.split('/');
-    let current = root;
-
-    for (let i = 0; i < parts.length - 1; i++) {
-      const dirName = parts[i]!;
-      const dirPath = parts.slice(0, i + 1).join('/');
-
-      let dir = current.find(
-        (e): e is DirEntry => e.type === 'dir' && e.name === dirName,
-      );
-
-      if (!dir) {
-        dir = { type: 'dir', name: dirName, path: dirPath, children: [] };
-        current.push(dir);
-      }
-
-      current = dir.children;
+function buildChangedFilesTreeUnsafeCSS(): string {
+  return `
+    [data-type='item'] {
+      transition: color 100ms ease-in-out, background-color 100ms ease-in-out;
     }
-
-    current.push({ type: 'file', name: file.name, info: file });
-  }
-
-  function sortEntries(entries: TreeEntry[]): void {
-    entries.sort((a, b) => {
-      if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-    for (const entry of entries) {
-      if (entry.type === 'dir') sortEntries(entry.children);
+    [data-type='item']:hover {
+      color: var(--trees-selected-fg);
+      background: var(--trees-bg-muted);
     }
-  }
-
-  sortEntries(root);
-  return root;
+    [data-item-section='content'] {
+      min-width: 0;
+    }
+    [data-item-section='decoration'] {
+      font-family: var(--trees-font-family);
+      font-size: 0.6rem;
+      font-weight: 500;
+      letter-spacing: 0;
+      color: var(--trees-fg-muted);
+    }
+    [data-type='item'][data-item-selected='true'] [data-item-section='decoration'] {
+      color: var(--trees-selected-fg);
+    }
+  `;
 }
 
-function treeHasMatch(entry: TreeEntry, filter: string): boolean {
-  if (entry.type === 'file') {
-    return entry.info.path.toLowerCase().includes(filter);
-  }
-  return entry.children.some((child) => treeHasMatch(child, filter));
+function formatFileTreeDecoration(file: FileInfo, isViewed: boolean): string {
+  const parts: string[] = [];
+  if (isViewed) parts.push(FILE_TREE_VIEWED_MARK);
+  if (file.additions > 0) parts.push(`+${file.additions}`);
+  if (file.deletions > 0) parts.push(`-${file.deletions}`);
+  return parts.join(' ');
 }
 
+function getFileTreeDecorationTitle(file: FileInfo, isViewed: boolean): string {
+  const parts: string[] = [];
+  if (isViewed) parts.push('Viewed');
+  if (file.additions > 0) {
+    parts.push(`${file.additions} addition${file.additions === 1 ? '' : 's'}`);
+  }
+  if (file.deletions > 0) {
+    parts.push(`${file.deletions} deletion${file.deletions === 1 ? '' : 's'}`);
+  }
+  return parts.join(', ');
+}
 
-function FileTreeEntries({
-  entries,
-  depth,
-  collapsedDirs,
-  onToggleDir,
-  activeIndex,
-  onFileClick,
-  filter,
-  viewedFiles,
-}: {
-  entries: TreeEntry[];
-  depth: number;
-  collapsedDirs: Set<string>;
-  onToggleDir: (path: string) => void;
-  activeIndex: number | null;
+type ChangedFilesTreeProps = {
+  fileInfos: FileInfo[];
+  fileFilter: string;
+  activeFileIndex: number | null;
+  viewedFiles: Set<string>;
+  resolvedTheme: 'dark' | 'light';
+  onFilterChange: (value: string) => void;
   onFileClick: (index: number) => void;
-  filter: string;
-  viewedFiles?: Set<string>;
-}) {
-  const lowerFilter = filter.toLowerCase();
+};
+
+function ChangedFilesTree({
+  fileInfos,
+  fileFilter,
+  activeFileIndex,
+  viewedFiles,
+  resolvedTheme,
+  onFilterChange,
+  onFileClick,
+}: ChangedFilesTreeProps) {
+  const paths = useMemo(() => fileInfos.map((file) => file.path), [fileInfos]);
+  const fileByPath = useMemo(
+    () => new Map(fileInfos.map((file) => [file.path, file])),
+    [fileInfos],
+  );
+  const gitStatus = useMemo<GitStatusEntry[]>(
+    () => fileInfos.map((file) => ({ path: file.path, status: file.status })),
+    [fileInfos],
+  );
+  const activePath = activeFileIndex == null ? null : fileInfos[activeFileIndex]?.path ?? null;
+  const fileByPathRef = useRef(fileByPath);
+  const viewedFilesRef = useRef(viewedFiles);
+
+  useEffect(() => {
+    fileByPathRef.current = fileByPath;
+  }, [fileByPath]);
+
+  useEffect(() => {
+    viewedFilesRef.current = viewedFiles;
+  }, [viewedFiles]);
+
+  const renderRowDecoration = useCallback(({ item }: { item: { kind: string; path: string } }): FileTreeRowDecoration | null => {
+    if (item.kind !== 'file') return null;
+    const file = fileByPathRef.current.get(item.path);
+    if (!file) return null;
+
+    const isViewed = viewedFilesRef.current.has(item.path);
+    const text = formatFileTreeDecoration(file, isViewed);
+    if (!text) return null;
+
+    return {
+      text,
+      title: getFileTreeDecorationTitle(file, isViewed),
+    };
+  }, []);
+
+  const handleSelectionChange = useCallback((selectedPaths: readonly string[]) => {
+    const selectedPath = [...selectedPaths]
+      .reverse()
+      .find((path) => fileByPathRef.current.has(path));
+    if (!selectedPath) return;
+
+    const file = fileByPathRef.current.get(selectedPath);
+    if (file) onFileClick(file.patchIndex);
+  }, [onFileClick]);
+
+  const { model } = useFileTree({
+    density: 'compact',
+    fileTreeSearchMode: 'hide-non-matches',
+    flattenEmptyDirectories: false,
+    gitStatus,
+    initialExpansion: 'open',
+    initialSearchQuery: fileFilter || null,
+    initialSelectedPaths: activePath ? [activePath] : [],
+    itemHeight: 26,
+    onSelectionChange: handleSelectionChange,
+    overscan: 16,
+    paths,
+    renderRowDecoration,
+    search: true,
+    stickyFolders: false,
+    unsafeCSS: buildChangedFilesTreeUnsafeCSS(),
+  });
+
+  useEffect(() => {
+    model.resetPaths(paths);
+  }, [model, paths]);
+
+  useEffect(() => {
+    model.setSearch(fileFilter.trim() ? fileFilter : null);
+  }, [fileFilter, model]);
+
+  useEffect(() => {
+    model.setGitStatus(gitStatus);
+  }, [gitStatus, model, viewedFiles]);
+
+  useEffect(() => {
+    const selectedPaths = model.getSelectedPaths();
+
+    if (activePath) {
+      if (!selectedPaths.includes(activePath)) {
+        model.getItem(activePath)?.select();
+      }
+      model.scrollToPath(activePath, { focus: false, offset: 'nearest' });
+      return;
+    }
+
+    for (const path of selectedPaths) {
+      model.getItem(path)?.deselect();
+    }
+  }, [activePath, model]);
+
+  const treeStyle = useMemo(
+    () => ({
+      height: '100%',
+      width: '100%',
+      '--trees-accent-override': 'var(--color-accent)',
+      '--trees-bg-muted-override': 'var(--color-surface-hover)',
+      '--trees-bg-override': 'transparent',
+      '--trees-border-color-override': 'transparent',
+      '--trees-file-icon-color-default': 'var(--color-text-muted)',
+      '--trees-fg-muted-override': 'var(--color-text-muted)',
+      '--trees-fg-override': 'var(--color-text-secondary)',
+      '--trees-focus-ring-color-override': 'color-mix(in lab, var(--color-accent) 42%, transparent)',
+      '--trees-font-family-override': 'var(--font-mono)',
+      '--trees-font-size-override': '0.72rem',
+      '--trees-icon-width-override': '14px',
+      '--trees-item-margin-x-override': '2px',
+      '--trees-item-padding-x-override': '10px',
+      '--trees-level-gap-override': '14px',
+      '--trees-padding-inline-override': '0px',
+      '--trees-selected-bg-override': 'var(--color-accent-bg)',
+      '--trees-selected-fg-override': 'var(--color-text-primary)',
+      '--trees-status-added-override': 'var(--color-stat-add)',
+      '--trees-status-deleted-override': 'var(--color-stat-del)',
+      '--trees-status-modified-override': 'var(--color-accent)',
+      '--trees-status-renamed-override': resolvedTheme === 'light' ? '#a16207' : '#facc15',
+    }) as React.CSSProperties,
+    [resolvedTheme],
+  );
 
   return (
     <>
-      {entries.map((entry) => {
-        if (entry.type === 'dir') {
-          if (lowerFilter && !treeHasMatch(entry, lowerFilter)) return null;
-          const collapsed = collapsedDirs.has(entry.path);
-
-          return (
-            <div key={entry.path}>
-              <button
-                className="group appearance-none border-none bg-transparent text-text-secondary flex items-center gap-1.5 w-full py-[5px] px-3 font-sans text-[0.78rem] font-semibold cursor-pointer select-none transition-all duration-100 ease-in-out hover:bg-surface-hover hover:text-text-primary rounded-md mx-0.5"
-                style={{
-                  paddingInlineStart: `${FILE_TREE_INDENT_BASE + depth * FILE_TREE_INDENT_STEP}px`,
-                  width: 'calc(100% - 4px)',
-                }}
-                onClick={() => onToggleDir(entry.path)}
-                type="button"
-              >
-                <svg
-                  className={`w-3.5 h-3.5 text-text-muted shrink-0 transition-transform duration-150 ease-in-out ${collapsed ? '-rotate-90' : ''}`}
-                  viewBox="0 0 16 16"
-                  fill="currentColor"
-                >
-                  <path d="M4.427 5.427a.75.75 0 0 1 1.06-.073L8 7.585l2.513-2.231a.75.75 0 1 1 .997 1.122l-3.012 2.671a.75.75 0 0 1-.997 0L4.5 6.476a.75.75 0 0 1-.073-1.05Z" />
-                </svg>
-                <span className="whitespace-nowrap overflow-hidden text-ellipsis">
-                  {entry.name}
-                </span>
-              </button>
-              {!collapsed && (
-                <FileTreeEntries
-                  entries={entry.children}
-                  depth={depth + 1}
-                  collapsedDirs={collapsedDirs}
-                  onToggleDir={onToggleDir}
-                  activeIndex={activeIndex}
-                  onFileClick={onFileClick}
-                  filter={filter}
-                  viewedFiles={viewedFiles}
-                />
-              )}
-            </div>
-          );
-        }
-
-        if (lowerFilter && !entry.info.path.toLowerCase().includes(lowerFilter)) {
-          return null;
-        }
-
-        const active = entry.info.patchIndex === activeIndex;
-        const isViewed = viewedFiles?.has(entry.info.path) ?? false;
-
-        return (
-          <button
-            key={entry.info.path}
-            className={`group appearance-none border-none bg-transparent flex items-center gap-1.5 w-full py-[5px] px-3 font-mono text-[0.72rem] cursor-pointer select-none transition-all duration-100 ease-in-out rounded-md mx-0.5 ${active ? 'bg-accent-bg text-text-primary ring-1 ring-accent/20' : 'text-text-secondary hover:bg-surface-hover hover:text-text-primary'}`}
-            style={{
-              paddingInlineStart: `${FILE_TREE_INDENT_BASE + depth * FILE_TREE_INDENT_STEP}px`,
-              opacity: isViewed ? 0.5 : 1,
-              width: 'calc(100% - 4px)',
-            }}
-            onClick={() => onFileClick(entry.info.patchIndex)}
-            type="button"
-          >
-            {isViewed && (
-              <span className="text-accent text-[0.65rem] shrink-0 leading-none">{'\u2713'}</span>
-            )}
-            <span className="whitespace-nowrap overflow-hidden text-ellipsis min-w-0">
-              {entry.name}
-            </span>
-            <span className="ml-auto flex gap-1 shrink-0 items-center">
-              {entry.info.additions > 0 && (
-                <span className="text-stat-add text-[0.6rem] font-medium bg-stat-add/10 px-1.5 py-px rounded-full leading-relaxed">
-                  +{entry.info.additions}
-                </span>
-              )}
-              {entry.info.deletions > 0 && (
-                <span className="text-stat-del text-[0.6rem] font-medium bg-stat-del/10 px-1.5 py-px rounded-full leading-relaxed">
-                  -{entry.info.deletions}
-                </span>
-              )}
-            </span>
-          </button>
-        );
-      })}
+      <div className="px-2.5 py-2 border-b border-border">
+        <input
+          className="w-full appearance-none border border-border rounded-md bg-surface-hover text-text-primary font-mono text-[0.72rem] px-2.5 py-1.5 outline-none transition-[border-color] duration-150 ease-in-out focus:border-accent/40 focus:ring-1 focus:ring-accent/10 placeholder:text-text-muted"
+          type="text"
+          placeholder="Filter files..."
+          value={fileFilter}
+          onChange={(e) => onFilterChange(e.target.value)}
+        />
+      </div>
+      <div className="flex-1 min-h-0 overflow-hidden py-1.5">
+        <PierreFileTree
+          className="block h-full w-full"
+          model={model}
+          style={treeStyle}
+        />
+      </div>
     </>
   );
 }
@@ -1561,7 +1604,6 @@ export default function App() {
   const [isDiffLoading, setIsDiffLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [diffStyle, setDiffStyle] = useState<DiffStyle>('unified');
-  const [collapsedDirs, setCollapsedDirs] = useState<Set<string>>(new Set());
   const [fileFilter, setFileFilter] = useState('');
   const [activeFileIndex, setActiveFileIndex] = useState<number | null>(null);
   const diffContentRef = useRef<HTMLDivElement>(null);
@@ -1763,7 +1805,6 @@ export default function App() {
   }, [selection]);
 
   useEffect(() => {
-    setCollapsedDirs(new Set());
     setFileFilter('');
     setActiveFileIndex(null);
     fileRefs.current = {};
@@ -1794,11 +1835,6 @@ export default function App() {
     [diffPatches],
   );
 
-  const fileTree = useMemo(
-    () => buildFileTree(fileInfos),
-    [fileInfos],
-  );
-
   const commentsByFile = useMemo(() => {
     const map = new Map<string, DiffComment[]>();
     for (const c of comments) {
@@ -1818,15 +1854,6 @@ export default function App() {
     }
     return map;
   }, [splitLineSelections]);
-
-  const toggleDir = useCallback((path: string) => {
-    setCollapsedDirs((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  }, []);
 
   const toggleViewed = useCallback((path: string) => {
     setViewedFiles((prev) => {
@@ -2643,27 +2670,15 @@ export default function App() {
                   </div>
                 )}
               </div>
-              <div className="px-2.5 py-2 border-b border-border">
-                <input
-                  className="w-full appearance-none border border-border rounded-md bg-surface-hover text-text-primary font-mono text-[0.72rem] px-2.5 py-1.5 outline-none transition-[border-color] duration-150 ease-in-out focus:border-accent/40 focus:ring-1 focus:ring-accent/10 placeholder:text-text-muted"
-                  type="text"
-                  placeholder="Filter files..."
-                  value={fileFilter}
-                  onChange={(e) => setFileFilter(e.target.value)}
-                />
-              </div>
-              <div className="flex-1 overflow-y-auto py-1.5">
-                <FileTreeEntries
-                  entries={fileTree}
-                  depth={0}
-                  collapsedDirs={collapsedDirs}
-                  onToggleDir={toggleDir}
-                  activeIndex={activeFileIndex}
-                  onFileClick={scrollToFile}
-                  filter={fileFilter}
-                  viewedFiles={viewedFiles}
-                />
-              </div>
+              <ChangedFilesTree
+                fileInfos={fileInfos}
+                fileFilter={fileFilter}
+                activeFileIndex={activeFileIndex}
+                viewedFiles={viewedFiles}
+                resolvedTheme={resolvedTheme}
+                onFilterChange={setFileFilter}
+                onFileClick={scrollToFile}
+              />
             </aside>
 
             <div ref={diffContentRef} className="diff-content flex-1 min-w-0 overflow-auto">
