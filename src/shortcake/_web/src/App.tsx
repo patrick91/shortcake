@@ -12,7 +12,7 @@ import DiffsWorker from '@pierre/diffs/worker/worker.js?worker';
 import type { FileTreeRowDecoration, GitStatusEntry } from '@pierre/trees';
 import { FileTree as PierreFileTree, useFileTree } from '@pierre/trees/react';
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { Group, Panel, Separator, useDefaultLayout, usePanelRef } from 'react-resizable-panels';
+import { Popover } from '@base-ui-components/react/popover';
 
 type DiffStyle = 'unified' | 'split';
 type ThemeMode = 'dark' | 'light' | 'system';
@@ -1595,17 +1595,325 @@ function SettingsModal({
   );
 }
 
+function ChevronDownIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="m6 9 6 6 6-6" />
+    </svg>
+  );
+}
+
+function GitBranchIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <line x1="6" y1="3" x2="6" y2="15" />
+      <circle cx="18" cy="6" r="3" />
+      <circle cx="6" cy="18" r="3" />
+      <path d="M18 9a9 9 0 0 1-9 9" />
+    </svg>
+  );
+}
+
+type StackListProps = {
+  branches: StackBranch[];
+  selection: DiffSelection | null;
+  isStackLoading: boolean;
+  isGithubInfoLoading: boolean;
+  githubInfo: Record<string, GitHubBranchInfo>;
+  parentIndexMap: Map<string, number>;
+  lastChildIndexMap: Map<number, number>;
+  onSelect: (sel: DiffSelection) => void;
+  isFiltering: boolean;
+  workingVisible: boolean;
+};
+
+function StackList({
+  branches,
+  selection,
+  isStackLoading,
+  isGithubInfoLoading,
+  githubInfo,
+  parentIndexMap,
+  lastChildIndexMap,
+  onSelect,
+  isFiltering,
+  workingVisible,
+}: StackListProps) {
+  const renderBranchButton = (branch: StackBranch, index: number | null) => {
+    const active = selection?.type === 'branch' && branch.name === selection.name;
+    const branchPadding =
+      index === null ? 8 : STACK_CARD_INDENT_BASE + branch.depth * STACK_CARD_INDENT_STEP;
+    const ghInfo = githubInfo[branch.name];
+
+    return (
+      <button
+        className={`relative appearance-none rounded-md py-[5px] px-[7px] text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${active ? 'bg-accent-bg' : 'bg-transparent hover:bg-surface-hover'}`}
+        style={{
+          ...(index === null ? {} : { anchorName: `--branch-${index}` }),
+          marginInlineStart: `${branchPadding}px`,
+          marginInlineEnd: '8px',
+        } as React.CSSProperties}
+        onClick={() => onSelect({ type: 'branch', name: branch.name })}
+        type="button"
+      >
+        <span className="relative z-[2] flex items-center gap-[7px] w-full min-w-0">
+                <span className="min-w-0 flex-1 flex flex-col gap-[1px]">
+                  <span className="flex items-center gap-[7px] min-w-0">
+                    <span className="text-[0.88rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
+                      {branch.name}
+                    </span>
+                    {branch.isCurrent && (
+                      <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-accent/10 border border-accent/18 ml-1.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
+                        current
+                      </span>
+                    )}
+                  </span>
+                  <span
+                    className="font-mono text-[0.62rem] text-text-muted whitespace-nowrap overflow-hidden text-ellipsis"
+                    title={`${branch.commitShort} ${branch.commitSubject}`}
+                  >
+                    {branch.commitShort} {branch.commitSubject}
+                  </span>
+                </span>
+                {isGithubInfoLoading ? (
+                  <span className="ml-auto flex items-center gap-[5px] shrink-0">
+                    <span className="inline-block w-[32px] h-[14px] rounded-full bg-surface-hover animate-pulse" />
+                    <span className="inline-block w-[10px] h-[10px] rounded-full bg-surface-hover animate-pulse" />
+                  </span>
+                ) : (ghInfo?.prNumber != null || ghInfo?.checkStatus != null) ? (
+                  <span className="ml-auto flex items-center gap-[5px] shrink-0">
+                    {ghInfo?.prNumber != null && ghInfo.prUrl && (
+                      <a
+                        href={ghInfo.prUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        className={`font-mono text-[0.58rem] font-medium no-underline px-[5px] py-px rounded-full leading-[1.5] border ${ghInfo.prIsDraft ? 'text-text-muted bg-surface-hover border-border' : 'text-green-400 bg-green-400/10 border-green-400/18'}`}
+                      >
+                        #{ghInfo.prNumber}
+                      </a>
+                    )}
+                    {ghInfo?.checkStatus != null && (
+                      <span
+                        className="shrink-0 text-[0.7rem] leading-none"
+                        title={`CI: ${ghInfo.checkStatus}`}
+                      >
+                        {ghInfo.checkStatus === 'success' && <span className="text-green-400">&#10003;</span>}
+                        {ghInfo.checkStatus === 'failure' && <span className="text-red-400">&#10007;</span>}
+                        {ghInfo.checkStatus === 'pending' && <span className="text-yellow-400">&#9679;</span>}
+                      </span>
+                    )}
+                  </span>
+                ) : null}
+              </span>
+            </button>
+    );
+  };
+
+  const noResults = isFiltering && !workingVisible && branches.length === 0;
+
+  return (
+    <div
+      className="relative flex flex-col gap-0 p-1.5 overflow-y-auto overflow-x-clip flex-1 min-h-0"
+      role="list"
+      aria-label="Tracked stack branches"
+    >
+      {isStackLoading ? (
+        <p className="m-3 text-text-muted text-[0.82rem]">Loading stack…</p>
+      ) : null}
+
+      {!isStackLoading && !isFiltering && branches.length === 0 ? (
+        <p className="m-3 text-text-muted text-[0.82rem]">
+          No tracked branches found in this repository.
+        </p>
+      ) : null}
+
+      {noResults ? (
+        <p className="m-3 text-text-muted text-[0.82rem]">No matches.</p>
+      ) : null}
+
+      {workingVisible && (
+        <button
+          className={`relative appearance-none rounded-md py-[5px] px-[7px] mx-[8px] mb-1 text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${selection?.type === 'working' ? 'bg-accent-bg' : 'bg-transparent hover:bg-surface-hover'}`}
+          onClick={() => onSelect({ type: 'working' })}
+          type="button"
+        >
+          <span className="relative z-[2] flex items-center gap-[7px]">
+            <span className="text-[0.82rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
+              Working Changes
+            </span>
+            <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-text-muted bg-surface-hover border border-border px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
+              git diff
+            </span>
+          </span>
+        </button>
+      )}
+
+      {!isFiltering && workingVisible && branches.length > 0 && (
+        <div className="border-t border-border mx-2 my-1" />
+      )}
+
+      {isFiltering
+        ? branches.map((branch) => (
+            <React.Fragment key={branch.name}>
+              {renderBranchButton(branch, null)}
+            </React.Fragment>
+          ))
+        : branches.map((branch, index) => {
+            const parentIndex = parentIndexMap.get(branch.parent) ?? -1;
+            const lastChildIdx = lastChildIndexMap.get(index);
+
+            return (
+              <React.Fragment key={branch.name}>
+                {renderBranchButton(branch, index)}
+                {lastChildIdx !== undefined && (
+                  <div
+                    aria-hidden
+                    className="stack-guide-vertical"
+                    style={{
+                      '--from': `--branch-${index}`,
+                      '--to': `--branch-${lastChildIdx}`,
+                      left: `${STACK_GUIDE_OFFSET + branch.depth * STACK_GUIDE_STEP}px`,
+                    } as React.CSSProperties}
+                  />
+                )}
+                {branch.depth > 0 && parentIndex >= 0 && (
+                  <div
+                    aria-hidden
+                    className="stack-guide-horizontal"
+                    style={{
+                      '--at': `--branch-${index}`,
+                      left: `${STACK_GUIDE_OFFSET + (branch.depth - 1) * STACK_GUIDE_STEP}px`,
+                      width: '10px',
+                    } as React.CSSProperties}
+                  />
+                )}
+              </React.Fragment>
+            );
+          })}
+    </div>
+  );
+}
+
+type DiffSwitcherProps = Omit<StackListProps, 'isFiltering' | 'workingVisible'> & {
+  diff: DiffResponse | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+};
+
+const IS_MAC = typeof navigator !== 'undefined' && navigator.platform.includes('Mac');
+
+function DiffSwitcher({ diff, open, onOpenChange, ...stackProps }: DiffSwitcherProps) {
+  const { selection, branches, onSelect } = stackProps;
+  const [query, setQuery] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) setQuery('');
+  }, [open]);
+
+  const isWorking = selection?.type === 'working';
+  const targetMain = isWorking
+    ? 'Uncommitted changes'
+    : diff
+      ? diff.branch
+      : selection?.type === 'branch'
+        ? selection.name
+        : 'Select a branch';
+  const targetParent = !isWorking && diff ? diff.parent : null;
+  const chevronCls = `text-text-muted shrink-0 transition-transform duration-150 ${open ? 'rotate-180' : ''}`;
+
+  const q = query.trim().toLowerCase();
+  const isFiltering = q !== '';
+  const workingVisible =
+    !isFiltering || 'working changes'.includes(q) || 'uncommitted changes'.includes(q);
+  const filteredBranches = isFiltering
+    ? branches.filter(
+        (b) => b.name.toLowerCase().includes(q) || b.commitSubject.toLowerCase().includes(q),
+      )
+    : branches;
+
+  const handleInputKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (filteredBranches.length > 0) onSelect({ type: 'branch', name: filteredBranches[0]!.name });
+      else if (workingVisible) onSelect({ type: 'working' });
+    }
+  };
+
+  return (
+    <Popover.Root open={open} onOpenChange={onOpenChange}>
+      <Popover.Trigger
+        className="group flex items-center min-w-0 max-w-full appearance-none border-none bg-transparent p-0 m-0 text-left cursor-pointer rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30"
+        aria-label="Switch diff"
+      >
+        <span className="inline-flex items-center gap-2.5 border border-border rounded-md bg-surface-hover px-2.5 py-1.5 min-w-0 max-w-full group-hover:bg-surface-active group-hover:border-border-strong transition-colors duration-100">
+          <span className="text-accent shrink-0"><GitBranchIcon /></span>
+          <span className="flex flex-col items-start min-w-0 leading-tight">
+            <span className="font-mono text-[0.56rem] font-medium uppercase tracking-[0.12em] text-text-muted">
+              Viewing diff
+            </span>
+            <span className="flex items-center min-w-0 max-w-full text-[0.92rem] font-bold text-text-primary truncate">
+              {targetMain}
+              {targetParent && (
+                <>
+                  <span className="text-text-muted font-normal mx-1">&rarr;</span>
+                  <span className="text-text-secondary font-semibold">{targetParent}</span>
+                </>
+              )}
+            </span>
+          </span>
+          <kbd className="hidden sm:inline-flex items-center gap-0.5 ml-1 font-mono text-[0.58rem] font-medium text-text-muted bg-surface border border-border rounded px-1 py-px leading-none shrink-0">
+            {IS_MAC ? '⌘' : 'Ctrl'}K
+          </kbd>
+          <span className={`${chevronCls} ml-0.5`}><ChevronDownIcon /></span>
+        </span>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner side="bottom" align="start" sideOffset={10} className="z-50">
+          <Popover.Popup
+            initialFocus={inputRef}
+            className="w-[340px] max-h-[min(560px,70vh)] flex flex-col bg-surface border border-border rounded-lg shadow-lg overflow-hidden outline-none origin-[var(--transform-origin)] transition-[opacity,transform] duration-150 data-[starting-style]:opacity-0 data-[starting-style]:scale-[0.98] data-[ending-style]:opacity-0 data-[ending-style]:scale-[0.98]"
+          >
+            <div className="px-3.5 py-2.5 border-b border-border flex items-center justify-between shrink-0">
+              <span className="font-mono text-[0.62rem] font-medium uppercase tracking-[0.13em] text-accent">
+                Switch diff
+              </span>
+              {branches.length > 0 && (
+                <span className="font-mono text-[0.6rem] text-text-muted bg-surface-hover border border-border px-2 py-[2px] rounded-full">
+                  {isFiltering ? `${filteredBranches.length}/${branches.length}` : branches.length} branch{branches.length === 1 ? '' : 'es'}
+                </span>
+              )}
+            </div>
+            {branches.length > 0 && (
+              <div className="px-2.5 py-2 border-b border-border shrink-0">
+                <input
+                  ref={inputRef}
+                  type="text"
+                  className="w-full appearance-none border border-border rounded-md bg-surface-hover text-text-primary font-mono text-[0.72rem] px-2.5 py-1.5 outline-none transition-[border-color] duration-150 ease-in-out focus:border-accent/40 focus:ring-1 focus:ring-accent/10 placeholder:text-text-muted"
+                  placeholder="Filter branches…"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={handleInputKeyDown}
+                />
+              </div>
+            )}
+            <StackList
+              {...stackProps}
+              branches={filteredBranches}
+              isFiltering={isFiltering}
+              workingVisible={workingVisible}
+            />
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
 export default function App() {
   const isWideScreen = useMediaQuery('(min-width: 961px)');
-  const savedLayout = useDefaultLayout({
-    id: 'stack-explorer-layout',
-    storage: localStorage,
-    panelIds: ['sidebar', 'content'],
-  });
-  const stackSidebarPanelRef = usePanelRef();
-  const [isStackSidebarCollapsed, setIsStackSidebarCollapsed] = useState(
-    () => localStorage.getItem('shortcake-stack-sidebar-collapsed') === 'true',
-  );
+  const [switcherOpen, setSwitcherOpen] = useState(false);
   const [stack, setStack] = useState<StackResponse | null>(null);
   const [selection, setSelectionRaw] = useState<DiffSelection | null>(
     () => selectionFromHash(window.location.hash),
@@ -1642,15 +1950,6 @@ export default function App() {
   const [reviewFixPrompt, setReviewFixPrompt] = useState<string | null>(null);
   const isReviewing = reviewModelStatus.size > 0 && [...reviewModelStatus.values()].some((s) => s === 'pending');
 
-  const toggleStackSidebar = useCallback(() => {
-    setIsStackSidebarCollapsed((collapsed) => !collapsed);
-  }, []);
-
-  const handleStackSidebarResize = useCallback((size: { asPercentage: number }) => {
-    const collapsed = size.asPercentage < 1;
-    setIsStackSidebarCollapsed((current) => (current === collapsed ? current : collapsed));
-  }, []);
-
   const setSelection = useCallback((sel: DiffSelection | null) => {
     setSelectionRaw(sel);
     if (sel) {
@@ -1672,6 +1971,17 @@ export default function App() {
       window.removeEventListener('hashchange', onHashChange);
       window.removeEventListener('popstate', onHashChange);
     };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault();
+        setSwitcherOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
   const expandLargeFile = useCallback((path: string) => {
@@ -1711,26 +2021,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('shortcake-diff-theme-light', diffThemeLight);
   }, [diffThemeLight]);
-
-  useEffect(() => {
-    localStorage.setItem(
-      'shortcake-stack-sidebar-collapsed',
-      String(isStackSidebarCollapsed),
-    );
-  }, [isStackSidebarCollapsed]);
-
-  useEffect(() => {
-    if (!isWideScreen) return;
-
-    const panel = stackSidebarPanelRef.current;
-    if (!panel) return;
-
-    if (isStackSidebarCollapsed) {
-      panel.collapse();
-    } else {
-      panel.expand();
-    }
-  }, [isWideScreen, isStackSidebarCollapsed, stackSidebarPanelRef]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2339,163 +2629,8 @@ export default function App() {
       poolOptions={{ workerFactory: () => new DiffsWorker(), poolSize: 4 }}
       highlighterOptions={{}}
     >
-    <main className={`relative h-screen animate-fade-in overflow-hidden ${isWideScreen ? '' : 'flex flex-col'}`}>
-      {isWideScreen ? (
-      <Group orientation="horizontal" {...savedLayout}>
-      <Panel
-        id="sidebar"
-        defaultSize="20%"
-        minSize="15%"
-        maxSize="40%"
-        collapsible
-        collapsedSize="0%"
-        panelRef={stackSidebarPanelRef}
-        onResize={handleStackSidebarResize}
-      >
-      <section id="stack-sidebar" aria-label="Stack sidebar" className="border-r border-border bg-surface overflow-hidden flex flex-col h-full">
-        <div className="px-[1.15rem] h-[60px] shrink-0 flex flex-col justify-center border-b border-border">
-          <p className="font-mono text-[0.68rem] font-medium uppercase tracking-[0.13em] text-accent m-0 mb-[0.3rem]">
-            Shortcake
-          </p>
-          <h1>Stack Diff Explorer</h1>
-        </div>
-
-        {isStackLoading ? (
-          <p className="m-[1.15rem] text-text-muted text-[0.88rem]">Loading stack…</p>
-        ) : null}
-
-        {!isStackLoading && branches.length === 0 ? (
-          <p className="m-[1.15rem] text-text-muted text-[0.88rem]">
-            No tracked branches found in this repository.
-          </p>
-        ) : null}
-
-        <div
-          className="relative flex flex-col gap-0 p-1.5 overflow-y-auto overflow-x-clip flex-1"
-          role="list"
-          aria-label="Tracked stack branches"
-        >
-          <button
-            className={`relative appearance-none rounded-md py-[5px] px-[7px] mx-[8px] mb-1 text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${selection?.type === 'working' ? 'bg-accent-bg' : 'bg-transparent hover:bg-surface-hover'}`}
-            onClick={() => setSelection({ type: 'working' })}
-            type="button"
-          >
-            <span className="relative z-[2] flex items-center gap-[7px]">
-              <span className="text-[0.82rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
-                Working Changes
-              </span>
-              <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-text-muted bg-surface-hover border border-border px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
-                git diff
-              </span>
-            </span>
-          </button>
-
-          {branches.length > 0 && (
-            <div className="border-t border-border mx-2 my-1" />
-          )}
-
-          {branches.map((branch, index) => {
-            const active = selection?.type === 'branch' && branch.name === selection.name;
-            const branchPadding =
-              STACK_CARD_INDENT_BASE + branch.depth * STACK_CARD_INDENT_STEP;
-            const parentIndex = parentIndexMap.get(branch.parent) ?? -1;
-            const lastChildIdx = lastChildIndexMap.get(index);
-            const ghInfo = githubInfo[branch.name];
-
-            return (
-              <React.Fragment key={branch.name}>
-                <button
-                  className={`relative appearance-none rounded-md py-[5px] px-[7px] text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${active ? 'bg-accent-bg' : 'bg-transparent hover:bg-surface-hover'}`}
-                  style={{
-                    anchorName: `--branch-${index}`,
-                    marginInlineStart: `${branchPadding}px`,
-                    marginInlineEnd: '8px',
-                  } as React.CSSProperties}
-                  onClick={() => setSelection({ type: 'branch', name: branch.name })}
-                  type="button"
-                >
-                  <span className="relative z-[2] flex items-center gap-[7px] w-full min-w-0">
-                    <span className="min-w-0 flex-1 flex flex-col gap-[1px]">
-                      <span className="flex items-center gap-[7px] min-w-0">
-                        <span className="text-[0.88rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
-                          {branch.name}
-                        </span>
-                        {branch.isCurrent && (
-                          <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-accent/10 border border-accent/18 ml-1.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
-                            current
-                          </span>
-                        )}
-                      </span>
-                      <span
-                        className="font-mono text-[0.62rem] text-text-muted whitespace-nowrap overflow-hidden text-ellipsis"
-                        title={`${branch.commitShort} ${branch.commitSubject}`}
-                      >
-                        {branch.commitShort} {branch.commitSubject}
-                      </span>
-                    </span>
-                    {isGithubInfoLoading ? (
-                      <span className="ml-auto flex items-center gap-[5px] shrink-0">
-                        <span className="inline-block w-[32px] h-[14px] rounded-full bg-surface-hover animate-pulse" />
-                        <span className="inline-block w-[10px] h-[10px] rounded-full bg-surface-hover animate-pulse" />
-                      </span>
-                    ) : (ghInfo?.prNumber != null || ghInfo?.checkStatus != null) ? (
-                      <span className="ml-auto flex items-center gap-[5px] shrink-0">
-                        {ghInfo?.prNumber != null && ghInfo.prUrl && (
-                          <a
-                            href={ghInfo.prUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            onClick={(e) => e.stopPropagation()}
-                            className={`font-mono text-[0.58rem] font-medium no-underline px-[5px] py-px rounded-full leading-[1.5] border ${ghInfo.prIsDraft ? 'text-text-muted bg-surface-hover border-border' : 'text-green-400 bg-green-400/10 border-green-400/18'}`}
-                          >
-                            #{ghInfo.prNumber}
-                          </a>
-                        )}
-                        {ghInfo?.checkStatus != null && (
-                          <span
-                            className="shrink-0 text-[0.7rem] leading-none"
-                            title={`CI: ${ghInfo.checkStatus}`}
-                          >
-                            {ghInfo.checkStatus === 'success' && <span className="text-green-400">&#10003;</span>}
-                            {ghInfo.checkStatus === 'failure' && <span className="text-red-400">&#10007;</span>}
-                            {ghInfo.checkStatus === 'pending' && <span className="text-yellow-400">&#9679;</span>}
-                          </span>
-                        )}
-                      </span>
-                    ) : null}
-                  </span>
-                </button>
-                {lastChildIdx !== undefined && (
-                  <div
-                    aria-hidden
-                    className="stack-guide-vertical"
-                    style={{
-                      '--from': `--branch-${index}`,
-                      '--to': `--branch-${lastChildIdx}`,
-                      left: `${STACK_GUIDE_OFFSET + branch.depth * STACK_GUIDE_STEP}px`,
-                    } as React.CSSProperties}
-                  />
-                )}
-                {branch.depth > 0 && parentIndex >= 0 && (
-                  <div
-                    aria-hidden
-                    className="stack-guide-horizontal"
-                    style={{
-                      '--at': `--branch-${index}`,
-                      left: `${STACK_GUIDE_OFFSET + (branch.depth - 1) * STACK_GUIDE_STEP}px`,
-                      width: '10px',
-                    } as React.CSSProperties}
-                  />
-                )}
-              </React.Fragment>
-            );
-          })}
-        </div>
-      </section>
-      </Panel>
-      <Separator className="resize-handle" />
-      <Panel id="content" minSize="40%">
-      <section className="bg-surface overflow-hidden flex flex-col min-w-0 h-full">
+    <main className="relative h-screen animate-fade-in overflow-hidden flex flex-col">
+      <section className="bg-surface overflow-hidden flex flex-col min-w-0 flex-1 min-h-0">
         <SettingsModal
           isOpen={showSettings}
           onClose={() => setShowSettings(false)}
@@ -2505,42 +2640,21 @@ export default function App() {
           onLightChange={setDiffThemeLight}
         />
         <header className="px-[1.15rem] h-[60px] shrink-0 border-b border-border flex justify-between items-center gap-4">
-          <div className="flex items-center gap-3 min-w-0">
-            <button
-              className="relative appearance-none border border-border bg-transparent text-text-muted hover:bg-surface-hover hover:text-text-primary cursor-pointer size-7 rounded-md flex items-center justify-center shrink-0"
-              onClick={toggleStackSidebar}
-              type="button"
-              aria-controls="stack-sidebar"
-              aria-expanded={!isStackSidebarCollapsed}
-              aria-label={isStackSidebarCollapsed ? 'Show stack sidebar' : 'Hide stack sidebar'}
-              title={isStackSidebarCollapsed ? 'Show stack sidebar' : 'Hide stack sidebar'}
-            >
-              <span aria-hidden="true" className="font-mono text-[1rem] leading-none">
-                {isStackSidebarCollapsed ? '\u203a' : '\u2039'}
-              </span>
-              <span className="absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-x-1/2 -translate-y-1/2 pointer-fine:hidden" aria-hidden="true" />
-            </button>
-            <div className="min-w-0">
-              <p className="font-mono text-[0.68rem] font-medium uppercase tracking-[0.13em] text-accent m-0 mb-[0.3rem]">
-                Diff
-              </p>
-              <h2>
-                {selection?.type === 'working' ? (
-                  'Uncommitted changes'
-                ) : diff ? (
-                  <>
-                    {diff.branch}{' '}
-                    <span className="text-text-muted font-normal">&rarr;</span>{' '}
-                    {diff.parent}
-                  </>
-                ) : (
-                  'Select a branch'
-                )}
-              </h2>
-            </div>
-          </div>
+          <DiffSwitcher
+            diff={diff}
+            open={switcherOpen}
+            onOpenChange={setSwitcherOpen}
+            selection={selection}
+            branches={branches}
+            isStackLoading={isStackLoading}
+            isGithubInfoLoading={isGithubInfoLoading}
+            githubInfo={githubInfo}
+            parentIndexMap={parentIndexMap}
+            lastChildIndexMap={lastChildIndexMap}
+            onSelect={(sel) => { setSelection(sel); setSwitcherOpen(false); }}
+          />
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             {moveSuccess && (
               <span className="font-mono text-[0.7rem] text-accent whitespace-nowrap">
                 {moveSuccess}
@@ -2661,6 +2775,7 @@ export default function App() {
 
         {!isDiffLoading && activePatch && diffPatches.length > 0 && (
           <div className="flex flex-1 min-h-0">
+            {isWideScreen && (
             <aside className="w-[280px] min-w-[280px] border-r border-border flex flex-col overflow-hidden max-[1100px]:hidden">
               <div className="px-4 py-3 border-b border-border">
                 <div className="flex items-center justify-between">
@@ -2692,6 +2807,7 @@ export default function App() {
                 onFileClick={scrollToFile}
               />
             </aside>
+            )}
 
             <div ref={diffContentRef} className="diff-content flex-1 min-w-0 overflow-auto">
               {reviewSummaries.size > 0 && (
@@ -2750,324 +2866,6 @@ export default function App() {
           </div>
         )}
       </section>
-      </Panel>
-      </Group>
-      ) : (
-      <>
-      <section className="border-b border-border bg-surface overflow-hidden flex flex-col max-h-[280px]">
-        <div className="px-[1.15rem] h-[60px] shrink-0 flex flex-col justify-center border-b border-border">
-          <p className="font-mono text-[0.68rem] font-medium uppercase tracking-[0.13em] text-accent m-0 mb-[0.3rem]">
-            Shortcake
-          </p>
-          <h1>Stack Diff Explorer</h1>
-        </div>
-
-        {isStackLoading ? (
-          <p className="m-[1.15rem] text-text-muted text-[0.88rem]">Loading stack…</p>
-        ) : null}
-
-        {!isStackLoading && branches.length === 0 ? (
-          <p className="m-[1.15rem] text-text-muted text-[0.88rem]">
-            No tracked branches found in this repository.
-          </p>
-        ) : null}
-
-        <div
-          className="relative flex flex-col gap-0 p-1.5 overflow-y-auto overflow-x-clip flex-1"
-          role="list"
-          aria-label="Tracked stack branches"
-        >
-          <button
-            className={`relative appearance-none rounded-md py-[5px] px-[7px] mx-[8px] mb-1 text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${selection?.type === 'working' ? 'bg-accent-bg' : 'bg-transparent hover:bg-surface-hover'}`}
-            onClick={() => setSelection({ type: 'working' })}
-            type="button"
-          >
-            <span className="relative z-[2] flex items-center gap-[7px]">
-              <span className="text-[0.82rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
-                Working Changes
-              </span>
-              <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-text-muted bg-surface-hover border border-border px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
-                git diff
-              </span>
-            </span>
-          </button>
-
-          {branches.length > 0 && (
-            <div className="border-t border-border mx-2 my-1" />
-          )}
-
-          {branches.map((branch) => {
-            const active = selection?.type === 'branch' && branch.name === selection.name;
-            const branchPadding =
-              STACK_CARD_INDENT_BASE + branch.depth * STACK_CARD_INDENT_STEP;
-            const ghInfo = githubInfo[branch.name];
-
-            return (
-              <button
-                key={branch.name}
-                className={`relative appearance-none rounded-md py-[5px] px-[7px] text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${active ? 'bg-accent-bg' : 'bg-transparent hover:bg-surface-hover'}`}
-                style={{
-                  marginInlineStart: `${branchPadding}px`,
-                  marginInlineEnd: '8px',
-                } as React.CSSProperties}
-                onClick={() => setSelection({ type: 'branch', name: branch.name })}
-                type="button"
-              >
-                <span className="relative z-[2] flex items-center gap-[7px] w-full min-w-0">
-                  <span className="min-w-0 flex-1 flex flex-col gap-[1px]">
-                    <span className="flex items-center gap-[7px] min-w-0">
-                      <span className="text-[0.88rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
-                        {branch.name}
-                      </span>
-                      {branch.isCurrent && (
-                        <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-accent/10 border border-accent/18 ml-1.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
-                          current
-                        </span>
-                      )}
-                    </span>
-                    <span
-                      className="font-mono text-[0.62rem] text-text-muted whitespace-nowrap overflow-hidden text-ellipsis"
-                      title={`${branch.commitShort} ${branch.commitSubject}`}
-                    >
-                      {branch.commitShort} {branch.commitSubject}
-                    </span>
-                  </span>
-                  {isGithubInfoLoading ? (
-                    <span className="ml-auto flex items-center gap-[5px] shrink-0">
-                      <span className="inline-block w-[32px] h-[14px] rounded-full bg-surface-hover animate-pulse" />
-                      <span className="inline-block w-[10px] h-[10px] rounded-full bg-surface-hover animate-pulse" />
-                    </span>
-                  ) : (ghInfo?.prNumber != null || ghInfo?.checkStatus != null) ? (
-                    <span className="ml-auto flex items-center gap-[5px] shrink-0">
-                      {ghInfo?.prNumber != null && ghInfo.prUrl && (
-                        <a
-                          href={ghInfo.prUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className={`font-mono text-[0.58rem] font-medium no-underline px-[5px] py-px rounded-full leading-[1.5] border ${ghInfo.prIsDraft ? 'text-text-muted bg-surface-hover border-border' : 'text-green-400 bg-green-400/10 border-green-400/18'}`}
-                        >
-                          #{ghInfo.prNumber}
-                        </a>
-                      )}
-                      {ghInfo?.checkStatus != null && (
-                        <span
-                          className="shrink-0 text-[0.7rem] leading-none"
-                          title={`CI: ${ghInfo.checkStatus}`}
-                        >
-                          {ghInfo.checkStatus === 'success' && <span className="text-green-400">&#10003;</span>}
-                          {ghInfo.checkStatus === 'failure' && <span className="text-red-400">&#10007;</span>}
-                          {ghInfo.checkStatus === 'pending' && <span className="text-yellow-400">&#9679;</span>}
-                        </span>
-                      )}
-                    </span>
-                  ) : null}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="bg-surface overflow-hidden flex flex-col min-w-0 flex-1">
-        <header className="px-[1.15rem] h-[60px] shrink-0 border-b border-border flex justify-between items-center gap-4">
-          <div>
-            <p className="font-mono text-[0.68rem] font-medium uppercase tracking-[0.13em] text-accent m-0 mb-[0.3rem]">
-              Diff
-            </p>
-            <h2>
-              {selection?.type === 'working' ? (
-                'Uncommitted changes'
-              ) : diff ? (
-                <>
-                  {diff.branch}{' '}
-                  <span className="text-text-muted font-normal">&rarr;</span>{' '}
-                  {diff.parent}
-                </>
-              ) : (
-                'Select a branch'
-              )}
-            </h2>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {moveSuccess && (
-              <span className="font-mono text-[0.7rem] text-accent whitespace-nowrap">
-                {moveSuccess}
-              </span>
-            )}
-            {selection && !isDiffLoading && diffPatches.length > 0 && (
-              isReviewing ? (
-                <div className="flex items-center gap-1.5 border border-border rounded-md px-2.5 py-1">
-                  {[...reviewModelStatus.entries()].map(([model, status]) => {
-                    const label = model.includes(':') ? model.split(':')[1] : model;
-                    return (
-                      <span key={model} className="flex items-center gap-1 font-mono text-[0.65rem] whitespace-nowrap">
-                        {status === 'pending' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse" />}
-                        {status === 'done' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-400" />}
-                        {status === 'error' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-red-400" />}
-                        <span className={status === 'pending' ? 'text-text-muted' : status === 'done' ? 'text-green-400' : 'text-red-400'}>{label}</span>
-                      </span>
-                    );
-                  })}
-                </div>
-              ) : (
-                <button
-                  type="button"
-                  className="appearance-none border border-border bg-transparent text-text-secondary text-[0.7rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-surface-hover hover:text-text-primary transition-colors duration-100 whitespace-nowrap"
-                  onClick={handleOpenReviewDialog}
-                >
-                  {aiCommentCount > 0 ? `Review (${aiCommentCount})` : 'Review'}
-                </button>
-              )
-            )}
-            {comments.length > 0 && (
-              <button
-                type="button"
-                className="appearance-none border border-accent bg-accent/10 text-accent text-[0.7rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-accent/20 transition-colors duration-100 whitespace-nowrap"
-                onClick={handleCopyComments}
-              >
-                {copyFeedback ? 'Copied!' : `Copy ${comments.length} comment${comments.length === 1 ? '' : 's'}`}
-              </button>
-            )}
-            {!isDiffLoading && diffPatches.length > 0 && viewedFiles.size > 0 && (
-              <span className="font-mono text-[0.68rem] text-accent bg-accent/10 border border-accent/20 px-2 py-[3px] rounded-full whitespace-nowrap">
-                {viewedFiles.size}/{diffPatches.length} viewed
-              </span>
-            )}
-            {!isDiffLoading && diffPatches.length > 0 && (
-              <span className="font-mono text-[0.68rem] text-text-secondary bg-surface-hover border border-border px-2 py-[3px] rounded-full whitespace-nowrap">
-                {diffPatches.length} file{diffPatches.length === 1 ? '' : 's'}
-              </span>
-            )}
-            <div
-              className="flex bg-surface-hover border border-border rounded-md p-0.5"
-              role="group"
-              aria-label="Theme"
-            >
-              {(['dark', 'light', 'system'] as const).map((mode) => (
-                <button
-                  key={mode}
-                  className={`appearance-none border-none rounded-[6px] font-mono text-[0.7rem] tracking-[0.02em] px-2.5 py-1 cursor-pointer transition-[color,background] duration-[120ms] ease-in-out capitalize ${themeMode === mode ? 'text-text-primary bg-surface-active' : 'bg-transparent text-text-muted hover:text-text-secondary'}`}
-                  onClick={() => setThemeMode(mode)}
-                  type="button"
-                >
-                  {mode}
-                </button>
-              ))}
-            </div>
-            <div
-              className="flex bg-surface-hover border border-border rounded-md p-0.5"
-              role="group"
-              aria-label="Diff layout"
-            >
-              <button
-                className={`appearance-none border-none rounded-[6px] font-mono text-[0.7rem] tracking-[0.02em] px-2.5 py-1 cursor-pointer transition-[color,background] duration-[120ms] ease-in-out ${diffStyle === 'unified' ? 'text-text-primary bg-surface-active' : 'bg-transparent text-text-muted hover:text-text-secondary'}`}
-                onClick={() => setDiffStyle('unified')}
-                type="button"
-              >
-                Unified
-              </button>
-              <button
-                className={`appearance-none border-none rounded-[6px] font-mono text-[0.7rem] tracking-[0.02em] px-2.5 py-1 cursor-pointer transition-[color,background] duration-[120ms] ease-in-out ${diffStyle === 'split' ? 'text-text-primary bg-surface-active' : 'bg-transparent text-text-muted hover:text-text-secondary'}`}
-                onClick={() => setDiffStyle('split')}
-                type="button"
-              >
-                Split
-              </button>
-            </div>
-            <button
-              className="appearance-none border-none bg-transparent text-text-muted hover:text-text-primary cursor-pointer p-1 transition-colors duration-100"
-              onClick={() => setShowSettings(true)}
-              type="button"
-              aria-label="Settings"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-            </button>
-          </div>
-        </header>
-
-        {error ? (
-          <p className="m-[1.15rem] text-danger text-[0.88rem]">{error}</p>
-        ) : null}
-
-        {isDiffLoading ? (
-          <p className="m-[1.15rem] text-text-muted text-[0.88rem]">Loading diff…</p>
-        ) : null}
-
-        {!isDiffLoading && activePatch !== undefined && activePatch !== null && activePatch.trim() === '' ? (
-          <p className="m-[1.15rem] text-text-muted text-[0.88rem]">
-            {selection?.type === 'working'
-              ? 'No uncommitted changes.'
-              : 'No file differences between this branch and its parent.'}
-          </p>
-        ) : null}
-
-        {!isDiffLoading && activePatch && activePatch.trim() !== '' && diffPatches.length === 0 ? (
-          <p className="m-[1.15rem] text-danger text-[0.88rem]">
-            Could not render this diff patch.
-          </p>
-        ) : null}
-
-        {!isDiffLoading && activePatch && diffPatches.length > 0 && (
-          <div ref={diffContentRef} className="diff-content flex-1 min-w-0 min-h-0 overflow-auto">
-            {reviewSummaries.size > 0 && (
-              <ReviewSummaryPanel
-                summaries={reviewSummaries}
-                fixPrompt={reviewFixPrompt}
-                onClose={() => { setReviewSummaries(new Map()); setReviewFixPrompt(null); }}
-              />
-            )}
-            {diffPatches.map((patch, index) => {
-              const info = fileInfos[index];
-              if (!info) return null;
-              const isViewed = viewedFiles.has(info.path);
-              return (
-                <div
-                  className={index > 0 ? 'border-t-2 border-guide' : undefined}
-                  key={`mobile-${selection?.type === 'working' ? 'working' : diff?.branch}-${index}`}
-                  data-file-path={info.path}
-                  data-file-index={index}
-                  ref={(el) => { fileRefs.current[index] = el; }}
-                >
-                  {isViewed ? (
-                    <ViewedFileHeader fileInfo={info} isViewed={isViewed} onToggle={toggleViewed} />
-                  ) : info.additions + info.deletions >= LARGE_FILE_THRESHOLD && !expandedLargeFiles.has(info.path) ? (
-                    <LargeFilePlaceholder fileInfo={info} onShow={() => expandLargeFile(info.path)} onToggleViewed={toggleViewed} />
-                  ) : (
-                    <LazyDiffFileSection index={index} fileInfo={info} renderContent={() => (
-                      <DiffFileSection
-                        patch={patch}
-                        fileInfo={info}
-                        fileComments={commentsByFile.get(info.path) ?? EMPTY_COMMENTS}
-                        activeInput={activeInput}
-                        editingComment={editingComment}
-                        toolbarState={toolbarState}
-                        onRangeSelected={handleRangeSelected}
-                        onStartEdit={handleStartEdit}
-                        onAddComment={handleAddComment}
-                        onUpdateComment={handleUpdateComment}
-                        onDeleteComment={handleDeleteComment}
-                        onCancelInput={handleCancelInput}
-                        onToolbarComment={handleToolbarComment}
-                        onToolbarSplit={selection?.type === 'branch' ? handleToolbarSplit : undefined}
-                        fileSplitSelections={splitSelectionsByFile.get(info.path) ?? EMPTY_SPLIT_SELECTIONS}
-                        onDeleteSplitSelection={selection?.type === 'branch' ? handleDeleteSplitSelection : undefined}
-                        diffStyle={diffStyle}
-                        resolvedTheme={resolvedTheme}
-                        diffTheme={activeDiffTheme}
-                        onToggleViewed={toggleViewed}
-                      />
-                    )} />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-      </>
-      )}
 
       {selection?.type === 'branch' && splitLineSelections.length > 0 && !showSplitLinesDialog && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 bg-surface border border-green-500/30 rounded-lg shadow-lg">
