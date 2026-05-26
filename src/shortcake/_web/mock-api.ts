@@ -1397,40 +1397,6 @@ index 0000000..2f3a4b5
 
 const MOCK_WORKING_PATCH = normalizeMockPatch(generateWorkingChangesPatch());
 
-const MOCK_WORKING_SUGGESTIONS = [
-  { file: 'src/config/settings.py', hunkIndex: 0, suggestedBranch: 'feat/auth', reason: 'Logging config relates to auth middleware' },
-  { file: 'src/config/settings.py', hunkIndex: 1, suggestedBranch: 'feat/auth', reason: 'CORS origins for auth flow' },
-  { file: 'src/config/settings.py', hunkIndex: 2, suggestedBranch: 'feat/auth', reason: 'Middleware relates to auth' },
-  { file: 'src/api/router.py', hunkIndex: 0, suggestedBranch: 'feat/auth', reason: 'API routes use auth' },
-  { file: 'src/models/project.py', hunkIndex: 0, suggestedBranch: 'feat/notifications', reason: 'Model changes for notification project' },
-  { file: 'src/models/task.py', hunkIndex: 0, suggestedBranch: 'feat/notifications', reason: 'Task model for notification triggers' },
-  { file: 'src/schemas/project.py', hunkIndex: 0, suggestedBranch: 'feat/notifications', reason: 'Schemas for notification project' },
-  { file: 'tests/test_api_projects.py', hunkIndex: 0, suggestedBranch: null, reason: 'Tests could go to multiple branches' },
-  { file: 'src/database/migrations/002_add_projects.py', hunkIndex: 0, suggestedBranch: 'feat/notifications', reason: 'Migration for project tables' },
-  { file: 'src/utils/slugify.py', hunkIndex: 0, suggestedBranch: null, reason: 'Generic utility' },
-  { file: 'src/config/logging.py', hunkIndex: 0, suggestedBranch: 'feat/auth', reason: 'Logging setup for auth module' },
-  { file: 'src/config/logging.py', hunkIndex: 1, suggestedBranch: 'feat/auth', reason: 'Log file handler for auth' },
-  { file: 'src/cli/commands.py', hunkIndex: 0, suggestedBranch: 'feat/notifications', reason: 'CLI for project management' },
-  { file: 'frontend/src/components/ProjectList.tsx', hunkIndex: 0, suggestedBranch: 'feat/notifications', reason: 'Frontend for notifications project' },
-  { file: 'frontend/src/styles/projects.css', hunkIndex: 0, suggestedBranch: 'feat/notifications', reason: 'Styles for project cards' },
-  { file: 'docker-compose.yml', hunkIndex: 0, suggestedBranch: null, reason: 'Infrastructure change' },
-  { file: 'README.md', hunkIndex: 0, suggestedBranch: null, reason: 'Documentation change' },
-  { file: '.github/workflows/ci.yml', hunkIndex: 0, suggestedBranch: null, reason: 'CI configuration' },
-  // Generated service modules — alternate between branches
-  ...['cache', 'permissions', 'rate_limiter', 'analytics', 'search',
-    'billing', 'webhooks', 'export', 'import_data', 'audit_log',
-    'health_check', 'feature_flags', 'i18n', 'file_storage', 'queue',
-    'scheduler', 'metrics', 'middleware_chain', 'pagination', 'serializers',
-  ].flatMap((mod, i) => {
-    const branches = ['feat/auth', 'feat/notifications', 'feat/oauth', 'feat/login-form', null];
-    const branch = branches[i % branches.length]!;
-    return [
-      { file: `src/services/${mod}.py`, hunkIndex: 0, suggestedBranch: branch, reason: `${mod} service module` },
-      { file: `tests/test_${mod}.py`, hunkIndex: 0, suggestedBranch: branch, reason: `Tests for ${mod}` },
-    ];
-  }),
-];
-
 function json(res: import('http').ServerResponse, status: number, data: unknown) {
   const body = JSON.stringify(data);
   res.writeHead(status, {
@@ -1474,14 +1440,6 @@ export function mockApi(): Plugin {
           return json(res, 200, { patch: MOCK_WORKING_PATCH });
         }
 
-        if (url.pathname === '/api/suggestions') {
-          // Simulate a slight delay like an LLM call
-          setTimeout(() => {
-            json(res, 200, { suggestions: MOCK_WORKING_SUGGESTIONS });
-          }, 300);
-          return;
-        }
-
         if (url.pathname === '/api/diff') {
           const branch = url.searchParams.get('branch');
           if (!branch) {
@@ -1508,47 +1466,6 @@ export function mockApi(): Plugin {
                 sourceBranch: data.sourceBranch,
                 targetBranch: data.targetBranch,
                 filePath: data.filePath,
-                restackedBranches: [],
-              });
-            } catch {
-              return json(res, 400, { error: 'Invalid JSON body' });
-            }
-          });
-          return;
-        }
-
-        if (req.method === 'POST' && url.pathname === '/api/accept-working-hunks') {
-          let body = '';
-          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-          req.on('end', () => {
-            try {
-              const data = JSON.parse(body);
-              const filePaths = [...new Set((data.hunks ?? []).map((h: { filePath: string }) => h.filePath))];
-              return json(res, 200, {
-                targetBranch: data.targetBranch,
-                filePaths,
-                restackedBranches: [],
-              });
-            } catch {
-              return json(res, 400, { error: 'Invalid JSON body' });
-            }
-          });
-          return;
-        }
-
-        if (req.method === 'POST' && url.pathname === '/api/split-hunks') {
-          let body = '';
-          req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
-          req.on('end', () => {
-            try {
-              const data = JSON.parse(body);
-              const filePaths = [...new Set((data.hunks ?? []).map((h: { filePath: string }) => h.filePath))];
-              const slug = (data.commitMessage ?? 'new-branch').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50);
-              return json(res, 200, {
-                sourceBranch: data.sourceBranch,
-                newBranch: slug,
-                placement: data.placement ?? 'before',
-                filePaths,
                 restackedBranches: [],
               });
             } catch {

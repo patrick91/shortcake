@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -245,6 +246,19 @@ def _build_working_diff_payload(repo: Repo) -> dict[str, Any]:
     return {"patch": patch}
 
 
+def _git_working_diff_key(repo_path: Path) -> str:
+    """Return a stable fingerprint of the current working tree diff."""
+    patch = _git_working_diff(repo_path)
+    return hashlib.sha256(patch.encode()).hexdigest()
+
+
+def _build_ui_state_payload(repo: Repo) -> dict[str, Any]:
+    """Build lightweight polling payload for stack and working tree changes."""
+    payload = _build_stack_payload(repo)
+    payload["workingDiffKey"] = _git_working_diff_key(Path(repo.workdir))
+    return payload
+
+
 def _build_suggestions_payload(
     repo: Repo, mode: str, source_branch: str | None = None
 ) -> dict[str, Any]:
@@ -372,6 +386,14 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
                 try:
                     repo = _open_repo()
                     _write_json(self, 200, _build_stack_payload(repo))
+                except Exception as exc:
+                    _write_json(self, 500, {"error": str(exc)})
+                return
+
+            if parsed.path == "/api/state":
+                try:
+                    repo = _open_repo()
+                    _write_json(self, 200, _build_ui_state_payload(repo))
                 except Exception as exc:
                     _write_json(self, 500, {"error": str(exc)})
                 return

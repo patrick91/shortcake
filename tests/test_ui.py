@@ -15,10 +15,12 @@ from shortcake.commands.ui import (
     _build_github_info_payload,
     _build_request_handler,
     _build_stack_payload,
+    _build_ui_state_payload,
     _build_suggestions_payload,
     _build_working_diff_payload,
     _find_open_port,
     _git_diff_patch,
+    _git_working_diff_key,
     _git_working_diff,
     _resolve_frontend_dir,
     _resolve_js_runtime,
@@ -305,6 +307,35 @@ def test_build_working_diff_payload(repo_with_stack: Repo) -> None:
     assert isinstance(payload["patch"], str)
 
 
+def test_git_working_diff_key_changes_when_content_changes(
+    repo_with_stack: Repo,
+    tmp_path: Path,
+) -> None:
+    """Working diff key changes for content edits without stack commit changes."""
+    repo_path = Path(repo_with_stack.workdir)
+    before = _git_working_diff_key(repo_path)
+
+    (tmp_path / "live-edit.txt").write_text("first edit\n")
+    first = _git_working_diff_key(repo_path)
+    assert first != before
+
+    (tmp_path / "live-edit.txt").write_text("second edit\n")
+    second = _git_working_diff_key(repo_path)
+    assert second != first
+
+
+def test_build_ui_state_payload_includes_stack_and_working_key(
+    repo_with_stack: Repo,
+) -> None:
+    """Polling state includes both stack data and working diff fingerprint."""
+    payload = _build_ui_state_payload(repo_with_stack)
+
+    assert payload["currentBranch"] == "branch_b"
+    assert len(payload["branches"]) == 2
+    assert isinstance(payload["workingDiffKey"], str)
+    assert len(payload["workingDiffKey"]) == 64
+
+
 # --- HTTP request handler ---
 
 
@@ -402,6 +433,14 @@ def test_handler_working_diff(repo_with_stack: Repo) -> None:
     fake = _make_handler(repo_with_stack, "/api/diff/working")
     assert fake._status == 200
     assert "patch" in fake.response_json()
+
+
+def test_handler_ui_state(repo_with_stack: Repo) -> None:
+    fake = _make_handler(repo_with_stack, "/api/state")
+    assert fake._status == 200
+    data = fake.response_json()
+    assert "branches" in data
+    assert "workingDiffKey" in data
 
 
 def test_handler_working_diff_error(temp_repo: Repo) -> None:

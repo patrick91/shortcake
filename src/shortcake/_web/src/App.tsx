@@ -1,13 +1,15 @@
 import {
-  PatchDiff,
-  type PatchDiffProps,
+  FileDiff,
+  type FileDiffProps,
   type DiffLineAnnotation,
   type AnnotationSide,
   type SelectedLineRange,
   WorkerPoolContextProvider,
 } from '@pierre/diffs/react';
+import { getFiletypeFromFileName, getSingularPatch, setLanguageOverride } from '@pierre/diffs';
+import { preloadDiffHTML } from '@pierre/diffs/ssr';
 import DiffsWorker from '@pierre/diffs/worker/worker.js?worker';
-import React, { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
 
 type DiffStyle = 'unified' | 'split';
@@ -35,33 +37,8 @@ type CommentMeta = {
   text: string;
   isInput: boolean;
   isToolbar?: boolean;
-  isHunkToggle?: boolean;
-  hunkKey?: HunkKey;
-  isSelected?: boolean;
-  hunkContext?: string | null;
   isSplitSelection?: boolean;
   splitSelectionId?: string;
-};
-
-type MoveHunksResponse = {
-  sourceBranch: string;
-  targetBranch: string;
-  filePaths: string[];
-  restackedBranches: string[];
-};
-
-type AcceptHunksResponse = {
-  targetBranch: string;
-  filePaths: string[];
-  restackedBranches: string[];
-};
-
-type SplitHunksResponse = {
-  sourceBranch: string;
-  newBranch: string;
-  placement: string;
-  filePaths: string[];
-  restackedBranches: string[];
 };
 
 type SplitLinesResponse = {
@@ -78,18 +55,6 @@ type SplitLineSelection = {
   side: AnnotationSide;
   filePatch: string;
 };
-
-type ParsedHunk = {
-  file: string;
-  patchIndex: number;
-  hunkIndex: number;
-  firstChangedLine: number;
-  hunkStartLine: number;
-  hunkContext: string | null;
-  side: AnnotationSide;
-};
-
-type HunkKey = `${string}:${number}`;
 
 type ActiveInput = {
   file: string;
@@ -145,15 +110,8 @@ type WorkingDiffResponse = {
   patch: string;
 };
 
-type HunkSuggestionItem = {
-  file: string;
-  hunkIndex: number;
-  suggestedBranch: string | null;
-  reason: string;
-};
-
-type SuggestionsResponse = {
-  suggestions: HunkSuggestionItem[];
+type UIStateResponse = StackResponse & {
+  workingDiffKey: string;
 };
 
 type GitHubBranchInfo = {
@@ -186,6 +144,13 @@ function selectionToHash(sel: DiffSelection): string {
   return `#/branch/${encodeURIComponent(sel.name)}`;
 }
 
+function stackPollKey(stack: StackResponse): string {
+  return JSON.stringify({
+    currentBranch: stack.currentBranch,
+    branches: stack.branches,
+  });
+}
+
 type FileInfo = {
   path: string;
   name: string;
@@ -216,6 +181,37 @@ const STACK_CARD_INDENT_BASE = 4;
 const STACK_CARD_INDENT_STEP = 10;
 const STACK_GUIDE_OFFSET = 6;
 const STACK_GUIDE_STEP = 10;
+
+function buildDiffUnsafeCSS(resolvedTheme: 'dark' | 'light'): string {
+  return `
+    [data-diffs-header] { position: sticky; top: 0; z-index: 10; }
+    [data-selected-line] { background: rgba(250, 204, 21, 0.10) !important; }
+    [data-line] span[style*="--diffs-token-light"],
+    [data-line] span[style*="--diffs-token-dark"] {
+      --shortcake-token-color-light: var(--diffs-token-light, var(--diffs-fg));
+      --shortcake-token-color-dark: var(--diffs-token-dark, var(--diffs-fg));
+      --shortcake-token-bg-light: var(--diffs-token-light-bg, inherit);
+      --shortcake-token-bg-dark: var(--diffs-token-dark-bg, inherit);
+      --shortcake-token-font-weight-light: var(--diffs-token-light-font-weight, inherit);
+      --shortcake-token-font-weight-dark: var(--diffs-token-dark-font-weight, inherit);
+      --shortcake-token-font-style-light: var(--diffs-token-light-font-style, inherit);
+      --shortcake-token-font-style-dark: var(--diffs-token-dark-font-style, inherit);
+      --shortcake-token-text-decoration-light: var(--diffs-token-light-text-decoration, inherit);
+      --shortcake-token-text-decoration-dark: var(--diffs-token-dark-text-decoration, inherit);
+      --shortcake-token-color: var(--shortcake-token-color-${resolvedTheme});
+      --shortcake-token-bg: var(--shortcake-token-bg-${resolvedTheme});
+      --shortcake-token-font-weight: var(--shortcake-token-font-weight-${resolvedTheme});
+      --shortcake-token-font-style: var(--shortcake-token-font-style-${resolvedTheme});
+      --shortcake-token-text-decoration: var(--shortcake-token-text-decoration-${resolvedTheme});
+      color: var(--shortcake-token-color) !important;
+      background-color: var(--shortcake-token-bg) !important;
+      font-weight: var(--shortcake-token-font-weight);
+      font-style: var(--shortcake-token-font-style);
+      -webkit-text-decoration: var(--shortcake-token-text-decoration);
+      text-decoration: var(--shortcake-token-text-decoration);
+    }
+  `;
+}
 
 function splitPatchIntoFiles(patch: string): string[] {
   if (patch.trim() === '') {
@@ -293,59 +289,6 @@ function parseFileInfo(patch: string, index: number): FileInfo {
   }
 
   return { path, name, additions, deletions, patchIndex: index };
-}
-
-function parseHunksFromPatch(patch: string, fileInfo: FileInfo, patchIndex: number): ParsedHunk[] {
-  const hunks: ParsedHunk[] = [];
-  const lines = patch.split('\n');
-  let hunkIndex = 0;
-
-  for (const line of lines) {
-    const match = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)/);
-    if (!match) continue;
-
-    const newStart = parseInt(match[2]!, 10);
-    const contextStr = match[3]?.trim() || null;
-
-    // Find the first changed line in this hunk
-    let currentLine = newStart;
-    let firstChangedLine = newStart;
-    let foundChange = false;
-    const hunkLineStart = lines.indexOf(line) + 1;
-
-    for (let i = hunkLineStart; i < lines.length; i++) {
-      const hunkLine = lines[i]!;
-      if (hunkLine.startsWith('@@')) break; // next hunk
-      if (hunkLine.startsWith('+') && !hunkLine.startsWith('+++')) {
-        if (!foundChange) {
-          firstChangedLine = currentLine;
-          foundChange = true;
-        }
-        currentLine++;
-      } else if (hunkLine.startsWith('-') && !hunkLine.startsWith('---')) {
-        if (!foundChange) {
-          firstChangedLine = currentLine;
-          foundChange = true;
-        }
-        // deletions don't advance new line counter
-      } else {
-        currentLine++;
-      }
-    }
-
-    hunks.push({
-      file: fileInfo.path,
-      patchIndex,
-      hunkIndex,
-      firstChangedLine: foundChange ? firstChangedLine : newStart,
-      hunkStartLine: newStart,
-      hunkContext: contextStr,
-      side: 'additions',
-    });
-    hunkIndex++;
-  }
-
-  return hunks;
 }
 
 function buildFileTree(files: FileInfo[]): TreeEntry[] {
@@ -1160,276 +1103,6 @@ function LargeFilePlaceholder({
   );
 }
 
-function HunkToggle({
-  hunkKey,
-  isSelected,
-  onToggle,
-  hunkContext,
-}: {
-  hunkKey: HunkKey;
-  isSelected: boolean;
-  onToggle: (key: HunkKey) => void;
-  hunkContext: string | null;
-}) {
-  return (
-    <div
-      className={`w-full flex items-center gap-2 py-1.5 px-3 cursor-pointer select-none transition-colors duration-100 border-b ${
-        isSelected
-          ? 'bg-accent/10 border-b-accent/30'
-          : 'bg-surface-hover/50 border-b-border hover:bg-surface-hover'
-      }`}
-      onClick={(e) => { e.stopPropagation(); onToggle(hunkKey); }}
-    >
-      <input
-        type="checkbox"
-        checked={isSelected}
-        onChange={() => onToggle(hunkKey)}
-        className="accent-accent cursor-pointer w-3.5 h-3.5 flex-shrink-0"
-        onClick={(e) => e.stopPropagation()}
-      />
-      <span className={`font-mono text-[0.75rem] cursor-pointer ${
-        isSelected ? 'text-accent font-medium' : 'text-text-secondary'
-      }`}>
-        {isSelected ? 'selected' : 'select hunk'}
-      </span>
-      {hunkContext && (
-        <span className="font-mono text-[0.7rem] text-text-muted ml-auto truncate max-w-[60%]" title={hunkContext}>
-          {hunkContext}
-        </span>
-      )}
-    </div>
-  );
-}
-
-function AcceptBanner({
-  count,
-  onAcceptInto,
-  onClear,
-  onSplit,
-  actionLabel = 'Accept into...',
-}: {
-  count: number;
-  onAcceptInto: () => void;
-  onClear: () => void;
-  onSplit?: () => void;
-  actionLabel?: string;
-}) {
-  return (
-    <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 bg-surface border border-accent/30 rounded-lg shadow-lg">
-      <span className="font-mono text-[0.75rem] text-text-primary">
-        {count} hunk{count === 1 ? '' : 's'} selected
-      </span>
-      <button
-        type="button"
-        className="appearance-none border border-accent bg-accent/10 text-accent text-[0.72rem] font-mono px-3 py-1 rounded-md cursor-pointer hover:bg-accent/20 transition-colors duration-100"
-        onClick={onAcceptInto}
-      >
-        {actionLabel}
-      </button>
-      {onSplit && (
-        <button
-          type="button"
-          className="appearance-none border border-green-500/40 bg-green-500/10 text-green-400 text-[0.72rem] font-mono px-3 py-1 rounded-md cursor-pointer hover:bg-green-500/20 transition-colors duration-100"
-          onClick={onSplit}
-        >
-          Split
-        </button>
-      )}
-      <button
-        type="button"
-        className="appearance-none border border-border bg-transparent text-text-secondary text-[0.72rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-surface-hover hover:text-text-primary transition-colors duration-100"
-        onClick={onClear}
-      >
-        Clear
-      </button>
-    </div>
-  );
-}
-
-function BranchPicker({
-  branches,
-  sourceBranch,
-  onSelect,
-  onCancel,
-  isMoving,
-  moveError,
-  mode = 'move',
-  suggestedBranch,
-}: {
-  branches: StackBranch[];
-  sourceBranch: string;
-  onSelect: (branch: string) => void;
-  onCancel: () => void;
-  isMoving: boolean;
-  moveError: string | null;
-  mode?: 'move' | 'accept';
-  suggestedBranch?: string | null;
-}) {
-  const parentBranch = branches.find((b) => b.name === sourceBranch)?.parent;
-  const headerText = mode === 'accept' ? 'Accept into branch' : 'Move to branch';
-  const loadingText = mode === 'accept' ? 'Accepting lines...' : 'Moving lines...';
-
-  return (
-    <div
-      className="flex flex-col gap-1 p-2.5 my-1 bg-surface-hover border border-border rounded-md"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="flex items-center justify-between mb-1">
-        <span className="font-mono text-[0.72rem] font-semibold text-text-primary">
-          {headerText}
-        </span>
-        <button
-          type="button"
-          className="appearance-none border-none bg-transparent text-text-muted text-[0.65rem] cursor-pointer hover:text-text-primary p-0.5"
-          onClick={onCancel}
-          disabled={isMoving}
-        >
-          Cancel
-        </button>
-      </div>
-      {isMoving && (
-        <p className="text-[0.72rem] text-text-muted font-mono m-0">{loadingText}</p>
-      )}
-      {moveError && (
-        <p className="text-[0.72rem] text-danger font-mono m-0">{moveError}</p>
-      )}
-      {!isMoving && (
-        <div className="flex flex-col gap-0.5 max-h-[200px] overflow-y-auto">
-          {branches
-            .filter((b) => b.name !== sourceBranch)
-            .map((branch) => {
-              const isParent = branch.name === parentBranch;
-              const isSuggested = suggestedBranch != null && branch.name === suggestedBranch;
-              return (
-              <button
-                key={branch.name}
-                type="button"
-                className={`appearance-none border-none rounded-md py-1.5 px-2 text-left text-[0.75rem] font-mono cursor-pointer transition-colors duration-100 ${
-                  isSuggested
-                    ? 'bg-green-500/10 text-green-400 hover:bg-green-500/20'
-                    : isParent
-                    ? 'bg-accent/10 text-accent hover:bg-accent/20'
-                    : 'bg-transparent text-text-secondary hover:bg-surface-active hover:text-text-primary'
-                }`}
-                style={{ paddingInlineStart: `${8 + branch.depth * 10}px` }}
-                onClick={() => onSelect(branch.name)}
-              >
-                {branch.name}
-                {isSuggested && (
-                  <span className="ml-1.5 text-[0.6rem] text-green-400/70">(suggested)</span>
-                )}
-                {isParent && !isSuggested && (
-                  <span className="ml-1.5 text-[0.6rem] text-text-muted">(parent)</span>
-                )}
-              </button>
-              );
-            })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SplitDialog({
-  onSubmit,
-  onCancel,
-  isSplitting,
-  splitError,
-}: {
-  onSubmit: (commitMessage: string, placement: 'before' | 'after') => void;
-  onCancel: () => void;
-  isSplitting: boolean;
-  splitError: string | null;
-}) {
-  const [commitMessage, setCommitMessage] = useState('');
-  const [placement, setPlacement] = useState<'before' | 'after'>('before');
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && commitMessage.trim()) {
-      e.preventDefault();
-      onSubmit(commitMessage.trim(), placement);
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      onCancel();
-    }
-  };
-
-  return (
-    <div
-      className="flex flex-col gap-2 p-3 bg-surface border border-border rounded-lg shadow-lg"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="flex items-center justify-between mb-0.5">
-        <span className="font-mono text-[0.72rem] font-semibold text-text-primary">
-          Split into new branch
-        </span>
-        <button
-          type="button"
-          className="appearance-none border-none bg-transparent text-text-muted text-[0.65rem] cursor-pointer hover:text-text-primary p-0.5"
-          onClick={onCancel}
-          disabled={isSplitting}
-        >
-          Cancel
-        </button>
-      </div>
-      {isSplitting && (
-        <p className="text-[0.72rem] text-text-muted font-mono m-0">Splitting...</p>
-      )}
-      {splitError && (
-        <p className="text-[0.72rem] text-danger font-mono m-0">{splitError}</p>
-      )}
-      {!isSplitting && (
-        <>
-          <input
-            ref={inputRef}
-            type="text"
-            className="w-full bg-surface border border-border rounded-md text-text-primary font-mono text-[0.75rem] px-2.5 py-1.5 outline-none focus:border-border-strong placeholder:text-text-muted"
-            placeholder="Commit message for new branch..."
-            value={commitMessage}
-            onChange={(e) => setCommitMessage(e.target.value)}
-            onKeyDown={handleKeyDown}
-          />
-          <div className="flex gap-3">
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="radio"
-                name="split-placement"
-                checked={placement === 'before'}
-                onChange={() => setPlacement('before')}
-                className="accent-accent cursor-pointer"
-              />
-              <span className="font-mono text-[0.72rem] text-text-secondary">Before (parent)</span>
-            </label>
-            <label className="flex items-center gap-1.5 cursor-pointer">
-              <input
-                type="radio"
-                name="split-placement"
-                checked={placement === 'after'}
-                onChange={() => setPlacement('after')}
-                className="accent-accent cursor-pointer"
-              />
-              <span className="font-mono text-[0.72rem] text-text-secondary">After (child)</span>
-            </label>
-          </div>
-          <button
-            type="button"
-            className="appearance-none border border-accent bg-accent/10 text-accent text-[0.72rem] font-mono px-3 py-1.5 rounded-md cursor-pointer hover:bg-accent/20 transition-colors duration-100 disabled:opacity-40 disabled:cursor-not-allowed self-end"
-            disabled={!commitMessage.trim()}
-            onClick={() => { if (commitMessage.trim()) onSubmit(commitMessage.trim(), placement); }}
-          >
-            Split
-          </button>
-        </>
-      )}
-    </div>
-  );
-}
-
 function SplitLinesDialog({
   selectionCount,
   onSubmit,
@@ -1512,9 +1185,7 @@ function SplitLinesDialog({
   );
 }
 
-const EMPTY_HUNKS: ParsedHunk[] = [];
 const EMPTY_COMMENTS: DiffComment[] = [];
-const EMPTY_HUNK_KEYS: Set<HunkKey> = new Set();
 const EMPTY_SPLIT_SELECTIONS: SplitLineSelection[] = [];
 
 const DiffFileSection = React.memo(function DiffFileSection({
@@ -1532,9 +1203,6 @@ const DiffFileSection = React.memo(function DiffFileSection({
   onCancelInput,
   onToolbarComment,
   onToolbarSplit,
-  fileSelectedHunks,
-  onHunkToggle,
-  fileParsedHunks,
   fileSplitSelections,
   onDeleteSplitSelection,
   diffStyle,
@@ -1556,9 +1224,6 @@ const DiffFileSection = React.memo(function DiffFileSection({
   onCancelInput: () => void;
   onToolbarComment: () => void;
   onToolbarSplit?: () => void;
-  fileSelectedHunks: Set<HunkKey>;
-  onHunkToggle: (key: HunkKey) => void;
-  fileParsedHunks: ParsedHunk[];
   fileSplitSelections: SplitLineSelection[];
   onDeleteSplitSelection?: (id: string) => void;
   diffStyle: DiffStyle;
@@ -1581,7 +1246,13 @@ const DiffFileSection = React.memo(function DiffFileSection({
   const rt = resolvedTheme ?? 'dark';
   const activeTheme = diffTheme ?? (rt === 'light' ? 'pierre-light' : 'pierre-dark');
 
-  const options = useMemo<PatchDiffProps<CommentMeta>['options']>(
+  const fileDiff = useMemo(
+    () => setLanguageOverride(getSingularPatch(patch), getFiletypeFromFileName(fileInfo.path)),
+    [patch, fileInfo.path],
+  );
+  const shouldPreloadHighlightedDiff = fileDiff.type === 'new' || fileDiff.type === 'deleted';
+
+  const options = useMemo<FileDiffProps<CommentMeta>['options']>(
     () => ({
       diffStyle,
       diffIndicators: 'classic',
@@ -1592,13 +1263,39 @@ const DiffFileSection = React.memo(function DiffFileSection({
       lineDiffType: 'word',
       enableLineSelection: true,
       onLineSelectionEnd: handleSelectionEnd,
-      unsafeCSS: `
-        [data-diffs-header] { position: sticky; top: 0; z-index: 10; }
-        [data-selected-line] { background: rgba(250, 204, 21, 0.10) !important; }
-      `,
+      unsafeCSS: buildDiffUnsafeCSS(rt),
     }),
     [diffStyle, handleSelectionEnd, rt, activeTheme],
   );
+  const preloadKey = shouldPreloadHighlightedDiff
+    ? JSON.stringify([fileInfo.path, patch, diffStyle, activeTheme, rt])
+    : '';
+  const [preloadedDiffHTML, setPreloadedDiffHTML] = useState<{ key: string; html: string } | null>(null);
+
+  useEffect(() => {
+    if (!shouldPreloadHighlightedDiff) {
+      setPreloadedDiffHTML(null);
+      return;
+    }
+
+    let cancelled = false;
+    setPreloadedDiffHTML((current) => (current?.key === preloadKey ? current : null));
+
+    preloadDiffHTML({ fileDiff, options })
+      .then((html) => {
+        if (!cancelled) setPreloadedDiffHTML({ key: preloadKey, html });
+      })
+      .catch((error) => {
+        console.error('Failed to preload diff syntax highlighting', error);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [fileDiff, options, preloadKey, shouldPreloadHighlightedDiff]);
+  const prerenderedDiffHTML = shouldPreloadHighlightedDiff && preloadedDiffHTML?.key === preloadKey
+    ? preloadedDiffHTML.html
+    : undefined;
 
   const selectedLines = useMemo<SelectedLineRange | null>(() => {
     if (toolbarState && toolbarState.file === fileInfo.path) {
@@ -1640,24 +1337,6 @@ const DiffFileSection = React.memo(function DiffFileSection({
       });
     }
 
-    // Add hunk toggle annotations for both working changes and branch diffs
-    for (const hunk of fileParsedHunks) {
-      const key: HunkKey = `${hunk.file}:${hunk.hunkIndex}`;
-      annotations.push({
-        lineNumber: hunk.firstChangedLine - 1,
-        side: hunk.side,
-        metadata: {
-          commentId: `__hunktoggle__${key}`,
-          text: '',
-          isInput: false,
-          isHunkToggle: true,
-          hunkKey: key,
-          isSelected: fileSelectedHunks.has(key),
-          hunkContext: hunk.hunkContext,
-        },
-      });
-    }
-
     // Add split line selection annotations
     for (const sel of fileSplitSelections) {
       annotations.push({
@@ -1674,22 +1353,11 @@ const DiffFileSection = React.memo(function DiffFileSection({
     }
 
     return annotations;
-  }, [fileComments, activeInput, editingComment, toolbarState, fileParsedHunks, fileSelectedHunks, fileSplitSelections, fileInfo.path]);
+  }, [fileComments, activeInput, editingComment, toolbarState, fileSplitSelections, fileInfo.path]);
 
   const renderAnnotation = useCallback(
     (annotation: DiffLineAnnotation<CommentMeta>) => {
       const { metadata } = annotation;
-
-      if (metadata.isHunkToggle && metadata.hunkKey) {
-        return (
-          <HunkToggle
-            hunkKey={metadata.hunkKey}
-            isSelected={metadata.isSelected ?? false}
-            onToggle={onHunkToggle}
-            hunkContext={metadata.hunkContext ?? null}
-          />
-        );
-      }
 
       if (metadata.isSplitSelection && metadata.splitSelectionId && onDeleteSplitSelection) {
         const sel = fileSplitSelections.find((s) => s.id === metadata.splitSelectionId);
@@ -1757,7 +1425,7 @@ const DiffFileSection = React.memo(function DiffFileSection({
         />
       );
     },
-    [fileComments, editingComment, activeInput, toolbarState, fileInfo.path, onAddComment, onUpdateComment, onDeleteComment, onCancelInput, onStartEdit, onToolbarComment, onToolbarSplit, onHunkToggle, fileSplitSelections, onDeleteSplitSelection],
+    [fileComments, editingComment, activeInput, toolbarState, fileInfo.path, onAddComment, onUpdateComment, onDeleteComment, onCancelInput, onStartEdit, onToolbarComment, onToolbarSplit, fileSplitSelections, onDeleteSplitSelection],
   );
 
   const renderHeaderMetadata = useCallback(() => {
@@ -1774,13 +1442,20 @@ const DiffFileSection = React.memo(function DiffFileSection({
   }, [onToggleViewed, fileInfo.path]);
 
   return (
-    <PatchDiff<CommentMeta>
-      patch={patch}
+    <FileDiff<CommentMeta>
+      key={
+        shouldPreloadHighlightedDiff
+          ? `${preloadKey}:${prerenderedDiffHTML == null ? 'plain' : 'preloaded'}`
+          : fileInfo.path
+      }
+      fileDiff={fileDiff}
       options={options}
       lineAnnotations={lineAnnotations}
       renderAnnotation={renderAnnotation}
       selectedLines={selectedLines}
       renderHeaderMetadata={onToggleViewed ? renderHeaderMetadata : undefined}
+      prerenderedHTML={prerenderedDiffHTML}
+      disableWorkerPool={shouldPreloadHighlightedDiff}
     />
   );
 });
@@ -1893,18 +1568,7 @@ export default function App() {
   const [editingComment, setEditingComment] = useState<DiffComment | null>(null);
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [toolbarState, setToolbarState] = useState<ActiveInput>(null);
-  const [isMoving, setIsMoving] = useState(false);
-  const [moveError, setMoveError] = useState<string | null>(null);
   const [moveSuccess, setMoveSuccess] = useState<string | null>(null);
-  const [selectedHunks, setSelectedHunks] = useState<Set<HunkKey>>(new Set());
-  const [showAcceptPicker, setShowAcceptPicker] = useState(false);
-  const [isAccepting, setIsAccepting] = useState(false);
-  const [acceptError, setAcceptError] = useState<string | null>(null);
-  const [showMovePicker, setShowMovePicker] = useState(false);
-  const [showSplitDialog, setShowSplitDialog] = useState(false);
-  const [isSplitting, setIsSplitting] = useState(false);
-  const [splitError, setSplitError] = useState<string | null>(null);
-  const [suggestions, setSuggestions] = useState<HunkSuggestionItem[]>([]);
   const [splitLineSelections, setSplitLineSelections] = useState<SplitLineSelection[]>([]);
   const [showSplitLinesDialog, setShowSplitLinesDialog] = useState(false);
   const [isSplittingLines, setIsSplittingLines] = useState(false);
@@ -2074,14 +1738,7 @@ export default function App() {
     setActiveInput(null);
     setEditingComment(null);
     setToolbarState(null);
-    setMoveError(null);
     setMoveSuccess(null);
-    setSelectedHunks(new Set());
-    setShowAcceptPicker(false);
-    setAcceptError(null);
-    setShowMovePicker(false);
-    setShowSplitDialog(false);
-    setSplitError(null);
     setSplitLineSelections([]);
     setShowSplitLinesDialog(false);
     setSplitLinesError(null);
@@ -2108,54 +1765,6 @@ export default function App() {
     () => buildFileTree(fileInfos),
     [fileInfos],
   );
-
-  const parsedHunks = useMemo(() => {
-    if (!selection) return [];
-    return diffPatches.flatMap((patch, i) => {
-      const info = fileInfos[i];
-      if (!info) return [];
-      return parseHunksFromPatch(patch, info, i);
-    });
-  }, [diffPatches, fileInfos, selection]);
-
-  const parsedHunksByFile = useMemo(() => {
-    const map = new Map<string, ParsedHunk[]>();
-    for (const hunk of parsedHunks) {
-      let arr = map.get(hunk.file);
-      if (!arr) { arr = []; map.set(hunk.file, arr); }
-      arr.push(hunk);
-    }
-    return map;
-  }, [parsedHunks]);
-
-  const deferredSelectedHunks = useDeferredValue(selectedHunks);
-
-  const prevSelectedByFileRef = useRef(new Map<string, Set<HunkKey>>());
-  const selectedHunksByFile = useMemo(() => {
-    const prev = prevSelectedByFileRef.current;
-    const next = new Map<string, Set<HunkKey>>();
-    for (const key of deferredSelectedHunks) {
-      const file = key.split(':')[0]!;
-      let s = next.get(file);
-      if (!s) { s = new Set(); next.set(file, s); }
-      s.add(key);
-    }
-    // Reuse previous references for unchanged files to preserve React.memo
-    const result = new Map<string, Set<HunkKey>>();
-    const allFiles = new Set([...prev.keys(), ...next.keys()]);
-    for (const file of allFiles) {
-      const prevSet = prev.get(file);
-      const nextSet = next.get(file);
-      if (prevSet && nextSet && prevSet.size === nextSet.size) {
-        let same = true;
-        for (const k of prevSet) { if (!nextSet.has(k)) { same = false; break; } }
-        if (same) { result.set(file, prevSet); continue; }
-      }
-      if (nextSet) result.set(file, nextSet);
-    }
-    prevSelectedByFileRef.current = result;
-    return result;
-  }, [deferredSelectedHunks]);
 
   const commentsByFile = useMemo(() => {
     const map = new Map<string, DiffComment[]>();
@@ -2333,22 +1942,9 @@ export default function App() {
     setSplitLineSelections((prev) => prev.filter((s) => s.id !== id));
   }, []);
 
-  const [, startHunkTransition] = useTransition();
-
-  const handleHunkToggle = useCallback((key: HunkKey) => {
-    startHunkTransition(() => {
-      setSelectedHunks((prev) => {
-        const next = new Set(prev);
-        if (next.has(key)) next.delete(key);
-        else next.add(key);
-        return next;
-      });
-    });
-  }, [startHunkTransition]);
-
-  const refreshData = useCallback(async () => {
+  const refreshData = useCallback(async (knownStack?: StackResponse) => {
     try {
-      const stackData = await fetchJSON<StackResponse>('/api/stack');
+      const stackData = knownStack ?? await fetchJSON<StackResponse>('/api/stack');
       setStack(stackData);
       if (selection?.type === 'branch') {
         const diffData = await fetchJSON<DiffResponse>(
@@ -2408,16 +2004,17 @@ export default function App() {
     setSplitLinesError(null);
   }, []);
 
-  // Poll for external changes every 3 seconds
+  // Poll for external stack and working tree changes every 3 seconds
   const lastStackKeyRef = useRef<string>('');
+  const lastWorkingDiffKeyRef = useRef<string>('');
+  const selectionRef = useRef<DiffSelection | null>(selection);
+  selectionRef.current = selection;
   const refreshDataRef = useRef(refreshData);
   refreshDataRef.current = refreshData;
 
   useEffect(() => {
     if (stack) {
-      lastStackKeyRef.current = JSON.stringify(
-        stack.branches.map((b) => ({ name: b.name, commit: b.commit })),
-      );
+      lastStackKeyRef.current = stackPollKey(stack);
     }
   }, [stack]);
 
@@ -2427,14 +2024,20 @@ export default function App() {
     const startPolling = () => {
       if (intervalId) return;
       intervalId = setInterval(async () => {
-        if (isMoving || isAccepting || isSplitting || isSplittingLines) return;
+        if (isSplittingLines) return;
         try {
-          const data = await fetchJSON<StackResponse>('/api/stack');
-          const newKey = JSON.stringify(
-            data.branches.map((b) => ({ name: b.name, commit: b.commit })),
-          );
-          if (newKey !== lastStackKeyRef.current) {
-            await refreshDataRef.current();
+          const data = await fetchJSON<UIStateResponse>('/api/state');
+          const newStackKey = stackPollKey(data);
+          const stackChanged = newStackKey !== lastStackKeyRef.current;
+          const previousWorkingDiffKey = lastWorkingDiffKeyRef.current;
+          const workingDiffChanged =
+            data.workingDiffKey !== previousWorkingDiffKey &&
+            selectionRef.current?.type === 'working';
+
+          lastWorkingDiffKeyRef.current = data.workingDiffKey;
+
+          if (stackChanged || workingDiffChanged) {
+            await refreshDataRef.current(data);
           }
         } catch {
           // Silent failure — will retry on next poll
@@ -2466,7 +2069,7 @@ export default function App() {
       stopPolling();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [isMoving, isAccepting, isSplitting, isSplittingLines]);
+  }, [isSplittingLines]);
 
   // Fetch GitHub info (PR links + CI status) on a slower polling interval
   useEffect(() => {
@@ -2492,152 +2095,6 @@ export default function App() {
       cancelled = true;
       clearInterval(intervalId);
     };
-  }, []);
-
-  const handleMoveHunksBranchSelect = useCallback(
-    async (targetBranch: string) => {
-      if (selectedHunks.size === 0 || selection?.type !== 'branch') return;
-
-      setIsMoving(true);
-      setMoveError(null);
-
-      const hunkPayload = [...selectedHunks].map((key) => {
-        const [filePath, hunkIndexStr] = key.split(':') as [string, string];
-        const hunkIndex = parseInt(hunkIndexStr, 10);
-        const parsed = parsedHunks.find(
-          (h) => h.file === filePath && h.hunkIndex === hunkIndex,
-        );
-        const patchIdx = parsed?.patchIndex ?? 0;
-        return {
-          filePath,
-          filePatch: diffPatches[patchIdx] ?? '',
-          hunkIndex,
-        };
-      });
-
-      try {
-        await postJSON<MoveHunksResponse>('/api/move-hunks', {
-          sourceBranch: selection.name,
-          targetBranch,
-          hunks: hunkPayload,
-        });
-
-        setSelectedHunks(new Set());
-        setShowMovePicker(false);
-        setMoveSuccess(`Moved to ${targetBranch}`);
-        setTimeout(() => setMoveSuccess(null), 3000);
-
-        await refreshData();
-      } catch (err) {
-        setMoveError(err instanceof Error ? err.message : 'Move failed');
-      } finally {
-        setIsMoving(false);
-      }
-    },
-    [selectedHunks, selection, diffPatches, parsedHunks, refreshData],
-  );
-
-  const handleMoveCancelPicker = useCallback(() => {
-    setShowMovePicker(false);
-    setMoveError(null);
-  }, []);
-
-  const handleSplitSubmit = useCallback(
-    async (commitMessage: string, placement: 'before' | 'after') => {
-      if (selectedHunks.size === 0 || selection?.type !== 'branch') return;
-
-      setIsSplitting(true);
-      setSplitError(null);
-
-      const hunkPayload = [...selectedHunks].map((key) => {
-        const [filePath, hunkIndexStr] = key.split(':') as [string, string];
-        const hunkIndex = parseInt(hunkIndexStr, 10);
-        const parsed = parsedHunks.find(
-          (h) => h.file === filePath && h.hunkIndex === hunkIndex,
-        );
-        const patchIdx = parsed?.patchIndex ?? 0;
-        return {
-          filePath,
-          filePatch: diffPatches[patchIdx] ?? '',
-          hunkIndex,
-        };
-      });
-
-      try {
-        const result = await postJSON<SplitHunksResponse>('/api/split-hunks', {
-          sourceBranch: selection.name,
-          commitMessage,
-          placement,
-          hunks: hunkPayload,
-        });
-
-        setSelectedHunks(new Set());
-        setShowSplitDialog(false);
-        setMoveSuccess(`Split into ${result.newBranch}`);
-        setTimeout(() => setMoveSuccess(null), 3000);
-
-        await refreshData();
-      } catch (err) {
-        setSplitError(err instanceof Error ? err.message : 'Split failed');
-      } finally {
-        setIsSplitting(false);
-      }
-    },
-    [selectedHunks, selection, diffPatches, parsedHunks, refreshData],
-  );
-
-  const handleSplitCancel = useCallback(() => {
-    setShowSplitDialog(false);
-    setSplitError(null);
-  }, []);
-
-  const handleAcceptBranchSelect = useCallback(
-    async (targetBranch: string) => {
-      if (selectedHunks.size === 0 || selection?.type !== 'working') return;
-
-      setIsAccepting(true);
-      setAcceptError(null);
-
-      // Build hunk selections from selectedHunks set
-      const hunkPayload = [...selectedHunks].map((key) => {
-        const [filePath, hunkIndexStr] = key.split(':') as [string, string];
-        const hunkIndex = parseInt(hunkIndexStr, 10);
-        // Find the matching parsed hunk to get the patchIndex
-        const parsed = parsedHunks.find(
-          (h) => h.file === filePath && h.hunkIndex === hunkIndex,
-        );
-        const patchIdx = parsed?.patchIndex ?? 0;
-        return {
-          filePath,
-          filePatch: diffPatches[patchIdx] ?? '',
-          hunkIndex,
-        };
-      });
-
-      try {
-        await postJSON<AcceptHunksResponse>('/api/accept-working-hunks', {
-          targetBranch,
-          hunks: hunkPayload,
-        });
-
-        setSelectedHunks(new Set());
-        setShowAcceptPicker(false);
-        setMoveSuccess(`Accepted into ${targetBranch}`);
-        setTimeout(() => setMoveSuccess(null), 3000);
-
-        await refreshData();
-      } catch (err) {
-        setAcceptError(err instanceof Error ? err.message : 'Accept failed');
-      } finally {
-        setIsAccepting(false);
-      }
-    },
-    [selectedHunks, selection, diffPatches, parsedHunks, refreshData],
-  );
-
-  const handleAcceptCancelPicker = useCallback(() => {
-    setShowAcceptPicker(false);
-    setAcceptError(null);
   }, []);
 
   const handleCopyComments = useCallback(() => {
@@ -2804,26 +2261,6 @@ export default function App() {
     }
     return map;
   }, [branches, parentIndexMap]);
-
-  const suggestedBranch = useMemo(() => {
-    if (suggestions.length === 0 || selectedHunks.size === 0) return null;
-    const votes = new Map<string, number>();
-    for (const key of selectedHunks) {
-      const [filePath, hunkIndexStr] = key.split(':') as [string, string];
-      const hunkIndex = parseInt(hunkIndexStr, 10);
-      const match = suggestions.find(
-        (s) => s.file === filePath && s.hunkIndex === hunkIndex && s.suggestedBranch,
-      );
-      if (match?.suggestedBranch) {
-        votes.set(match.suggestedBranch, (votes.get(match.suggestedBranch) ?? 0) + 1);
-      }
-    }
-    if (votes.size === 0) return null;
-    const sorted = [...votes.entries()].sort((a, b) => b[1] - a[1]);
-    // No suggestion on tie
-    if (sorted.length > 1 && sorted[0]![1] === sorted[1]![1]) return null;
-    return sorted[0]![0] ?? null;
-  }, [suggestions, selectedHunks]);
 
   return (
     <WorkerPoolContextProvider
@@ -3212,9 +2649,6 @@ export default function App() {
                           onCancelInput={handleCancelInput}
                           onToolbarComment={handleToolbarComment}
                           onToolbarSplit={selection?.type === 'branch' ? handleToolbarSplit : undefined}
-                          fileSelectedHunks={selectedHunksByFile.get(info.path) ?? EMPTY_HUNK_KEYS}
-                          onHunkToggle={handleHunkToggle}
-                          fileParsedHunks={parsedHunksByFile.get(info.path) ?? EMPTY_HUNKS}
                           fileSplitSelections={splitSelectionsByFile.get(info.path) ?? EMPTY_SPLIT_SELECTIONS}
                           onDeleteSplitSelection={selection?.type === 'branch' ? handleDeleteSplitSelection : undefined}
                           diffStyle={diffStyle}
@@ -3532,9 +2966,6 @@ export default function App() {
                         onCancelInput={handleCancelInput}
                         onToolbarComment={handleToolbarComment}
                         onToolbarSplit={selection?.type === 'branch' ? handleToolbarSplit : undefined}
-                        fileSelectedHunks={selectedHunksByFile.get(info.path) ?? EMPTY_HUNK_KEYS}
-                        onHunkToggle={handleHunkToggle}
-                        fileParsedHunks={parsedHunksByFile.get(info.path) ?? EMPTY_HUNKS}
                         fileSplitSelections={splitSelectionsByFile.get(info.path) ?? EMPTY_SPLIT_SELECTIONS}
                         onDeleteSplitSelection={selection?.type === 'branch' ? handleDeleteSplitSelection : undefined}
                         diffStyle={diffStyle}
@@ -3553,83 +2984,7 @@ export default function App() {
       </>
       )}
 
-      {selection?.type === 'working' && selectedHunks.size > 0 && !showAcceptPicker && (
-        <AcceptBanner
-          count={selectedHunks.size}
-          onAcceptInto={() => {
-            setShowAcceptPicker(true);
-            setAcceptError(null);
-            setSuggestions([]);
-            fetchJSON<SuggestionsResponse>('/api/suggestions?mode=working')
-              .then((res) => setSuggestions(res.suggestions))
-              .catch(() => setSuggestions([]));
-          }}
-          onClear={() => setSelectedHunks(new Set())}
-        />
-      )}
-
-      {selection?.type === 'branch' && selectedHunks.size > 0 && !showMovePicker && !showSplitDialog && (
-        <AcceptBanner
-          count={selectedHunks.size}
-          onAcceptInto={() => {
-            setShowMovePicker(true);
-            setMoveError(null);
-            setSuggestions([]);
-            fetchJSON<SuggestionsResponse>(`/api/suggestions?mode=branch&source=${encodeURIComponent(selection.name)}`)
-              .then((res) => setSuggestions(res.suggestions))
-              .catch(() => setSuggestions([]));
-          }}
-          onClear={() => setSelectedHunks(new Set())}
-          actionLabel="Move to..."
-          onSplit={() => {
-            setShowSplitDialog(true);
-            setSplitError(null);
-          }}
-        />
-      )}
-
-      {showAcceptPicker && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[320px]">
-          <BranchPicker
-            branches={branches}
-            sourceBranch=""
-            onSelect={handleAcceptBranchSelect}
-            onCancel={handleAcceptCancelPicker}
-            isMoving={isAccepting}
-            moveError={acceptError}
-            mode="accept"
-            suggestedBranch={suggestedBranch}
-          />
-        </div>
-      )}
-
-      {showMovePicker && selection?.type === 'branch' && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[320px]">
-          <BranchPicker
-            branches={branches}
-            sourceBranch={selection.name}
-            onSelect={handleMoveHunksBranchSelect}
-            onCancel={handleMoveCancelPicker}
-            isMoving={isMoving}
-            moveError={moveError}
-            mode="move"
-            suggestedBranch={suggestedBranch}
-          />
-        </div>
-      )}
-
-      {showSplitDialog && selection?.type === 'branch' && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[360px]">
-          <SplitDialog
-            onSubmit={handleSplitSubmit}
-            onCancel={handleSplitCancel}
-            isSplitting={isSplitting}
-            splitError={splitError}
-          />
-        </div>
-      )}
-
-      {selection?.type === 'branch' && splitLineSelections.length > 0 && selectedHunks.size === 0 && !showSplitLinesDialog && (
+      {selection?.type === 'branch' && splitLineSelections.length > 0 && !showSplitLinesDialog && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 bg-surface border border-green-500/30 rounded-lg shadow-lg">
           <span className="font-mono text-[0.75rem] text-text-primary">
             {splitLineSelections.length} line selection{splitLineSelections.length === 1 ? '' : 's'}

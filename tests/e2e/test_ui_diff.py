@@ -45,6 +45,50 @@ def test_diff_shows_additions(ui_page: Page):
     expect(diff_content).to_contain_text("farewell")
 
 
+def test_diff_syntax_highlights_new_file(ui_page: Page):
+    """New-file diffs render syntax token colors, including fallback CSS."""
+    ui_page.wait_for_function(
+        """
+        () => [...document.querySelectorAll('diffs-container')]
+          .some((root) => root.shadowRoot?.querySelector('style[data-unsafe-css]'))
+        """,
+        timeout=10_000,
+    )
+
+    unsafe_css = ui_page.evaluate(
+        """
+        () => [...document.querySelectorAll('diffs-container')]
+          .flatMap((root) => [...(root.shadowRoot?.querySelectorAll('style[data-unsafe-css]') ?? [])])
+          .map((style) => style.textContent ?? '')
+          .join('\\n')
+        """
+    )
+
+    assert "--diffs-token-light" in unsafe_css
+    assert "--diffs-token-dark" in unsafe_css
+
+    ui_page.wait_for_function(
+        """
+        () => new Set(
+          [...document.querySelectorAll('diffs-container')]
+            .flatMap((root) => [...(root.shadowRoot?.querySelectorAll('[data-line] span') ?? [])])
+            .map((span) => getComputedStyle(span).color)
+        ).size > 1
+        """,
+        timeout=15_000,
+    )
+    token_colors = ui_page.evaluate(
+        """
+        () => [...new Set(
+          [...document.querySelectorAll('diffs-container')]
+            .flatMap((root) => [...(root.shadowRoot?.querySelectorAll('[data-line] span') ?? [])])
+            .map((span) => getComputedStyle(span).color)
+        )]
+        """
+    )
+    assert len(token_colors) > 1
+
+
 def test_file_click_scrolls(ui_page: Page):
     """Clicking a file in the file tree highlights it as active."""
     file_btn = ui_page.locator("aside button", has_text="feature_b.py")
