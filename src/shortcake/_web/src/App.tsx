@@ -2725,7 +2725,7 @@ export default function App() {
           onLightChange={setDiffThemeLight}
         />
         <header className="px-[1.15rem] h-[60px] shrink-0 border-b border-border flex justify-between items-center gap-4">
-          <div className="flex items-center gap-3 min-w-0 max-w-[58vw] shrink-0 xl:max-w-none">
+          <div className="flex items-center gap-2.5 min-w-0 max-w-[58vw] shrink-0 xl:max-w-none">
             <img
               src="/favicon.svg"
               alt="Shortcake"
@@ -2733,6 +2733,7 @@ export default function App() {
               width="97"
               height="99"
             />
+            <div className="hidden sm:block h-7 w-px bg-border shrink-0" aria-hidden="true" />
             <DiffSwitcher
               diff={diff}
               open={switcherOpen}
