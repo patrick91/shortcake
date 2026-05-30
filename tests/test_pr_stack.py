@@ -324,6 +324,70 @@ def test_sync_places_confirmed_merged_historical_branch_below_active_stack(
     assert branch_b_pos < branch_a_pos < merged_pos
 
 
+def test_sync_inserts_historical_branch_after_lookup_error(
+    repo_with_stack: Repo,
+) -> None:
+    """Historical branch lookup errors fall back to parsed PR info."""
+    switch_branch(repo_with_stack, "branch_a")
+    gh = _make_mock_gh()
+
+    stack_body = (
+        f"{STACK_START_MARKER}\n"
+        "## Stack\n"
+        "\n"
+        "- #20 (`branch_b`)\n"
+        "- #30 (`old_branch`)\n"
+        f"{STACK_END_MARKER}"
+    )
+    pr_a = PRInfo(
+        number=10,
+        url="url",
+        base="main",
+        title="t",
+        body=stack_body,
+        state="open",
+        is_draft=False,
+    )
+    pr_b = PRInfo(
+        number=20,
+        url="url",
+        base="branch_a",
+        title="t",
+        body="",
+        state="open",
+        is_draft=False,
+    )
+    gh.get_pr_for_branch.side_effect = lambda b: {
+        "branch_a": pr_a,
+        "branch_b": pr_b,
+    }.get(b)
+
+    def get_merged_pr_number(branch: str) -> int | None:
+        if branch == "old_branch":
+            raise httpx.RequestError("network down")
+        return None
+
+    gh.get_merged_pr_number.side_effect = get_merged_pr_number
+
+    _sync_stack_pr_descriptions(
+        repo_with_stack,
+        gh,
+        "owner",
+        ["branch_a", "branch_b"],
+    )
+
+    body_updates = [
+        c for c in gh.update_pr.call_args_list if c[1].get("body") is not None
+    ]
+    assert body_updates
+    body = body_updates[-1][1]["body"]
+    branch_b_pos = body.find("`branch_b`")
+    old_pos = body.find("`old_branch`")
+    branch_a_pos = body.find("`branch_a`")
+    assert branch_b_pos < old_pos < branch_a_pos
+    assert "#30" in body
+
+
 def test_sync_pr_descriptions_for_branches_deduplicates_stacks(
     repo_with_stack: Repo,
 ) -> None:

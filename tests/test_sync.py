@@ -25,6 +25,7 @@ from shortcake.commands.sync import (
     _reparent_branch,
     _resolve_deleted_parent,
     _resolve_existing_parent,
+    _restore_current_branch,
     _sync,
     _topological_sort_for_deletion,
 )
@@ -107,6 +108,11 @@ def test_is_squash_merged_true(temp_repo: Repo, tmp_path: Path) -> None:
 def test_is_squash_merged_false(repo_with_tracked_feature: Repo) -> None:
     """Test non-squash-merged branch."""
     assert not is_squash_merged(repo_with_tracked_feature, "feature", "main")
+
+
+def test_restore_current_branch_none_noop(temp_repo: Repo) -> None:
+    """No branch restoration is needed when sync has no current branch."""
+    _restore_current_branch(temp_repo, None)
 
 
 def test_is_squash_merged_branch_no_changes(temp_repo: Repo, tmp_path: Path) -> None:

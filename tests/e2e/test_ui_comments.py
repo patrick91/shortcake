@@ -1,6 +1,8 @@
 import pytest
 from playwright.sync_api import Page, expect
 
+from tests.e2e.conftest import select_diff_option
+
 pytestmark = pytest.mark.e2e
 
 # ---------------------------------------------------------------------------
@@ -160,7 +162,7 @@ def test_comments_clear_on_branch_switch(ui_page: Page):
     expect(ui_page.locator("text=Temporary comment")).to_be_visible()
 
     # Switch to branch_a
-    ui_page.locator("button", has_text="branch_a").first.click()
+    select_diff_option(ui_page, "branch_a")
     ui_page.wait_for_selector(".diff-content", timeout=10_000)
 
     # Comments from previous branch should be gone

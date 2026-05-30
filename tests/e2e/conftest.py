@@ -14,6 +14,18 @@ from shortcake.commands.ui import _start_api_server
 from tests._git_helpers import commit_files, create_branch, get_branch_head, init_repo
 
 
+def open_diff_switcher(page: Page) -> None:
+    """Open the header diff switcher and wait for its listbox."""
+    page.get_by_role("button", name="Switch diff").click()
+    page.wait_for_selector("#sc-diff-listbox", timeout=5_000)
+
+
+def select_diff_option(page: Page, label: str) -> None:
+    """Select a diff target from the header switcher."""
+    open_diff_switcher(page)
+    page.locator("#sc-diff-listbox [role='option']").filter(has_text=label).click()
+
+
 def pytest_collection_modifyitems(config, items):
     """Auto-skip e2e tests unless explicitly targeted."""
     markexpr = config.getoption("markexpr", default="")
@@ -165,9 +177,7 @@ def ui_url(e2e_repo, _vite_runtime):
 def ui_page(page: Page, ui_url: str):
     """Navigate to the UI and wait for the stack and diff to load."""
     page.goto(ui_url)
-    # Wait for stack sidebar to render branch buttons
-    page.wait_for_selector("text=branch_a", timeout=15_000)
-    # Default view is now working changes; click branch_b to load a diff
-    page.locator("button", has_text="branch_b").first.click()
+    # Default view is working changes; select branch_b to load a branch diff.
+    select_diff_option(page, "branch_b")
     page.wait_for_selector(".diff-content", timeout=10_000)
     return page
