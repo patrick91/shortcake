@@ -206,6 +206,32 @@ def test_fetch_and_fast_forward_trunk_with_new_remote_commits(
     assert (local_path / "file2.txt").read_text() == "content 2"
 
 
+def test_fetch_and_fast_forward_trunk_checked_out_merge_failure(
+    temp_repo: Repo,
+    tmp_path: Path,
+) -> None:
+    """A failed checked-out branch fast-forward is reported as failure."""
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    commit_files(temp_repo, {tmp_path / "remote.txt": "remote"}, "Remote commit")
+    remote_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/main", main_sha)
+    set_ref(temp_repo, "refs/remotes/origin/main", remote_sha)
+
+    with (
+        patch("shortcake._git._remote.has_remote", return_value=True),
+        patch("shortcake._git._remote.fetch_remote", return_value=True),
+        patch("shortcake._git._remote.is_ancestor", return_value=True),
+        patch(
+            "shortcake._git._remote._fast_forward_checked_out_branch",
+            return_value=False,
+        ),
+    ):
+        success, new_sha = git.fetch_and_fast_forward_trunk(temp_repo, "main")
+
+    assert success is False
+    assert new_sha is None
+
+
 def test_fetch_and_fast_forward_trunk_falls_back_to_git_cli(
     tmp_path: Path,
 ) -> None:

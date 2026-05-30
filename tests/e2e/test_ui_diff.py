@@ -4,6 +4,8 @@ import re
 import pytest
 from playwright.sync_api import Page, expect
 
+from tests.e2e.conftest import select_diff_option
+
 pytestmark = pytest.mark.e2e
 
 
@@ -22,12 +24,12 @@ def _new_file_patch(path: str, marker: str, line_count: int = 80) -> str:
 
 def test_diff_loads_on_branch_click(ui_page: Page):
     """Clicking branch_a loads its diff; header shows 'branch_a -> main'."""
-    ui_page.locator("button", has_text="branch_a").first.click()
+    select_diff_option(ui_page, "branch_a")
 
     # Wait for diff to load
     ui_page.wait_for_selector(".diff-content", timeout=10_000)
 
-    header = ui_page.locator("header h2")
+    header = ui_page.locator("header")
     expect(header).to_contain_text("branch_a")
     expect(header).to_contain_text("main")
 
@@ -35,7 +37,7 @@ def test_diff_loads_on_branch_click(ui_page: Page):
 def test_diff_shows_file_tree(ui_page: Page):
     """File tree sidebar shows changed files (feature_b.py for branch_b)."""
     file_entry = ui_page.locator(
-        'aside file-tree-container '
+        "aside file-tree-container "
         '[data-type="item"][data-item-type="file"][data-item-path="feature_b.py"]'
     )
     expect(file_entry).to_be_visible()
@@ -101,7 +103,7 @@ def test_diff_syntax_highlights_new_file(ui_page: Page):
 def test_file_click_scrolls(ui_page: Page):
     """Clicking a file in the file tree highlights it as active."""
     file_btn = ui_page.locator(
-        'aside file-tree-container '
+        "aside file-tree-container "
         '[data-type="item"][data-item-type="file"][data-item-path="feature_b.py"]'
     )
     file_btn.click()
@@ -129,13 +131,12 @@ def test_file_click_scrolls_to_clicked_file_section(page: Page, ui_url: str):
         ),
     )
     page.goto(ui_url)
-    page.wait_for_selector("text=branch_a", timeout=15_000)
-    page.locator("button", has_text="branch_b").first.click()
+    select_diff_option(page, "branch_b")
     page.wait_for_selector(".diff-content", timeout=10_000)
 
     page.evaluate("document.querySelector('.diff-content').scrollTop = 0")
     page.locator(
-        'aside file-tree-container '
+        "aside file-tree-container "
         '[data-type="item"][data-item-type="file"][data-item-path="a_middle.py"]'
     ).click()
 
@@ -214,11 +215,10 @@ def test_working_changes_diff(page: Page, ui_url: str):
         ),
     )
     page.goto(ui_url)
-    page.wait_for_selector("text=branch_a", timeout=15_000)
 
-    page.get_by_text("Working Changes").click()
+    select_diff_option(page, "Working Changes")
 
-    expect(page.locator("header h2")).to_contain_text("Uncommitted changes")
+    expect(page.locator("header")).to_contain_text("Uncommitted changes")
     page.wait_for_selector(".diff-content", timeout=10_000)
     expect(page.locator(".diff-content")).to_contain_text("hello")
 
@@ -234,9 +234,8 @@ def test_empty_working_changes(page: Page, ui_url: str):
         ),
     )
     page.goto(ui_url)
-    page.wait_for_selector("text=branch_a", timeout=15_000)
 
-    page.get_by_text("Working Changes").click()
+    select_diff_option(page, "Working Changes")
 
     expect(page.get_by_text("No uncommitted changes")).to_be_visible(timeout=5_000)
 
@@ -252,8 +251,7 @@ def test_empty_diff(page: Page, ui_url: str):
         ),
     )
     page.goto(ui_url)
-    page.wait_for_selector("text=branch_a", timeout=15_000)
 
     # Click branch_b to trigger the mocked empty diff response
-    page.locator("button", has_text="branch_b").first.click()
+    select_diff_option(page, "branch_b")
     expect(page.get_by_text("No file differences")).to_be_visible(timeout=5_000)

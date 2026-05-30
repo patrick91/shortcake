@@ -15,13 +15,13 @@ from shortcake.commands.ui import (
     _build_github_info_payload,
     _build_request_handler,
     _build_stack_payload,
-    _build_ui_state_payload,
     _build_suggestions_payload,
+    _build_ui_state_payload,
     _build_working_diff_payload,
     _find_open_port,
     _git_diff_patch,
-    _git_working_diff_key,
     _git_working_diff,
+    _git_working_diff_key,
     _resolve_frontend_dir,
     _resolve_js_runtime,
     _run_dev_server,
@@ -300,6 +300,25 @@ def test_git_working_diff_error(tmp_path: Path) -> None:
         _git_working_diff(tmp_path)
 
 
+def test_git_working_diff_skips_blank_and_unreadable_untracked_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Unreadable untracked files are ignored when building working diffs."""
+    calls = 0
+
+    def fake_run(cmd: list[str], **kw: object) -> MagicMock:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return MagicMock(returncode=0, stdout="", stderr="")
+        return MagicMock(returncode=0, stdout="\nmissing.txt\n", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    assert _git_working_diff(tmp_path) == ""
+
+
 def test_build_working_diff_payload(repo_with_stack: Repo) -> None:
     """_build_working_diff_payload returns patch in expected format."""
     payload = _build_working_diff_payload(repo_with_stack)
@@ -441,6 +460,17 @@ def test_handler_ui_state(repo_with_stack: Repo) -> None:
     data = fake.response_json()
     assert "branches" in data
     assert "workingDiffKey" in data
+
+
+def test_handler_ui_state_error(temp_repo: Repo) -> None:
+    """State endpoint returns 500 on unexpected errors."""
+    with patch(
+        "shortcake.commands.ui._build_ui_state_payload",
+        side_effect=RuntimeError("state failed"),
+    ):
+        fake = _make_handler(temp_repo, "/api/state")
+    assert fake._status == 500
+    assert "state failed" in fake.response_json()["error"]
 
 
 def test_handler_working_diff_error(temp_repo: Repo) -> None:
@@ -1696,6 +1726,38 @@ def test_post_review_success_sse(repo_with_stack: Repo) -> None:
     assert review_events[0][1]["model"] == "claude:sonnet"
     assert review_events[0][1]["summary"] == "Test review."
     assert len(done_events) == 1
+
+
+def test_post_review_working_branch_uses_working_diff(repo_with_stack: Repo) -> None:
+    """POST /api/review can review the synthetic working-changes branch."""
+    from shortcake.commands._review import ReviewResult
+
+    mock_result = ReviewResult(
+        model="claude:sonnet",
+        summary="Working review.",
+        comments=[],
+    )
+
+    def fake_run_review(patch: str, model: str) -> ReviewResult:
+        assert patch == "working patch"
+        assert model == "claude:sonnet"
+        return mock_result
+
+    with (
+        patch("shortcake.commands.ui._git_working_diff", return_value="working patch"),
+        patch("shortcake.commands.ui._run_review", side_effect=fake_run_review),
+    ):
+        fake = _make_post_handler(
+            repo_with_stack,
+            "/api/review",
+            {"branch": "__working__", "models": ["claude:sonnet"]},
+        )
+
+    assert fake._status == 200
+    events = _parse_sse_events(fake.wfile.getvalue())
+    review_events = [e for e in events if e[0] == "review"]
+    assert len(review_events) == 1
+    assert review_events[0][1]["summary"] == "Working review."
 
 
 def test_post_review_with_synthesis(repo_with_stack: Repo) -> None:
