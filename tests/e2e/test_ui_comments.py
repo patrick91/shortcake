@@ -14,20 +14,36 @@ LINE_GUTTER_SELECTOR = "[data-column-number]"
 
 
 def _click_diff_line(page: Page):
-    """Click the first visible line-number gutter and then the 'Comment'
-    button on the selection toolbar to open the comment input.
-
-    The UI flow is: click gutter → selection toolbar appears → click
-    'Comment' button → ``CommentInput`` textarea appears.
-    """
+    """Click the first visible line-number gutter to open the comment input."""
     gutter = page.locator(LINE_GUTTER_SELECTOR).first
     gutter.wait_for(state="visible", timeout=5_000)
     gutter.click()
 
-    # The selection toolbar appears with a "Comment" button
-    comment_btn = page.get_by_role("button", name="Comment")
-    comment_btn.wait_for(state="visible", timeout=5_000)
-    comment_btn.click()
+
+def _drag_select_diff_lines(page: Page):
+    """Drag across visible line-number gutters to open the comment input."""
+    gutters = page.locator(LINE_GUTTER_SELECTOR)
+    first = gutters.nth(0)
+    second = gutters.nth(1)
+    first.wait_for(state="visible", timeout=5_000)
+    second.wait_for(state="visible", timeout=5_000)
+
+    first_box = first.bounding_box()
+    second_box = second.bounding_box()
+    assert first_box is not None
+    assert second_box is not None
+
+    page.mouse.move(
+        first_box["x"] + first_box["width"] / 2,
+        first_box["y"] + first_box["height"] / 2,
+    )
+    page.mouse.down()
+    page.mouse.move(
+        second_box["x"] + second_box["width"] / 2,
+        second_box["y"] + second_box["height"] / 2,
+        steps=5,
+    )
+    page.mouse.up()
 
 
 def _add_comment(page: Page, text: str = "Test comment"):
@@ -47,6 +63,12 @@ def _add_comment(page: Page, text: str = "Test comment"):
 def test_line_selection_opens_input(ui_page: Page):
     """Clicking a line-number gutter opens the comment textarea."""
     _click_diff_line(ui_page)
+    expect(ui_page.locator(COMMENT_TEXTAREA)).to_be_visible(timeout=5_000)
+
+
+def test_drag_line_selection_opens_input(ui_page: Page):
+    """Dragging across line-number gutters opens the comment textarea."""
+    _drag_select_diff_lines(ui_page)
     expect(ui_page.locator(COMMENT_TEXTAREA)).to_be_visible(timeout=5_000)
 
 

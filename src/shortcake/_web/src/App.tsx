@@ -38,24 +38,6 @@ type CommentMeta = {
   commentId: string;
   text: string;
   isInput: boolean;
-  isToolbar?: boolean;
-  isSplitSelection?: boolean;
-  splitSelectionId?: string;
-};
-
-type SplitLinesResponse = {
-  sourceBranch: string;
-  newBranches: string[];
-  restackedBranches: string[];
-};
-
-type SplitLineSelection = {
-  id: string;
-  file: string;
-  startLine: number;
-  endLine: number;
-  side: AnnotationSide;
-  filePatch: string;
 };
 
 type ActiveInput = {
@@ -229,28 +211,6 @@ function splitPatchIntoFiles(patch: string): string[] {
 
 async function fetchJSON<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`);
-  const payload: unknown = await response.json();
-
-  if (!response.ok) {
-    const message =
-      typeof payload === 'object' &&
-      payload !== null &&
-      'error' in payload &&
-      typeof payload.error === 'string'
-        ? payload.error
-        : `Request failed (${response.status})`;
-    throw new Error(message);
-  }
-
-  return payload as T;
-}
-
-async function postJSON<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
   const payload: unknown = await response.json();
 
   if (!response.ok) {
@@ -937,68 +897,6 @@ function ReviewSummaryPanel({
   );
 }
 
-function SelectionToolbar({
-  lineLabel,
-  onComment,
-  onSplit,
-}: {
-  lineLabel: string;
-  onComment: () => void;
-  onSplit?: () => void;
-}) {
-  return (
-    <div
-      className="flex items-center gap-2 p-2 my-1 bg-surface-hover border border-border rounded-md"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <span className="font-mono text-[0.65rem] text-text-muted mr-auto">{lineLabel}</span>
-      {onSplit && (
-        <button
-          type="button"
-          className="appearance-none border border-green-500/40 bg-green-500/10 text-green-400 text-[0.72rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-green-500/20 transition-colors duration-100 flex items-center gap-1"
-          onClick={onSplit}
-        >
-          Split
-        </button>
-      )}
-      <button
-        type="button"
-        className="appearance-none border border-border bg-transparent text-text-secondary text-[0.72rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-surface-hover hover:text-text-primary transition-colors duration-100 flex items-center gap-1"
-        onClick={onComment}
-      >
-        Comment
-      </button>
-    </div>
-  );
-}
-
-function SavedSplitSelection({
-  selection: sel,
-  onDelete,
-}: {
-  selection: SplitLineSelection;
-  onDelete: (id: string) => void;
-}) {
-  return (
-    <div className="flex items-center gap-2 p-2 my-1 bg-green-500/[0.06] border border-green-500/20 rounded-md group">
-      <span className="font-mono text-[0.65rem] text-green-400">
-        {formatLineLabel(sel.startLine, sel.endLine)}
-      </span>
-      <span className="font-mono text-[0.6rem] text-text-muted">
-        selected for split
-      </span>
-      <button
-        type="button"
-        className="appearance-none border-none bg-transparent text-text-muted text-[0.65rem] cursor-pointer hover:text-danger p-0.5 ml-auto opacity-0 group-hover:opacity-100 transition-opacity duration-100"
-        onClick={(e) => { e.stopPropagation(); onDelete(sel.id); }}
-        title="Remove"
-      >
-        ✕
-      </button>
-    </div>
-  );
-}
-
 const DIFF_HEADER_HEIGHT = 'min-h-[44px]';
 
 function ViewedToggle({
@@ -1175,90 +1073,7 @@ function LargeFilePlaceholder({
   );
 }
 
-function SplitLinesDialog({
-  selectionCount,
-  onSubmit,
-  onCancel,
-  isSplitting,
-  splitError,
-}: {
-  selectionCount: number;
-  onSubmit: (commitMessage: string) => void;
-  onCancel: () => void;
-  isSplitting: boolean;
-  splitError: string | null;
-}) {
-  const [commitMessage, setCommitMessage] = useState('');
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && commitMessage.trim()) {
-      e.preventDefault();
-      onSubmit(commitMessage.trim());
-    } else if (e.key === 'Escape') {
-      e.preventDefault();
-      onCancel();
-    }
-  };
-
-  return (
-    <div
-      className="flex flex-col gap-2 p-3 bg-surface border border-border rounded-lg shadow-lg"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="flex items-center justify-between mb-0.5">
-        <span className="font-mono text-[0.72rem] font-semibold text-text-primary">
-          Split {selectionCount} line selection{selectionCount === 1 ? '' : 's'} into new branch
-        </span>
-        <button
-          type="button"
-          className="appearance-none border-none bg-transparent text-text-muted text-[0.65rem] cursor-pointer hover:text-text-primary p-0.5"
-          onClick={onCancel}
-          disabled={isSplitting}
-        >
-          Cancel
-        </button>
-      </div>
-      {isSplitting && (
-        <p className="text-[0.72rem] text-text-muted font-mono m-0">Splitting...</p>
-      )}
-      {splitError && (
-        <p className="text-[0.72rem] text-danger font-mono m-0">{splitError}</p>
-      )}
-      {!isSplitting && (
-        <>
-          <input
-            ref={inputRef}
-            type="text"
-            className="w-full bg-surface border border-border rounded-md text-text-primary font-mono text-[0.75rem] px-2.5 py-1.5 outline-none focus:border-border-strong placeholder:text-text-muted"
-            placeholder="Commit message for new branch..."
-            value={commitMessage}
-            onChange={(e) => setCommitMessage(e.target.value)}
-            onKeyDown={handleKeyDown}
-          />
-          <p className="text-[0.6rem] text-text-muted font-mono m-0">
-            Selected lines will be split into a new branch placed before the current one.
-          </p>
-          <button
-            type="button"
-            className="appearance-none border border-green-500/40 bg-green-500/10 text-green-400 text-[0.72rem] font-mono px-3 py-1.5 rounded-md cursor-pointer hover:bg-green-500/20 transition-colors duration-100 disabled:opacity-40 disabled:cursor-not-allowed self-end"
-            disabled={!commitMessage.trim()}
-            onClick={() => { if (commitMessage.trim()) onSubmit(commitMessage.trim()); }}
-          >
-            Split
-          </button>
-        </>
-      )}
-    </div>
-  );
-}
-
 const EMPTY_COMMENTS: DiffComment[] = [];
-const EMPTY_SPLIT_SELECTIONS: SplitLineSelection[] = [];
 
 const DiffFileSection = React.memo(function DiffFileSection({
   patch,
@@ -1266,17 +1081,12 @@ const DiffFileSection = React.memo(function DiffFileSection({
   fileComments,
   activeInput,
   editingComment,
-  toolbarState,
   onRangeSelected,
   onStartEdit,
   onAddComment,
   onUpdateComment,
   onDeleteComment,
   onCancelInput,
-  onToolbarComment,
-  onToolbarSplit,
-  fileSplitSelections,
-  onDeleteSplitSelection,
   diffStyle,
   resolvedTheme,
   diffTheme,
@@ -1287,17 +1097,12 @@ const DiffFileSection = React.memo(function DiffFileSection({
   fileComments: DiffComment[];
   activeInput: ActiveInput;
   editingComment: DiffComment | null;
-  toolbarState: ActiveInput;
   onRangeSelected: (file: string, startLine: number, endLine: number, side: AnnotationSide) => void;
   onStartEdit: (comment: DiffComment) => void;
   onAddComment: (file: string, startLine: number, endLine: number, side: AnnotationSide, text: string) => void;
   onUpdateComment: (id: string, text: string) => void;
   onDeleteComment: (id: string) => void;
   onCancelInput: () => void;
-  onToolbarComment: () => void;
-  onToolbarSplit?: () => void;
-  fileSplitSelections: SplitLineSelection[];
-  onDeleteSplitSelection?: (id: string) => void;
   diffStyle: DiffStyle;
   resolvedTheme?: 'dark' | 'light';
   diffTheme?: string;
@@ -1371,9 +1176,6 @@ const DiffFileSection = React.memo(function DiffFileSection({
     : undefined;
 
   const selectedLines = useMemo<SelectedLineRange | null>(() => {
-    if (toolbarState && toolbarState.file === fileInfo.path) {
-      return { start: toolbarState.startLine, end: toolbarState.endLine, side: toolbarState.side };
-    }
     if (activeInput && activeInput.file === fileInfo.path) {
       return { start: activeInput.startLine, end: activeInput.endLine, side: activeInput.side };
     }
@@ -1381,7 +1183,7 @@ const DiffFileSection = React.memo(function DiffFileSection({
       return { start: editingComment.startLine, end: editingComment.endLine, side: editingComment.side };
     }
     return null;
-  }, [toolbarState, activeInput, editingComment, fileInfo.path]);
+  }, [activeInput, editingComment, fileInfo.path]);
 
   const lineAnnotations = useMemo<DiffLineAnnotation<CommentMeta>[]>(() => {
     const annotations: DiffLineAnnotation<CommentMeta>[] = [];
@@ -1402,58 +1204,12 @@ const DiffFileSection = React.memo(function DiffFileSection({
       });
     }
 
-    if (toolbarState && toolbarState.file === fileInfo.path) {
-      annotations.push({
-        lineNumber: toolbarState.endLine,
-        side: toolbarState.side,
-        metadata: { commentId: '__toolbar__', text: '', isInput: false, isToolbar: true },
-      });
-    }
-
-    // Add split line selection annotations
-    for (const sel of fileSplitSelections) {
-      annotations.push({
-        lineNumber: sel.endLine,
-        side: sel.side,
-        metadata: {
-          commentId: `__splitsel__${sel.id}`,
-          text: '',
-          isInput: false,
-          isSplitSelection: true,
-          splitSelectionId: sel.id,
-        },
-      });
-    }
-
     return annotations;
-  }, [fileComments, activeInput, editingComment, toolbarState, fileSplitSelections, fileInfo.path]);
+  }, [fileComments, activeInput, editingComment, fileInfo.path]);
 
   const renderAnnotation = useCallback(
     (annotation: DiffLineAnnotation<CommentMeta>) => {
       const { metadata } = annotation;
-
-      if (metadata.isSplitSelection && metadata.splitSelectionId && onDeleteSplitSelection) {
-        const sel = fileSplitSelections.find((s) => s.id === metadata.splitSelectionId);
-        if (sel) {
-          return (
-            <SavedSplitSelection
-              selection={sel}
-              onDelete={onDeleteSplitSelection}
-            />
-          );
-        }
-        return null;
-      }
-
-      if (metadata.isToolbar && toolbarState) {
-        return (
-          <SelectionToolbar
-            lineLabel={formatLineLabel(toolbarState.startLine, toolbarState.endLine)}
-            onComment={onToolbarComment}
-            onSplit={onToolbarSplit}
-          />
-        );
-      }
 
       if (metadata.isInput && activeInput) {
         return (
@@ -1498,7 +1254,7 @@ const DiffFileSection = React.memo(function DiffFileSection({
         />
       );
     },
-    [fileComments, editingComment, activeInput, toolbarState, fileInfo.path, onAddComment, onUpdateComment, onDeleteComment, onCancelInput, onStartEdit, onToolbarComment, onToolbarSplit, fileSplitSelections, onDeleteSplitSelection],
+    [fileComments, editingComment, activeInput, fileInfo.path, onAddComment, onUpdateComment, onDeleteComment, onCancelInput, onStartEdit],
   );
 
   const renderHeaderMetadata = useCallback(() => {
@@ -2019,12 +1775,6 @@ export default function App() {
   const [activeInput, setActiveInput] = useState<ActiveInput>(null);
   const [editingComment, setEditingComment] = useState<DiffComment | null>(null);
   const [copyFeedback, setCopyFeedback] = useState(false);
-  const [toolbarState, setToolbarState] = useState<ActiveInput>(null);
-  const [moveSuccess, setMoveSuccess] = useState<string | null>(null);
-  const [splitLineSelections, setSplitLineSelections] = useState<SplitLineSelection[]>([]);
-  const [showSplitLinesDialog, setShowSplitLinesDialog] = useState(false);
-  const [isSplittingLines, setIsSplittingLines] = useState(false);
-  const [splitLinesError, setSplitLinesError] = useState<string | null>(null);
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
   const [expandedLargeFiles, setExpandedLargeFiles] = useState<Set<string>>(new Set());
   const [githubInfo, setGithubInfo] = useState<Record<string, GitHubBranchInfo>>({});
@@ -2199,11 +1949,6 @@ export default function App() {
     setComments([]);
     setActiveInput(null);
     setEditingComment(null);
-    setToolbarState(null);
-    setMoveSuccess(null);
-    setSplitLineSelections([]);
-    setShowSplitLinesDialog(false);
-    setSplitLinesError(null);
     setViewedFiles(new Set());
     setIsReviewDialogOpen(false);
     setReviewModelStatus(new Map());
@@ -2232,16 +1977,6 @@ export default function App() {
     }
     return map;
   }, [comments]);
-
-  const splitSelectionsByFile = useMemo(() => {
-    const map = new Map<string, SplitLineSelection[]>();
-    for (const s of splitLineSelections) {
-      let arr = map.get(s.file);
-      if (!arr) { arr = []; map.set(s.file, arr); }
-      arr.push(s);
-    }
-    return map;
-  }, [splitLineSelections]);
 
   const toggleViewed = useCallback((path: string) => {
     setViewedFiles((prev) => {
@@ -2321,9 +2056,7 @@ export default function App() {
   const handleRangeSelected = useCallback(
     (file: string, startLine: number, endLine: number, side: AnnotationSide) => {
       setEditingComment(null);
-      setActiveInput(null);
-      // Always show toolbar (for both branch diffs and working changes)
-      setToolbarState({ file, startLine, endLine, side });
+      setActiveInput({ file, startLine, endLine, side });
     },
     [],
   );
@@ -2358,36 +2091,6 @@ export default function App() {
   const handleCancelInput = useCallback(() => {
     setActiveInput(null);
     setEditingComment(null);
-    setToolbarState(null);
-  }, []);
-
-  const handleToolbarComment = useCallback(() => {
-    if (!toolbarState) return;
-    setActiveInput(toolbarState);
-    setToolbarState(null);
-  }, [toolbarState]);
-
-  const handleToolbarSplit = useCallback(() => {
-    if (!toolbarState) return;
-    const fileIndex = fileInfos.findIndex((f) => f.path === toolbarState.file);
-    const filePatch = diffPatches[fileIndex] ?? '';
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    setSplitLineSelections((prev) => [
-      ...prev,
-      {
-        id,
-        file: toolbarState.file,
-        startLine: toolbarState.startLine,
-        endLine: toolbarState.endLine,
-        side: toolbarState.side,
-        filePatch,
-      },
-    ]);
-    setToolbarState(null);
-  }, [toolbarState, fileInfos, diffPatches]);
-
-  const handleDeleteSplitSelection = useCallback((id: string) => {
-    setSplitLineSelections((prev) => prev.filter((s) => s.id !== id));
   }, []);
 
   const refreshData = useCallback(async (knownStack?: StackResponse) => {
@@ -2407,50 +2110,6 @@ export default function App() {
       // Silently fail refresh — data may be stale but still usable
     }
   }, [selection]);
-
-  const handleSplitLinesSubmit = useCallback(
-    async (commitMessage: string) => {
-      if (splitLineSelections.length === 0 || selection?.type !== 'branch') return;
-
-      setIsSplittingLines(true);
-      setSplitLinesError(null);
-
-      try {
-        const result = await postJSON<SplitLinesResponse>('/api/split-lines', {
-          sourceBranch: selection.name,
-          chunks: [
-            {
-              commitMessage,
-              selections: splitLineSelections.map((s) => ({
-                filePath: s.file,
-                filePatch: s.filePatch,
-                startLine: s.startLine,
-                endLine: s.endLine,
-                side: s.side,
-              })),
-            },
-          ],
-        });
-
-        setSplitLineSelections([]);
-        setShowSplitLinesDialog(false);
-        setMoveSuccess(`Split into ${result.newBranches.join(', ')}`);
-        setTimeout(() => setMoveSuccess(null), 3000);
-
-        await refreshData();
-      } catch (err) {
-        setSplitLinesError(err instanceof Error ? err.message : 'Split failed');
-      } finally {
-        setIsSplittingLines(false);
-      }
-    },
-    [splitLineSelections, selection, refreshData],
-  );
-
-  const handleSplitLinesCancel = useCallback(() => {
-    setShowSplitLinesDialog(false);
-    setSplitLinesError(null);
-  }, []);
 
   // Poll for external stack and working tree changes every 3 seconds
   const lastStackKeyRef = useRef<string>('');
@@ -2472,7 +2131,6 @@ export default function App() {
     const startPolling = () => {
       if (intervalId) return;
       intervalId = setInterval(async () => {
-        if (isSplittingLines) return;
         try {
           const data = await fetchJSON<UIStateResponse>('/api/state');
           const newStackKey = stackPollKey(data);
@@ -2517,7 +2175,7 @@ export default function App() {
       stopPolling();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [isSplittingLines]);
+  }, []);
 
   // Fetch GitHub info (PR links + CI status) on a slower polling interval
   useEffect(() => {
@@ -2751,11 +2409,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2 min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {moveSuccess && (
-              <span className="font-mono text-[0.7rem] text-accent whitespace-nowrap">
-                {moveSuccess}
-              </span>
-            )}
             {selection && !isDiffLoading && diffPatches.length > 0 && (
               isReviewing ? (
                 <div className="flex items-center gap-1.5 border border-border rounded-md px-2.5 py-1">
@@ -2937,17 +2590,12 @@ export default function App() {
                           fileComments={commentsByFile.get(info.path) ?? EMPTY_COMMENTS}
                           activeInput={activeInput}
                           editingComment={editingComment}
-                          toolbarState={toolbarState}
                           onRangeSelected={handleRangeSelected}
                           onStartEdit={handleStartEdit}
                           onAddComment={handleAddComment}
                           onUpdateComment={handleUpdateComment}
                           onDeleteComment={handleDeleteComment}
                           onCancelInput={handleCancelInput}
-                          onToolbarComment={handleToolbarComment}
-                          onToolbarSplit={selection?.type === 'branch' ? handleToolbarSplit : undefined}
-                          fileSplitSelections={splitSelectionsByFile.get(info.path) ?? EMPTY_SPLIT_SELECTIONS}
-                          onDeleteSplitSelection={selection?.type === 'branch' ? handleDeleteSplitSelection : undefined}
                           diffStyle={diffStyle}
                           resolvedTheme={resolvedTheme}
                           diffTheme={activeDiffTheme}
@@ -2962,43 +2610,6 @@ export default function App() {
           </div>
         )}
       </section>
-
-      {selection?.type === 'branch' && splitLineSelections.length > 0 && !showSplitLinesDialog && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 bg-surface border border-green-500/30 rounded-lg shadow-lg">
-          <span className="font-mono text-[0.75rem] text-text-primary">
-            {splitLineSelections.length} line selection{splitLineSelections.length === 1 ? '' : 's'}
-          </span>
-          <button
-            type="button"
-            className="appearance-none border border-green-500/40 bg-green-500/10 text-green-400 text-[0.72rem] font-mono px-3 py-1 rounded-md cursor-pointer hover:bg-green-500/20 transition-colors duration-100"
-            onClick={() => {
-              setShowSplitLinesDialog(true);
-              setSplitLinesError(null);
-            }}
-          >
-            Split into new branch
-          </button>
-          <button
-            type="button"
-            className="appearance-none border border-border bg-transparent text-text-secondary text-[0.72rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-surface-hover hover:text-text-primary transition-colors duration-100"
-            onClick={() => setSplitLineSelections([])}
-          >
-            Clear
-          </button>
-        </div>
-      )}
-
-      {showSplitLinesDialog && selection?.type === 'branch' && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[400px]">
-          <SplitLinesDialog
-            selectionCount={splitLineSelections.length}
-            onSubmit={handleSplitLinesSubmit}
-            onCancel={handleSplitLinesCancel}
-            isSplitting={isSplittingLines}
-            splitError={splitLinesError}
-          />
-        </div>
-      )}
 
       {isReviewDialogOpen && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[320px]">
