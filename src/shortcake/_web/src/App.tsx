@@ -1317,12 +1317,13 @@ const DiffFileSection = React.memo(function DiffFileSection({
 
   const rt = resolvedTheme ?? 'dark';
   const activeTheme = diffTheme ?? (rt === 'light' ? 'pierre-light' : 'pierre-dark');
+  const fileLanguage = getFiletypeFromFileName(fileInfo.path);
 
   const fileDiff = useMemo(
-    () => setLanguageOverride(getSingularPatch(patch), getFiletypeFromFileName(fileInfo.path)),
-    [patch, fileInfo.path],
+    () => setLanguageOverride(getSingularPatch(patch), fileLanguage),
+    [patch, fileLanguage],
   );
-  const shouldPreloadHighlightedDiff = fileDiff.type === 'new' || fileDiff.type === 'deleted';
+  const shouldPreloadHighlightedDiff = fileLanguage !== 'text';
 
   const options = useMemo<FileDiffProps<CommentMeta>['options']>(
     () => ({
