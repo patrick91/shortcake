@@ -22,6 +22,54 @@ def _new_file_patch(path: str, marker: str, line_count: int = 80) -> str:
     )
 
 
+def _modified_python_patch(path: str) -> str:
+    return (
+        f"diff --git a/{path} b/{path}\n"
+        "index 1111111..2222222 100644\n"
+        f"--- a/{path}\n"
+        f"+++ b/{path}\n"
+        "@@ -1,4 +1,7 @@\n"
+        " from __future__ import annotations\n"
+        " \n"
+        "-def render():\n"
+        '-    return {"status": "old"}\n'
+        "+def render(options):\n"
+        "+    try:\n"
+        '+        return {"status": options.status}\n'
+        "+    except ValueError as exc:\n"
+        '+        raise RuntimeError(f"invalid {exc}") from exc\n'
+    )
+
+
+def _wait_for_token_colors(page: Page, path: str) -> list[str]:
+    page.wait_for_function(
+        """
+        (path) => {
+          const section = [...document.querySelectorAll('[data-file-path]')]
+            .find((el) => el.dataset.filePath === path);
+          const root = section?.querySelector('diffs-container')?.shadowRoot;
+          if (!root) return false;
+          return new Set([...root.querySelectorAll('[data-line] span')]
+            .map((span) => getComputedStyle(span).color)).size > 1;
+        }
+        """,
+        arg=path,
+        timeout=15_000,
+    )
+    return page.evaluate(
+        """
+        (path) => {
+          const section = [...document.querySelectorAll('[data-file-path]')]
+            .find((el) => el.dataset.filePath === path);
+          const root = section?.querySelector('diffs-container')?.shadowRoot;
+          return [...new Set([...root.querySelectorAll('[data-line] span')]
+            .map((span) => getComputedStyle(span).color))];
+        }
+        """,
+        arg=path,
+    )
+
+
 def test_diff_loads_on_branch_click(ui_page: Page):
     """Clicking branch_a loads its diff; header shows 'branch_a -> main'."""
     select_diff_option(ui_page, "branch_a")
@@ -97,6 +145,31 @@ def test_diff_syntax_highlights_new_file(ui_page: Page):
         )]
         """
     )
+    assert len(token_colors) > 1
+
+
+def test_diff_syntax_highlights_modified_file(page: Page, ui_url: str):
+    """Modified-file diffs render syntax token colors."""
+    path = "src/cross_inertia/_page.py"
+    page.route(
+        re.compile(r"/api/diff\?"),
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "branch": "branch_b",
+                    "parent": "branch_a",
+                    "patch": _modified_python_patch(path),
+                }
+            ),
+        ),
+    )
+    page.goto(ui_url)
+    select_diff_option(page, "branch_b")
+    page.wait_for_selector(".diff-content", timeout=10_000)
+
+    token_colors = _wait_for_token_colors(page, path)
     assert len(token_colors) > 1
 
 
