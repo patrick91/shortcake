@@ -247,6 +247,87 @@ def test_file_click_scrolls_to_clicked_file_section(page: Page, ui_url: str):
     assert abs(position["offset"]) <= 8
 
 
+def test_marking_viewed_preserves_diff_scroll_anchor(page: Page, ui_url: str):
+    """Collapsing a viewed file keeps its compact header anchored."""
+    mock_patch = "".join(
+        [
+            _new_file_patch("z_first.py", "FIRST"),
+            _new_file_patch("a_middle.py", "MIDDLE"),
+            _new_file_patch("m_last.py", "LAST"),
+        ]
+    )
+    page.route(
+        re.compile(r"/api/diff\?"),
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {"branch": "branch_b", "parent": "branch_a", "patch": mock_patch}
+            ),
+        ),
+    )
+    page.goto(ui_url)
+    select_diff_option(page, "branch_b")
+    page.wait_for_selector(".diff-content", timeout=10_000)
+
+    page.locator(
+        "aside file-tree-container "
+        '[data-type="item"][data-item-type="file"][data-item-path="a_middle.py"]'
+    ).click()
+    page.wait_for_function(
+        """
+        () => {
+          const scroller = document.querySelector('.diff-content');
+          const target = scroller?.querySelector('[data-file-path="a_middle.py"]');
+          if (!scroller || !target) return false;
+          const scrollerRect = scroller.getBoundingClientRect();
+          const targetRect = target.getBoundingClientRect();
+          return Math.abs(targetRect.top - scrollerRect.top) <= 8;
+        }
+        """,
+        timeout=5_000,
+    )
+
+    page.evaluate("document.querySelector('.diff-content').scrollTop += 600")
+    before = page.evaluate(
+        """
+        () => {
+          const scroller = document.querySelector('.diff-content');
+          const section = scroller?.querySelector('[data-file-path="a_middle.py"]');
+          if (!scroller || !section) return null;
+          return {
+            offset: section.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
+            scrollTop: scroller.scrollTop,
+          };
+        }
+        """
+    )
+    assert before is not None
+    assert before["offset"] < -100
+
+    page.locator('[data-file-path="a_middle.py"] diffs-container').get_by_role(
+        "button", name="Viewed"
+    ).click()
+
+    page.wait_for_selector('[data-file-path="a_middle.py"] >> text=Viewed')
+    after = page.evaluate(
+        """
+        () => {
+          const scroller = document.querySelector('.diff-content');
+          const section = scroller?.querySelector('[data-file-path="a_middle.py"]');
+          if (!scroller || !section) return null;
+          return {
+            offset: section.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
+            scrollTop: scroller.scrollTop,
+          };
+        }
+        """
+    )
+    assert after is not None
+    assert abs(after["offset"]) <= 8
+    assert after["scrollTop"] < before["scrollTop"]
+
+
 def test_unified_split_toggle(ui_page: Page):
     """Switching between unified and split diff layouts."""
     split_btn = ui_page.get_by_role("button", name="Split")

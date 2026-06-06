@@ -11,7 +11,7 @@ import { preloadDiffHTML } from '@pierre/diffs/ssr';
 import DiffsWorker from '@pierre/diffs/worker/worker.js?worker';
 import type { FileTreeRowDecoration, GitStatusEntry } from '@pierre/trees';
 import { FileTree as PierreFileTree, useFileTree } from '@pierre/trees/react';
-import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Popover } from '@base-ui-components/react/popover';
 
 type DiffStyle = 'unified' | 'split';
@@ -1771,6 +1771,7 @@ export default function App() {
   const diffContentRef = useRef<HTMLDivElement>(null);
   const fileRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const fileScrollCleanupRef = useRef<(() => void) | null>(null);
+  const viewedScrollAnchorRef = useRef<{ index: number; offset: number } | null>(null);
   const [comments, setComments] = useState<DiffComment[]>([]);
   const [activeInput, setActiveInput] = useState<ActiveInput>(null);
   const [editingComment, setEditingComment] = useState<DiffComment | null>(null);
@@ -1978,14 +1979,50 @@ export default function App() {
     return map;
   }, [comments]);
 
+  const captureViewedScrollAnchor = useCallback((path: string, willCollapse: boolean) => {
+    const scroller = diffContentRef.current;
+    if (!scroller) return;
+
+    const index = fileInfos.findIndex((info) => info.path === path);
+    if (index === -1) return;
+
+    const anchor = fileRefs.current[index];
+    if (!anchor) return;
+
+    const offset = anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    viewedScrollAnchorRef.current = {
+      index,
+      offset: willCollapse ? Math.max(offset, 0) : offset,
+    };
+  }, [fileInfos]);
+
   const toggleViewed = useCallback((path: string) => {
+    fileScrollCleanupRef.current?.();
+    fileScrollCleanupRef.current = null;
+    captureViewedScrollAnchor(path, !viewedFiles.has(path));
     setViewedFiles((prev) => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
       else next.add(path);
       return next;
     });
-  }, []);
+  }, [captureViewedScrollAnchor, viewedFiles]);
+
+  useLayoutEffect(() => {
+    const anchor = viewedScrollAnchorRef.current;
+    viewedScrollAnchorRef.current = null;
+    if (!anchor) return;
+
+    const scroller = diffContentRef.current;
+    const target = fileRefs.current[anchor.index];
+    if (!scroller || !target) return;
+
+    const nextOffset = target.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+    const delta = nextOffset - anchor.offset;
+    if (Math.abs(delta) > 0.5) {
+      scroller.scrollTop += delta;
+    }
+  }, [viewedFiles]);
 
   const alignFileInDiffPane = useCallback((index: number): boolean => {
     const scroller = diffContentRef.current;
