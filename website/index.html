@@ -1,0 +1,326 @@
+<!doctype html>
+<html lang="en" class="scroll-smooth antialiased">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Shortcake — stacked pull requests, powered by git trailers</title>
+  <meta name="description" content="Shortcake turns a chain of branches into a reviewable stack of pull requests — using nothing but a git trailer in each commit.">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://rsms.me/">
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&display=swap">
+
+  <!-- Tailwind v4 (browser build) -->
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <style type="text/tailwindcss">
+    @import "tailwindcss";
+
+    @theme {
+      --font-sans: "InterVariable", ui-sans-serif, system-ui, sans-serif;
+      --font-sans--font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+      --font-mono: "Geist Mono", ui-monospace, monospace;
+
+      /* Strawberry-shortcake accent — sampled from the logo's pixel smile */
+      --color-cake-50:  #fff1f4;
+      --color-cake-100: #ffe0e6;
+      --color-cake-200: #ffc1cd;
+      --color-cake-300: #ff93a8;
+      --color-cake-400: #fb6385;
+      --color-cake-500: #f02d57;
+      --color-cake-600: #d81746;
+      --color-cake-700: #b3123a;
+    }
+
+    /* Graph-paper grid — the structural motif of the page */
+    @utility grid-paper {
+      background-image:
+        linear-gradient(to right, rgba(10, 10, 10, 0.05) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(10, 10, 10, 0.05) 1px, transparent 1px);
+      background-size: 44px 44px;
+    }
+    @utility grid-paper-invert {
+      background-image:
+        linear-gradient(to right, rgba(255, 255, 255, 0.06) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+      background-size: 44px 44px;
+    }
+
+    @layer base {
+      html { font-optical-sizing: auto; }
+    }
+  </style>
+</head>
+
+<body class="min-h-dvh bg-neutral-50 font-sans text-neutral-950 selection:bg-cake-200 selection:text-neutral-950 [font-optical-sizing:auto]">
+  <div class="isolate">
+
+    <!-- ============================ Header ============================ -->
+    <header class="sticky top-0 z-50 border-b border-black/5 bg-neutral-50/80 backdrop-blur-md">
+      <div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+        <a href="#top" class="inline-flex items-center" aria-label="shortcake home">
+          <img src="logo.svg" alt="shortcake" class="h-5 w-auto sm:h-6">
+        </a>
+
+        <nav class="flex items-center gap-x-6">
+          <a href="#features" class="text-sm font-medium text-neutral-600 transition hover:text-neutral-950 max-sm:hidden">Features</a>
+          <a href="#commands" class="text-sm font-medium text-neutral-600 transition hover:text-neutral-950 max-sm:hidden">Commands</a>
+          <a href="#install" class="text-sm font-medium text-neutral-600 transition hover:text-neutral-950 max-sm:hidden">Install</a>
+          <a href="https://github.com/patrick91/shortcake" class="inline-flex items-center gap-x-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-neutral-700 ring-1 ring-black/10 transition hover:bg-white hover:text-neutral-950 hover:ring-black/15">
+            <svg viewBox="0 0 24 24" class="size-4" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.37.5 0 5.78 0 12.29c0 5.21 3.44 9.63 8.2 11.19.6.11.82-.25.82-.56v-2.1c-3.34.71-4.04-1.6-4.04-1.6-.55-1.36-1.33-1.72-1.33-1.72-1.09-.73.08-.72.08-.72 1.2.08 1.84 1.21 1.84 1.21 1.07 1.8 2.8 1.28 3.49.98.11-.76.42-1.28.76-1.57-2.67-.3-5.47-1.31-5.47-5.83 0-1.29.47-2.34 1.24-3.17-.13-.3-.54-1.52.12-3.16 0 0 1.01-.32 3.3 1.21a11.5 11.5 0 0 1 6 0c2.29-1.53 3.3-1.21 3.3-1.21.66 1.64.25 2.86.12 3.16.77.83 1.23 1.88 1.23 3.17 0 4.53-2.81 5.53-5.49 5.82.43.37.81 1.1.81 2.22v3.29c0 .31.21.68.83.56A12.05 12.05 0 0 0 24 12.29C24 5.78 18.63.5 12 .5Z"/></svg>
+            <span>GitHub</span>
+          </a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="top">
+      <!-- ============================ Hero ============================ -->
+      <section class="relative overflow-hidden border-b border-black/5">
+        <div class="pointer-events-none absolute left-1/2 top-[-10%] size-[680px] -translate-x-1/2 rounded-full bg-cake-300/25 blur-3xl"></div>
+        <div class="pointer-events-none absolute inset-0 grid-paper [mask-image:radial-gradient(ellipse_75%_55%_at_50%_0%,black,transparent)]"></div>
+
+        <div class="relative mx-auto max-w-6xl px-6 pt-20 pb-24 sm:pt-28 lg:pt-32">
+          <div class="mx-auto max-w-3xl text-center">
+            <p class="inline-flex items-center gap-x-2 font-mono text-xs font-medium uppercase tracking-wide text-cake-600">
+              <span class="size-1.5 bg-cake-500" aria-hidden="true"></span>
+              Stacked PRs · Git trailers
+            </p>
+
+            <h1 class="mt-5 text-4xl font-semibold tracking-tight text-balance sm:text-5xl lg:text-6xl">
+              Stack your pull requests.<br class="max-sm:hidden"> Ship them in order.
+            </h1>
+
+            <p class="mx-auto mt-6 max-w-2xl text-lg text-pretty text-neutral-600 sm:text-xl">
+              Shortcake turns a chain of branches into a reviewable stack — using nothing but a
+              <span class="font-medium text-neutral-900">git trailer</span> in each commit.
+              No state files, no daemon — the whole stack lives in your history.
+            </p>
+
+            <div class="mt-8 flex flex-wrap items-center justify-center gap-4">
+              <a href="#install" class="inline-flex items-center justify-center gap-x-2 rounded-lg bg-cake-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-cake-500/30 transition hover:bg-cake-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cake-500">
+                Get started
+              </a>
+              <a href="https://github.com/patrick91/shortcake" class="group inline-flex items-center gap-x-1.5 text-sm font-semibold text-neutral-900 transition hover:text-cake-600">
+                Browse the source
+                <svg viewBox="0 0 24 24" class="size-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+              </a>
+            </div>
+          </div>
+
+          <!-- Terminal -->
+          <div class="mx-auto mt-16 max-w-3xl overflow-hidden rounded-xl bg-neutral-950 shadow-2xl shadow-cake-500/10 ring-1 ring-black/10">
+            <div class="flex items-center gap-2 border-b border-white/10 px-4 py-3">
+              <span class="size-3 rounded-full bg-[#ff5f57]" aria-hidden="true"></span>
+              <span class="size-3 rounded-full bg-[#febc2e]" aria-hidden="true"></span>
+              <span class="size-3 rounded-full bg-[#28c840]" aria-hidden="true"></span>
+              <span class="ml-2 font-mono text-xs text-neutral-500">~/acme — zsh</span>
+            </div>
+            <pre class="overflow-x-auto p-5 font-mono text-[0.8125rem] leading-6 text-neutral-300"><span class="text-cake-400">$</span> <span class="text-neutral-100">sc create</span> <span class="text-neutral-500">-m</span> <span class="text-emerald-300">"feat: add login form"</span>
+<span class="text-neutral-500">Created branch</span> <span class="text-cake-300">add-login-form</span> <span class="text-neutral-500">from</span> main
+
+<span class="text-cake-400">$</span> <span class="text-neutral-100">sc create</span> <span class="text-neutral-500">-m</span> <span class="text-emerald-300">"feat: password reset"</span>
+<span class="text-neutral-500">Created branch</span> <span class="text-cake-300">password-reset</span> <span class="text-neutral-500">from</span> <span class="text-cake-300">add-login-form</span>
+
+<span class="text-cake-400">$</span> <span class="text-neutral-100">sc status</span>
+main
+<span class="text-neutral-600">└─</span> <span class="text-cake-300">add-login-form</span>
+<span class="text-neutral-600">   └─</span> <span class="text-cake-300">password-reset</span>  <span class="text-cake-400">● you are here</span></pre>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ Features ============================ -->
+      <section id="features" class="scroll-mt-20">
+        <div class="mx-auto max-w-6xl px-6 py-20 sm:py-28">
+          <div class="max-w-2xl">
+            <p class="inline-flex items-center gap-x-2 font-mono text-xs font-medium uppercase tracking-wide text-cake-600">
+              <span class="size-1.5 bg-cake-500" aria-hidden="true"></span>
+              Why shortcake
+            </p>
+            <h2 class="mt-5 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
+              Stacked PRs, without the ceremony.
+            </h2>
+            <p class="mt-5 max-w-[60ch] text-lg text-pretty text-neutral-600">
+              No control file to keep in sync, no metadata branch, no background process.
+              Your repository already knows how the stack fits together.
+            </p>
+          </div>
+
+          <div class="mt-14 grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            <!-- Card -->
+            <div class="rounded-xl bg-white p-6 ring-1 ring-black/10 transition hover:ring-black/15">
+              <div class="flex size-10 items-center justify-center rounded-lg bg-cake-50 ring-1 ring-cake-200">
+                <svg viewBox="0 0 24 24" class="size-5 text-cake-600" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><line x1="3" y1="12" x2="9" y2="12"/><line x1="15" y1="12" x2="21" y2="12"/></svg>
+              </div>
+              <h3 class="mt-4 text-base font-semibold text-neutral-950">Trailers are the truth</h3>
+              <p class="mt-2 text-base/7 text-neutral-600 sm:text-sm/6">
+                Every branch records its parent in a <code class="font-mono text-cake-700">Shortcake-Parent</code> commit trailer. Nothing hidden, nothing extra.
+              </p>
+            </div>
+
+            <div class="rounded-xl bg-white p-6 ring-1 ring-black/10 transition hover:ring-black/15">
+              <div class="flex size-10 items-center justify-center rounded-lg bg-cake-50 ring-1 ring-cake-200">
+                <svg viewBox="0 0 24 24" class="size-5 text-cake-600" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+              </div>
+              <h3 class="mt-4 text-base font-semibold text-neutral-950">Stacks track themselves</h3>
+              <p class="mt-2 text-base/7 text-neutral-600 sm:text-sm/6">
+                Branch on top of a branch and Shortcake keeps the whole chain ordered from <code class="font-mono text-cake-700">main</code> up.
+              </p>
+            </div>
+
+            <div class="rounded-xl bg-white p-6 ring-1 ring-black/10 transition hover:ring-black/15">
+              <div class="flex size-10 items-center justify-center rounded-lg bg-cake-50 ring-1 ring-cake-200">
+                <svg viewBox="0 0 24 24" class="size-5 text-cake-600" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>
+              </div>
+              <h3 class="mt-4 text-base font-semibold text-neutral-950">Plays nice with plain git</h3>
+              <p class="mt-2 text-base/7 text-neutral-600 sm:text-sm/6">
+                Rebase, push, or branch with any git tool you like — the stack lives in your commits, so nothing breaks.
+              </p>
+            </div>
+
+            <div class="rounded-xl bg-white p-6 ring-1 ring-black/10 transition hover:ring-black/15">
+              <div class="flex size-10 items-center justify-center rounded-lg bg-cake-50 ring-1 ring-cake-200">
+                <svg viewBox="0 0 24 24" class="size-5 text-cake-600" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M13 6h3a2 2 0 0 1 2 2v7"/><line x1="6" y1="9" x2="6" y2="21"/></svg>
+              </div>
+              <h3 class="mt-4 text-base font-semibold text-neutral-950">Adopt what you already have</h3>
+              <p class="mt-2 text-base/7 text-neutral-600 sm:text-sm/6">
+                Bring an existing branch into a stack with a single <code class="font-mono text-cake-700">sc adopt</code>.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ Commands ============================ -->
+      <section id="commands" class="scroll-mt-20 border-y border-black/5 bg-white">
+        <div class="mx-auto max-w-6xl px-6 py-20 sm:py-28">
+          <div class="max-w-2xl">
+            <p class="inline-flex items-center gap-x-2 font-mono text-xs font-medium uppercase tracking-wide text-cake-600">
+              <span class="size-1.5 bg-cake-500" aria-hidden="true"></span>
+              The whole surface
+            </p>
+            <h2 class="mt-5 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
+              A command set you can hold in your head.
+            </h2>
+            <p class="mt-5 max-w-[60ch] text-lg text-pretty text-neutral-600">
+              Three verbs cover the loop: stack a new branch, adopt one you already pushed, and read the
+              tree back. The state lives in your commits — so the commands stay small.
+            </p>
+          </div>
+
+          <div class="mt-14 grid gap-6 lg:grid-cols-2">
+            <!-- Command list -->
+            <ul role="list" class="divide-y divide-black/5 overflow-hidden rounded-xl bg-neutral-50 ring-1 ring-black/10">
+              <li class="flex flex-col gap-1.5 p-5 sm:flex-row sm:items-baseline sm:gap-5">
+                <code class="shrink-0 font-mono text-sm font-medium text-cake-700 sm:w-40">sc create -m …</code>
+                <p class="text-base/7 text-neutral-600 sm:text-sm/6">Branch off the current branch and record its parent in the first commit.</p>
+              </li>
+              <li class="flex flex-col gap-1.5 p-5 sm:flex-row sm:items-baseline sm:gap-5">
+                <code class="shrink-0 font-mono text-sm font-medium text-cake-700 sm:w-40">sc adopt &lt;branch&gt;</code>
+                <p class="text-base/7 text-neutral-600 sm:text-sm/6">Track an existing branch by writing its <code class="font-mono text-cake-700">Shortcake-Parent</code> trailer.</p>
+              </li>
+              <li class="flex flex-col gap-1.5 p-5 sm:flex-row sm:items-baseline sm:gap-5">
+                <code class="shrink-0 font-mono text-sm font-medium text-cake-700 sm:w-40">sc status</code>
+                <p class="text-base/7 text-neutral-600 sm:text-sm/6">Print the current stack as a tree, from <code class="font-mono text-cake-700">main</code> to your tip.</p>
+              </li>
+            </ul>
+
+            <!-- Concept panel: commit + trailer -->
+            <div class="flex flex-col justify-center gap-6 rounded-xl bg-neutral-50 p-6 ring-1 ring-black/10 sm:p-8">
+              <div class="overflow-hidden rounded-lg bg-neutral-950 shadow-lg shadow-cake-500/10 ring-1 ring-black/10">
+                <div class="border-b border-white/10 px-4 py-2.5 font-mono text-xs text-neutral-500">commit · add-login-form</div>
+                <pre class="overflow-x-auto p-5 font-mono text-[0.8125rem] leading-6 text-neutral-300"><span class="text-neutral-100">feat: add login form</span>
+
+<span class="text-cake-300">Shortcake-Parent:</span> main</pre>
+              </div>
+
+              <div class="flex flex-wrap items-center gap-x-2 gap-y-2 font-mono text-xs text-neutral-700">
+                <span class="rounded-md bg-white px-2.5 py-1 ring-1 ring-black/10">main</span>
+                <span class="h-px w-5 bg-cake-300" aria-hidden="true"></span>
+                <span class="rounded-md bg-white px-2.5 py-1 ring-1 ring-black/10">add-login-form</span>
+                <span class="h-px w-5 bg-cake-400" aria-hidden="true"></span>
+                <span class="rounded-md bg-cake-500 px-2.5 py-1 font-medium text-white ring-1 ring-cake-600">password-reset</span>
+              </div>
+
+              <p class="text-base/7 text-pretty text-neutral-600 sm:text-sm/6">
+                The trailer is the only metadata Shortcake stores. Rebase, push, or open a PR with any
+                tool you like — the stack survives because it lives in the commit.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ CTA ============================ -->
+      <section id="install" class="scroll-mt-20 relative overflow-hidden bg-neutral-950">
+        <div class="pointer-events-none absolute inset-0 grid-paper-invert [mask-image:radial-gradient(ellipse_70%_70%_at_50%_50%,black,transparent)]"></div>
+        <div class="pointer-events-none absolute left-1/2 bottom-[-30%] size-[560px] -translate-x-1/2 rounded-full bg-cake-500/20 blur-3xl"></div>
+
+        <div class="relative mx-auto max-w-3xl px-6 py-24 text-center sm:py-28">
+          <h2 class="text-3xl font-semibold tracking-tight text-balance text-white sm:text-4xl">
+            Slice your next big PR into a stack.
+          </h2>
+          <p class="mx-auto mt-5 max-w-xl text-lg text-pretty text-neutral-400">
+            Install Shortcake and turn your pile of branches into an ordered, reviewable stack.
+          </p>
+
+          <div class="mx-auto mt-8 flex max-w-md items-center justify-between gap-x-3 rounded-lg bg-white/5 px-4 py-3 ring-1 ring-white/10">
+            <code class="overflow-x-auto font-mono text-sm text-neutral-200"><span class="text-cake-400">$</span> <span id="install-cmd">uv add shortcake</span></code>
+            <button id="copy-btn" type="button" class="relative -mr-1 inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-neutral-400 transition hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cake-400" aria-label="Copy install command">
+              <svg id="copy-icon" viewBox="0 0 24 24" class="size-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              <svg id="check-icon" viewBox="0 0 24 24" class="hidden size-4 text-cake-400" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
+              <span class="pointer-fine:hidden absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2" aria-hidden="true"></span>
+            </button>
+          </div>
+
+          <div class="mt-8 flex flex-wrap items-center justify-center gap-4">
+            <a href="https://github.com/patrick91/shortcake" class="inline-flex items-center justify-center gap-x-2 rounded-lg bg-cake-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-cake-500/30 transition hover:bg-cake-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cake-500">
+              Get started
+            </a>
+            <a href="https://github.com/patrick91/shortcake" class="group inline-flex items-center gap-x-1.5 text-sm font-semibold text-white transition hover:text-cake-300">
+              Read the docs
+              <svg viewBox="0 0 24 24" class="size-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- ============================ Footer ============================ -->
+    <footer class="border-t border-black/5">
+      <div class="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 py-10 sm:flex-row">
+        <a href="#top" class="inline-flex items-center" aria-label="shortcake home">
+          <img src="logo.svg" alt="shortcake" class="h-5 w-auto">
+        </a>
+
+        <p class="text-sm text-neutral-500">A stacked-PR workflow tool built on git trailers.</p>
+
+        <div class="flex items-center gap-x-5 text-sm">
+          <a href="https://github.com/patrick91/shortcake" class="font-medium text-neutral-600 transition hover:text-neutral-950">GitHub</a>
+          <span class="text-neutral-500">MIT License</span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    const copyBtn = document.getElementById('copy-btn');
+    copyBtn?.addEventListener('click', async () => {
+      const cmd = document.getElementById('install-cmd')?.textContent ?? '';
+      try {
+        await navigator.clipboard.writeText(cmd);
+        document.getElementById('copy-icon')?.classList.add('hidden');
+        document.getElementById('check-icon')?.classList.remove('hidden');
+        setTimeout(() => {
+          document.getElementById('check-icon')?.classList.add('hidden');
+          document.getElementById('copy-icon')?.classList.remove('hidden');
+        }, 1600);
+      } catch {}
+    });
+  </script>
+</body>
+</html>

@@ -60,3 +60,8 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["RUF012"]  # Mutable class attributes in test mocks don't need ClassVar
+
+[tool.uv.workspace]
+members = [
+    "website",
+]
