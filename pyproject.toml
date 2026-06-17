@@ -41,6 +41,14 @@ sc = "shortcake.cli:app"
 requires = ["uv_build>=0.9.8,<0.10.0"]
 build-backend = "uv_build"
 
+[tool.autopub]
+git-username = "github-actions[bot]"
+git-email = "41898282+github-actions[bot]@users.noreply.github.com"
+plugins = [
+    "autopub.plugins.github",
+    "autopub.plugins.uv",
+]
+
 [tool.ty.rules]
 # Ignore due to dulwich's incomplete type annotations
 invalid-argument-type = "ignore"
