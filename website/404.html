@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en" class="scroll-smooth antialiased">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>404 — branch not found · Shortcake</title>
+  <meta name="description" content="The page you're looking for isn't in the stack.">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://rsms.me/">
+  <link rel="stylesheet" href="https://rsms.me/inter/inter.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600&display=swap">
+
+  <!-- Tailwind v4 (browser build) -->
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <style type="text/tailwindcss">
+    @import "tailwindcss";
+
+    @theme {
+      --font-sans: "InterVariable", ui-sans-serif, system-ui, sans-serif;
+      --font-sans--font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+      --font-mono: "Geist Mono", ui-monospace, monospace;
+
+      /* Strawberry-shortcake accent — sampled from the logo's pixel smile */
+      --color-cake-50:  #fff1f4;
+      --color-cake-100: #ffe0e6;
+      --color-cake-200: #ffc1cd;
+      --color-cake-300: #ff93a8;
+      --color-cake-400: #fb6385;
+      --color-cake-500: #f02d57;
+      --color-cake-600: #d81746;
+      --color-cake-700: #b3123a;
+    }
+
+    /* Graph-paper grid — the structural motif of the page */
+    @utility grid-paper {
+      background-image:
+        linear-gradient(to right, rgba(10, 10, 10, 0.05) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(10, 10, 10, 0.05) 1px, transparent 1px);
+      background-size: 44px 44px;
+    }
+
+    @layer base {
+      html { font-optical-sizing: auto; }
+    }
+  </style>
+</head>
+
+<body class="bg-neutral-50 font-sans text-neutral-950 selection:bg-cake-200 selection:text-neutral-950 [font-optical-sizing:auto]">
+  <div class="isolate flex min-h-dvh flex-col">
+
+    <!-- ============================ Header ============================ -->
+    <header class="sticky top-0 z-50 border-b border-black/5 bg-neutral-50/80 backdrop-blur-md">
+      <div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
+        <a href="/" class="inline-flex items-center" aria-label="shortcake home">
+          <img src="/static/logo.svg" alt="shortcake" class="h-5 w-auto sm:h-6">
+        </a>
+
+        <nav class="flex items-center gap-x-6">
+          <a href="https://github.com/sponsors/patrick91" class="inline-flex items-center gap-x-1.5 text-sm font-medium text-neutral-600 transition hover:text-cake-600 max-sm:hidden">
+            <svg viewBox="0 0 24 24" class="size-4 text-cake-500" fill="currentColor" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+            Sponsor
+          </a>
+          <a href="https://github.com/patrick91/shortcake" class="inline-flex items-center gap-x-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-neutral-700 ring-1 ring-black/10 transition hover:bg-white hover:text-neutral-950 hover:ring-black/15">
+            <svg viewBox="0 0 24 24" class="size-4" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.37.5 0 5.78 0 12.29c0 5.21 3.44 9.63 8.2 11.19.6.11.82-.25.82-.56v-2.1c-3.34.71-4.04-1.6-4.04-1.6-.55-1.36-1.33-1.72-1.33-1.72-1.09-.73.08-.72.08-.72 1.2.08 1.84 1.21 1.84 1.21 1.07 1.8 2.8 1.28 3.49.98.11-.76.42-1.28.76-1.57-2.67-.3-5.47-1.31-5.47-5.83 0-1.29.47-2.34 1.24-3.17-.13-.3-.54-1.52.12-3.16 0 0 1.01-.32 3.3 1.21a11.5 11.5 0 0 1 6 0c2.29-1.53 3.3-1.21 3.3-1.21.66 1.64.25 2.86.12 3.16.77.83 1.23 1.88 1.23 3.17 0 4.53-2.81 5.53-5.49 5.82.43.37.81 1.1.81 2.22v3.29c0 .31.21.68.83.56A12.05 12.05 0 0 0 24 12.29C24 5.78 18.63.5 12 .5Z"/></svg>
+            <span>GitHub</span>
+          </a>
+        </nav>
+      </div>
+    </header>
+
+    <!-- ============================ 404 ============================ -->
+    <main class="relative flex flex-1 items-center overflow-hidden">
+      <div class="pointer-events-none absolute left-1/2 top-[-15%] size-[680px] -translate-x-1/2 rounded-full bg-cake-300/25 blur-3xl"></div>
+      <div class="pointer-events-none absolute inset-0 grid-paper [mask-image:radial-gradient(ellipse_70%_60%_at_50%_40%,black,transparent)]"></div>
+
+      <div class="relative mx-auto w-full max-w-2xl px-6 py-20 text-center sm:py-28">
+        <p class="inline-flex items-center gap-x-2 font-mono text-xs font-medium uppercase tracking-wide text-cake-600">
+          <span class="size-1.5 bg-cake-500" aria-hidden="true"></span>
+          Error 404
+        </p>
+
+        <p class="mt-6 font-mono text-7xl font-semibold tracking-tight sm:text-8xl">
+          <span class="text-neutral-950">4</span><span class="text-cake-500">0</span><span class="text-neutral-950">4</span>
+        </p>
+
+        <h1 class="mt-4 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
+          This branch isn't in the stack.
+        </h1>
+
+        <p class="mx-auto mt-5 max-w-xl text-lg text-pretty text-neutral-600">
+          The page you're after doesn't exist — it may have been folded, rebased away, or never
+          created. Let's get you back onto
+          <code class="rounded-md bg-neutral-950 px-1.5 py-0.5 font-mono text-[0.85em] text-cake-300">main</code>.
+        </p>
+
+        <!-- terminal -->
+        <div class="mx-auto mt-10 max-w-md overflow-hidden rounded-xl bg-neutral-950 text-left shadow-2xl shadow-cake-500/10 ring-1 ring-black/10">
+          <div class="flex items-center gap-2 border-b border-white/10 px-4 py-3">
+            <span class="size-3 rounded-full bg-[#ff5f57]" aria-hidden="true"></span>
+            <span class="size-3 rounded-full bg-[#febc2e]" aria-hidden="true"></span>
+            <span class="size-3 rounded-full bg-[#28c840]" aria-hidden="true"></span>
+            <span class="ml-2 font-mono text-xs text-neutral-500">~/acme — zsh</span>
+          </div>
+          <div class="p-5">
+            <pre class="m-0 overflow-x-auto font-mono text-[0.8125rem] leading-6 text-neutral-300"><span class="text-cake-400">$</span> <span class="text-neutral-100">sc checkout</span> <span id="sc-404-path" class="text-emerald-300">/missing-page</span>
+<span class="text-rose-400">error:</span> <span class="text-neutral-400">branch</span> <span id="sc-404-branch" class="text-cake-300">'/missing-page'</span> <span class="text-neutral-400">not found in the stack</span>
+<span class="text-neutral-500">hint: run</span> <span class="text-neutral-100">sc ls</span> <span class="text-neutral-500">to see what's tracked</span></pre>
+          </div>
+        </div>
+
+        <!-- actions -->
+        <div class="mt-10 flex flex-wrap items-center justify-center gap-4">
+          <a href="/" class="inline-flex items-center justify-center gap-x-2 rounded-lg bg-cake-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-cake-500/30 transition hover:bg-cake-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cake-500">
+            <svg viewBox="0 0 24 24" class="size-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+            Back to main
+          </a>
+          <a href="https://github.com/patrick91/shortcake" class="group inline-flex items-center gap-x-1.5 text-sm font-semibold text-neutral-900 transition hover:text-cake-600">
+            View on GitHub
+            <svg viewBox="0 0 24 24" class="size-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
+          </a>
+        </div>
+      </div>
+    </main>
+
+    <!-- ============================ Footer ============================ -->
+    <footer class="border-t border-black/5">
+      <div class="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 py-10 sm:flex-row">
+        <a href="/" class="inline-flex items-center" aria-label="shortcake home">
+          <img src="/static/logo.svg" alt="shortcake" class="h-5 w-auto">
+        </a>
+
+        <p class="text-sm text-neutral-500">A stacked-PR workflow tool for review-sized changes.</p>
+
+        <div class="flex items-center gap-x-5 text-sm">
+          <a href="https://github.com/sponsors/patrick91" class="inline-flex items-center gap-x-1.5 font-medium text-neutral-600 transition hover:text-cake-600">
+            <svg viewBox="0 0 24 24" class="size-4 text-cake-500" fill="currentColor" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+            Sponsor
+          </a>
+          <a href="https://github.com/patrick91/shortcake" class="font-medium text-neutral-600 transition hover:text-neutral-950">GitHub</a>
+          <span class="text-neutral-500">MIT License</span>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script>
+    // Show the actual missing path in the terminal, like a real `sc checkout`
+    const reqPath = window.location.pathname + window.location.search;
+    if (reqPath && reqPath !== '/') {
+      const pathEl = document.getElementById('sc-404-path');
+      const branchEl = document.getElementById('sc-404-branch');
+      if (pathEl) pathEl.textContent = reqPath;
+      if (branchEl) branchEl.textContent = "'" + reqPath + "'";
+    }
+  </script>
+</body>
+</html>
