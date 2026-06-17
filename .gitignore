@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 *.pyo
+.fastapicloud
 .pytest_cache/
 .coverage
 htmlcov/
