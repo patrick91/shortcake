@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Shortcake — stacked pull requests, powered by git trailers</title>
-  <meta name="description" content="Shortcake turns a chain of branches into a reviewable stack of pull requests — using nothing but a git trailer in each commit.">
-  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <title>Shortcake - review-sized pull requests that stay in order</title>
+  <meta name="description" content="Shortcake helps you split large changes into ordered pull requests, keep reviewers oriented, and submit the stack from your terminal.">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
 
   <!-- Fonts -->
   <link rel="preconnect" href="https://rsms.me/">
@@ -62,13 +62,14 @@
     <header class="sticky top-0 z-50 border-b border-black/5 bg-neutral-50/80 backdrop-blur-md">
       <div class="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
         <a href="#top" class="inline-flex items-center" aria-label="shortcake home">
-          <img src="logo.svg" alt="shortcake" class="h-5 w-auto sm:h-6">
+          <img src="/static/logo.svg" alt="shortcake" class="h-5 w-auto sm:h-6">
         </a>
 
         <nav class="flex items-center gap-x-6">
-          <a href="#features" class="text-sm font-medium text-neutral-600 transition hover:text-neutral-950 max-sm:hidden">Features</a>
-          <a href="#commands" class="text-sm font-medium text-neutral-600 transition hover:text-neutral-950 max-sm:hidden">Commands</a>
-          <a href="#install" class="text-sm font-medium text-neutral-600 transition hover:text-neutral-950 max-sm:hidden">Install</a>
+          <a href="https://github.com/sponsors/patrick91" class="inline-flex items-center gap-x-1.5 text-sm font-medium text-neutral-600 transition hover:text-cake-600 max-sm:hidden">
+            <svg viewBox="0 0 24 24" class="size-4 text-cake-500" fill="currentColor" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+            Sponsor
+          </a>
           <a href="https://github.com/patrick91/shortcake" class="inline-flex items-center gap-x-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-neutral-700 ring-1 ring-black/10 transition hover:bg-white hover:text-neutral-950 hover:ring-black/15">
             <svg viewBox="0 0 24 24" class="size-4" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.37.5 0 5.78 0 12.29c0 5.21 3.44 9.63 8.2 11.19.6.11.82-.25.82-.56v-2.1c-3.34.71-4.04-1.6-4.04-1.6-.55-1.36-1.33-1.72-1.33-1.72-1.09-.73.08-.72.08-.72 1.2.08 1.84 1.21 1.84 1.21 1.07 1.8 2.8 1.28 3.49.98.11-.76.42-1.28.76-1.57-2.67-.3-5.47-1.31-5.47-5.83 0-1.29.47-2.34 1.24-3.17-.13-.3-.54-1.52.12-3.16 0 0 1.01-.32 3.3 1.21a11.5 11.5 0 0 1 6 0c2.29-1.53 3.3-1.21 3.3-1.21.66 1.64.25 2.86.12 3.16.77.83 1.23 1.88 1.23 3.17 0 4.53-2.81 5.53-5.49 5.82.43.37.81 1.1.81 2.22v3.29c0 .31.21.68.83.56A12.05 12.05 0 0 0 24 12.29C24 5.78 18.63.5 12 .5Z"/></svg>
             <span>GitHub</span>
@@ -87,25 +88,25 @@
           <div class="mx-auto max-w-3xl text-center">
             <p class="inline-flex items-center gap-x-2 font-mono text-xs font-medium uppercase tracking-wide text-cake-600">
               <span class="size-1.5 bg-cake-500" aria-hidden="true"></span>
-              Stacked PRs · Git trailers
+              Review-sized PRs that stay ordered
             </p>
 
             <h1 class="mt-5 text-4xl font-semibold tracking-tight text-balance sm:text-5xl lg:text-6xl">
-              Stack your pull requests.<br class="max-sm:hidden"> Ship them in order.
+              Turn big changes into pull requests reviewers can follow.
             </h1>
 
             <p class="mx-auto mt-6 max-w-2xl text-lg text-pretty text-neutral-600 sm:text-xl">
-              Shortcake turns a chain of branches into a reviewable stack — using nothing but a
-              <span class="font-medium text-neutral-900">git trailer</span> in each commit.
-              No state files, no daemon — the whole stack lives in your history.
+              Shortcake helps you build a feature as a stack of small branches, see the order at a
+              glance, and submit matching GitHub PRs from the terminal. The stack travels with your
+              Git history, so there is no service or background process to babysit.
             </p>
 
             <div class="mt-8 flex flex-wrap items-center justify-center gap-4">
               <a href="#install" class="inline-flex items-center justify-center gap-x-2 rounded-lg bg-cake-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-cake-500/30 transition hover:bg-cake-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cake-500">
-                Get started
+                Install Shortcake
               </a>
-              <a href="https://github.com/patrick91/shortcake" class="group inline-flex items-center gap-x-1.5 text-sm font-semibold text-neutral-900 transition hover:text-cake-600">
-                Browse the source
+              <a href="https://github.com/patrick91/shortcake/blob/main/e2e/docs/01-getting-started.md" class="group inline-flex items-center gap-x-1.5 text-sm font-semibold text-neutral-900 transition hover:text-cake-600">
+                Read the quickstart
                 <svg viewBox="0 0 24 24" class="size-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
               </a>
             </div>
@@ -119,16 +120,23 @@
               <span class="size-3 rounded-full bg-[#28c840]" aria-hidden="true"></span>
               <span class="ml-2 font-mono text-xs text-neutral-500">~/acme — zsh</span>
             </div>
-            <pre class="overflow-x-auto p-5 font-mono text-[0.8125rem] leading-6 text-neutral-300"><span class="text-cake-400">$</span> <span class="text-neutral-100">sc create</span> <span class="text-neutral-500">-m</span> <span class="text-emerald-300">"feat: add login form"</span>
-<span class="text-neutral-500">Created branch</span> <span class="text-cake-300">add-login-form</span> <span class="text-neutral-500">from</span> main
+            <div class="p-5">
+              <pre class="m-0 overflow-x-auto sm:overflow-x-visible font-mono text-[0.8125rem] leading-6 text-neutral-300"><span class="text-cake-400">$</span> <span class="text-neutral-100">sc create</span> <span class="text-neutral-500">-m</span> <span class="text-emerald-300">"Add login form"</span>
+<span class="text-neutral-500">Created branch</span> <span class="text-cake-300">'2026-06-16-add-login-form'</span> <span class="text-neutral-500">from</span> <span class="text-neutral-300">'main'</span>
 
-<span class="text-cake-400">$</span> <span class="text-neutral-100">sc create</span> <span class="text-neutral-500">-m</span> <span class="text-emerald-300">"feat: password reset"</span>
-<span class="text-neutral-500">Created branch</span> <span class="text-cake-300">password-reset</span> <span class="text-neutral-500">from</span> <span class="text-cake-300">add-login-form</span>
+<span class="text-cake-400">$</span> <span class="text-neutral-100">sc create</span> <span class="text-neutral-500">-m</span> <span class="text-emerald-300">"Add password reset"</span>
+<span class="text-neutral-500">Created branch</span> <span class="text-cake-300">'2026-06-16-add-password-reset'</span> <span class="text-neutral-500">from</span> <span class="text-cake-300">'2026-06-16-add-login-form'</span>
 
-<span class="text-cake-400">$</span> <span class="text-neutral-100">sc status</span>
-main
-<span class="text-neutral-600">└─</span> <span class="text-cake-300">add-login-form</span>
-<span class="text-neutral-600">   └─</span> <span class="text-cake-300">password-reset</span>  <span class="text-cake-400">● you are here</span></pre>
+<span class="text-cake-400">$</span> <span class="text-neutral-100">sc ls</span></pre>
+              <pre class="m-0 mt-1 overflow-x-auto sm:overflow-x-visible font-mono text-[0.8125rem]/3.25 text-neutral-300"><span class="text-cake-400">◉</span> <span class="text-neutral-100">2026-06-16-add-password-reset</span> <span class="text-cake-400">(current)</span>
+<span class="text-neutral-700">│</span> <span class="text-neutral-600">Add password reset</span>
+<span class="text-neutral-700">│</span>
+<span class="text-neutral-600">◯</span> <span class="text-neutral-300">2026-06-16-add-login-form</span>
+<span class="text-neutral-700">│</span> <span class="text-neutral-600">Add login form</span>
+<span class="text-neutral-700">│</span>
+<span class="text-neutral-600">◯</span> <span class="text-neutral-300">main</span>
+  <span class="text-neutral-600">Initial commit</span></pre>
+            </div>
           </div>
         </div>
       </section>
@@ -142,11 +150,12 @@ main
               Why shortcake
             </p>
             <h2 class="mt-5 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-              Stacked PRs, without the ceremony.
+              Keep the review small without losing the story.
             </h2>
             <p class="mt-5 max-w-[60ch] text-lg text-pretty text-neutral-600">
-              No control file to keep in sync, no metadata branch, no background process.
-              Your repository already knows how the stack fits together.
+              Stacked branches let you send a big change in the order it should be read: foundation
+              first, follow-ups after. Shortcake keeps that order visible while you keep working in
+              normal Git.
             </p>
           </div>
 
@@ -156,9 +165,9 @@ main
               <div class="flex size-10 items-center justify-center rounded-lg bg-cake-50 ring-1 ring-cake-200">
                 <svg viewBox="0 0 24 24" class="size-5 text-cake-600" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><line x1="3" y1="12" x2="9" y2="12"/><line x1="15" y1="12" x2="21" y2="12"/></svg>
               </div>
-              <h3 class="mt-4 text-base font-semibold text-neutral-950">Trailers are the truth</h3>
+              <h3 class="mt-4 text-base font-semibold text-neutral-950">Split the change before review</h3>
               <p class="mt-2 text-base/7 text-neutral-600 sm:text-sm/6">
-                Every branch records its parent in a <code class="font-mono text-cake-700">Shortcake-Parent</code> commit trailer. Nothing hidden, nothing extra.
+                Start the next branch from your current work and keep each pull request focused on one idea, not the whole feature.
               </p>
             </div>
 
@@ -166,9 +175,9 @@ main
               <div class="flex size-10 items-center justify-center rounded-lg bg-cake-50 ring-1 ring-cake-200">
                 <svg viewBox="0 0 24 24" class="size-5 text-cake-600" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
               </div>
-              <h3 class="mt-4 text-base font-semibold text-neutral-950">Stacks track themselves</h3>
+              <h3 class="mt-4 text-base font-semibold text-neutral-950">Show reviewers the path</h3>
               <p class="mt-2 text-base/7 text-neutral-600 sm:text-sm/6">
-                Branch on top of a branch and Shortcake keeps the whole chain ordered from <code class="font-mono text-cake-700">main</code> up.
+                See the stack as a tree, then submit PRs with bases that match the order your reviewers should read them.
               </p>
             </div>
 
@@ -176,9 +185,9 @@ main
               <div class="flex size-10 items-center justify-center rounded-lg bg-cake-50 ring-1 ring-cake-200">
                 <svg viewBox="0 0 24 24" class="size-5 text-cake-600" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>
               </div>
-              <h3 class="mt-4 text-base font-semibold text-neutral-950">Plays nice with plain git</h3>
+              <h3 class="mt-4 text-base font-semibold text-neutral-950">Stay close to plain Git</h3>
               <p class="mt-2 text-base/7 text-neutral-600 sm:text-sm/6">
-                Rebase, push, or branch with any git tool you like — the stack lives in your commits, so nothing breaks.
+                Rebase, push, checkout, and branch with the tools you already use. Shortcake keeps just enough context to rebuild the stack.
               </p>
             </div>
 
@@ -188,7 +197,7 @@ main
               </div>
               <h3 class="mt-4 text-base font-semibold text-neutral-950">Adopt what you already have</h3>
               <p class="mt-2 text-base/7 text-neutral-600 sm:text-sm/6">
-                Bring an existing branch into a stack with a single <code class="font-mono text-cake-700">sc adopt</code>.
+                Already started work? Bring an existing branch into a stack instead of recreating it.
               </p>
             </div>
           </div>
@@ -201,14 +210,14 @@ main
           <div class="max-w-2xl">
             <p class="inline-flex items-center gap-x-2 font-mono text-xs font-medium uppercase tracking-wide text-cake-600">
               <span class="size-1.5 bg-cake-500" aria-hidden="true"></span>
-              The whole surface
+              The core loop
             </p>
             <h2 class="mt-5 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
-              A command set you can hold in your head.
+              A short path from branch to PR.
             </h2>
             <p class="mt-5 max-w-[60ch] text-lg text-pretty text-neutral-600">
-              Three verbs cover the loop: stack a new branch, adopt one you already pushed, and read the
-              tree back. The state lives in your commits — so the commands stay small.
+              Create a focused branch, check the order, and submit the stack. The rest of the CLI is
+              there when you need to move, split, restack, or repair branches.
             </p>
           </div>
 
@@ -217,39 +226,178 @@ main
             <ul role="list" class="divide-y divide-black/5 overflow-hidden rounded-xl bg-neutral-50 ring-1 ring-black/10">
               <li class="flex flex-col gap-1.5 p-5 sm:flex-row sm:items-baseline sm:gap-5">
                 <code class="shrink-0 font-mono text-sm font-medium text-cake-700 sm:w-40">sc create -m …</code>
-                <p class="text-base/7 text-neutral-600 sm:text-sm/6">Branch off the current branch and record its parent in the first commit.</p>
+                <p class="text-base/7 text-neutral-600 sm:text-sm/6">Start the next focused PR from wherever you are in the stack.</p>
               </li>
               <li class="flex flex-col gap-1.5 p-5 sm:flex-row sm:items-baseline sm:gap-5">
-                <code class="shrink-0 font-mono text-sm font-medium text-cake-700 sm:w-40">sc adopt &lt;branch&gt;</code>
-                <p class="text-base/7 text-neutral-600 sm:text-sm/6">Track an existing branch by writing its <code class="font-mono text-cake-700">Shortcake-Parent</code> trailer.</p>
+                <code class="shrink-0 font-mono text-sm font-medium text-cake-700 sm:w-40">sc ls</code>
+                <p class="text-base/7 text-neutral-600 sm:text-sm/6">See every tracked branch in order, including where you are.</p>
               </li>
               <li class="flex flex-col gap-1.5 p-5 sm:flex-row sm:items-baseline sm:gap-5">
-                <code class="shrink-0 font-mono text-sm font-medium text-cake-700 sm:w-40">sc status</code>
-                <p class="text-base/7 text-neutral-600 sm:text-sm/6">Print the current stack as a tree, from <code class="font-mono text-cake-700">main</code> to your tip.</p>
+                <code class="shrink-0 font-mono text-sm font-medium text-cake-700 sm:w-40">sc submit -d</code>
+                <p class="text-base/7 text-neutral-600 sm:text-sm/6">Push the stack and create or update GitHub draft PRs with the right bases.</p>
               </li>
             </ul>
 
             <!-- Concept panel: commit + trailer -->
             <div class="flex flex-col justify-center gap-6 rounded-xl bg-neutral-50 p-6 ring-1 ring-black/10 sm:p-8">
               <div class="overflow-hidden rounded-lg bg-neutral-950 shadow-lg shadow-cake-500/10 ring-1 ring-black/10">
-                <div class="border-b border-white/10 px-4 py-2.5 font-mono text-xs text-neutral-500">commit · add-login-form</div>
-                <pre class="overflow-x-auto p-5 font-mono text-[0.8125rem] leading-6 text-neutral-300"><span class="text-neutral-100">feat: add login form</span>
+                <div class="border-b border-white/10 px-4 py-2.5 font-mono text-xs text-neutral-500">stack · review order</div>
+                <pre class="overflow-x-auto p-5 font-mono text-[0.8125rem] leading-6 text-neutral-300"><span id="sc-commit-subject" class="text-neutral-100">Add password reset</span>
 
-<span class="text-cake-300">Shortcake-Parent:</span> main</pre>
+<span id="sc-commit-trailer"><span class="text-cake-300">Shortcake-Parent:</span> add-login-form</span></pre>
               </div>
 
-              <div class="flex flex-wrap items-center gap-x-2 gap-y-2 font-mono text-xs text-neutral-700">
-                <span class="rounded-md bg-white px-2.5 py-1 ring-1 ring-black/10">main</span>
-                <span class="h-px w-5 bg-cake-300" aria-hidden="true"></span>
-                <span class="rounded-md bg-white px-2.5 py-1 ring-1 ring-black/10">add-login-form</span>
-                <span class="h-px w-5 bg-cake-400" aria-hidden="true"></span>
-                <span class="rounded-md bg-cake-500 px-2.5 py-1 font-medium text-white ring-1 ring-cake-600">password-reset</span>
+              <div>
+                <div role="group" aria-label="Select a branch in the stack" class="flex flex-wrap items-center gap-x-2 gap-y-2 font-mono text-xs">
+                  <button type="button" class="sc-branch cursor-pointer rounded-md bg-white px-2.5 py-1 text-neutral-700 ring-1 ring-black/10 transition hover:ring-cake-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cake-500" data-subject="Initial commit" data-parent="">main</button>
+                  <span class="h-px w-5 bg-cake-300" aria-hidden="true"></span>
+                  <button type="button" class="sc-branch cursor-pointer rounded-md bg-white px-2.5 py-1 text-neutral-700 ring-1 ring-black/10 transition hover:ring-cake-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cake-500" data-subject="Add login form" data-parent="main">add-login-form</button>
+                  <span class="h-px w-5 bg-cake-400" aria-hidden="true"></span>
+                  <button type="button" class="sc-branch cursor-pointer rounded-md bg-cake-500 px-2.5 py-1 font-medium text-white ring-1 ring-cake-600 transition hover:ring-cake-300 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cake-500" data-subject="Add password reset" data-parent="add-login-form" aria-current="true">password-reset</button>
+                </div>
               </div>
 
               <p class="text-base/7 text-pretty text-neutral-600 sm:text-sm/6">
-                The trailer is the only metadata Shortcake stores. Rebase, push, or open a PR with any
-                tool you like — the stack survives because it lives in the commit.
+                Each branch remembers the branch it builds on. That small marker is why Shortcake
+                can recover the order after rebases, checkouts, and pushes without a separate state
+                file to keep in sync.
               </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============================ sc ui ============================ -->
+      <section id="ui" class="scroll-mt-20">
+        <div class="mx-auto max-w-6xl px-6 py-20 sm:py-28">
+          <div class="max-w-2xl">
+            <p class="inline-flex items-center gap-x-2 font-mono text-xs font-medium uppercase tracking-wide text-cake-600">
+              <span class="size-1.5 bg-cake-500" aria-hidden="true"></span>
+              sc ui
+            </p>
+            <h2 class="mt-5 text-3xl font-semibold tracking-tight text-balance sm:text-4xl">
+              Review the whole stack in your browser.
+            </h2>
+            <p class="mt-5 max-w-[60ch] text-lg text-pretty text-neutral-600">
+              Run <code class="rounded-md bg-neutral-950 px-1.5 py-0.5 font-mono text-[0.85em] text-cake-300">sc ui</code>
+              to open a local, GitHub-style view of every branch diff — file tree, inline comments, and
+              AI review, reading straight from your repo. Nothing leaves your machine.
+            </p>
+          </div>
+
+          <!-- Browser demo -->
+          <div class="mt-12 overflow-hidden rounded-xl bg-white shadow-2xl shadow-cake-500/10 ring-1 ring-black/10">
+            <!-- browser chrome -->
+            <div class="flex items-center gap-3 border-b border-black/5 bg-neutral-50 px-3 py-2.5">
+              <svg viewBox="0 0 24 24" class="size-4 shrink-0 text-neutral-400" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>
+              <div class="flex items-center gap-1.5 text-neutral-300" aria-hidden="true">
+                <svg viewBox="0 0 24 24" class="size-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>
+                <svg viewBox="0 0 24 24" class="size-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+                <svg viewBox="0 0 24 24" class="size-4 text-neutral-400" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+              </div>
+              <div class="ml-1 min-w-0 flex-1">
+                <span class="block truncate font-mono text-xs"><span class="text-neutral-400">http://</span><span class="text-neutral-800">127.0.0.1</span><span class="text-neutral-400">:5173/#/working</span></span>
+              </div>
+            </div>
+
+            <!-- app header -->
+            <div class="flex items-center gap-3 border-b border-black/5 px-4 py-3">
+              <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-neutral-950">
+                <svg viewBox="0 0 97 99" class="size-5" fill="none" aria-hidden="true">
+                  <path d="M26.2998 87.0024H70.4619V98.624H26.2998V87.0024Z" fill="#FF3D69"/>
+                  <path d="M8.86735 81.1916H26.2998V92.8132H8.86735V81.1916Z" fill="#FF3D69"/>
+                  <path d="M70.4619 81.1916H87.8944V92.8132H70.4619V81.1916Z" fill="#FF3D69"/>
+                  <path d="M87.8944 74.2186H96.0295V85.8403H87.8944V74.2186Z" fill="#FF3D69"/>
+                  <path d="M0.732212 74.2186H8.86735V85.8403H0.732212V74.2186Z" fill="#FF3D69"/>
+                  <path d="M26.2998 68.4078H70.4619V80.0295H26.2998V68.4078Z" fill="#FF929D"/>
+                  <path d="M8.86735 62.597H26.2998V74.2186H8.86735V62.597Z" fill="#FF929D"/>
+                  <path d="M70.4619 62.597H87.8944V74.2186H70.4619V62.597Z" fill="#FF929D"/>
+                  <path d="M87.8944 55.624H96.0295V67.2456H87.8944V55.624Z" fill="#FF929D"/>
+                  <path d="M0.732212 55.624H8.86735V67.2456H0.732212V55.624Z" fill="#FF929D"/>
+                  <path d="M47.9492 0C57.3944 4.76087e-05 65.7354 1.90152 72.9727 5.7041C80.21 9.50676 85.9143 15.2111 90.085 22.8164C93.7263 29.3496 95.7782 37.2855 96.2402 46.624H72.9414C72.5391 41.8603 71.57 37.6654 70.0293 34.04C68.0666 29.0108 65.1835 25.1469 61.3809 22.4482C57.7009 19.7496 53.0392 18.4004 47.3965 18.4004C42.49 18.4005 38.1965 19.6268 34.5166 22.0801C30.8367 24.4107 28.0154 27.9071 26.0527 32.5684C24.5098 36.4772 23.6162 41.1625 23.3672 46.624H0C0.403817 36.9446 2.46302 28.8242 6.18066 22.2637C10.474 14.7811 16.2393 9.19951 23.4766 5.51953C30.7139 1.83953 38.8719 0 47.9492 0Z" fill="#e4e4e8"/>
+                </svg>
+              </span>
+              <div class="inline-flex items-center gap-2.5 rounded-lg px-3 py-1.5 ring-1 ring-black/10">
+                <svg viewBox="0 0 24 24" class="size-4 text-neutral-400" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>
+                <div class="text-left">
+                  <span class="block font-mono text-[0.625rem] uppercase tracking-wide text-neutral-400">Viewing diff</span>
+                  <span class="block text-sm font-medium text-neutral-900">Uncommitted changes</span>
+                </div>
+                <kbd class="ml-1 rounded bg-neutral-100 px-1.5 py-0.5 font-mono text-[0.625rem] text-neutral-500">⌘K</kbd>
+                <svg viewBox="0 0 24 24" class="size-4 text-neutral-400" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+              </div>
+            </div>
+
+            <!-- app -->
+            <div class="grid sm:grid-cols-[250px_1fr]">
+              <!-- sidebar: files changed -->
+              <aside class="border-b border-black/5 p-4 sm:border-r sm:border-b-0">
+                <div class="flex items-center justify-between">
+                  <h3 class="text-sm font-semibold text-neutral-900">Files changed</h3>
+                  <span class="rounded-full bg-neutral-100 px-2 py-0.5 font-mono text-xs text-neutral-500">3</span>
+                </div>
+                <div class="mt-1.5 flex items-center gap-2 font-mono text-xs">
+                  <span class="text-emerald-600">+57</span>
+                  <span class="text-rose-600">−12</span>
+                </div>
+                <div class="mt-3 flex items-center gap-2 rounded-md bg-neutral-50 px-2.5 py-1.5 ring-1 ring-black/10">
+                  <svg viewBox="0 0 24 24" class="size-3.5 text-neutral-400" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+                  <span class="text-xs text-neutral-400">Search…</span>
+                </div>
+                <div class="mt-3 font-mono text-xs">
+                  <div class="flex items-center justify-between px-1 py-1 text-neutral-500">
+                    <span class="flex items-center gap-1.5">
+                      <svg viewBox="0 0 24 24" class="size-3 text-neutral-400" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+                      auth
+                    </span>
+                    <span class="size-1.5 rounded-full bg-emerald-500" aria-hidden="true"></span>
+                  </div>
+                  <ul role="list" class="ml-2 space-y-0.5 border-l border-black/5 pl-2">
+                    <li><a href="#ui" class="flex items-center gap-2 rounded-md bg-neutral-100 px-2 py-1.5 text-neutral-900"><span class="truncate">login.py</span><span class="ml-auto flex shrink-0 items-center gap-1.5 text-[0.6875rem]"><span class="text-emerald-600">+4</span><span class="text-rose-600">−1</span><span class="text-amber-600">M</span></span></a></li>
+                    <li><a href="#ui" class="flex items-center gap-2 rounded-md px-2 py-1.5 text-neutral-500 transition hover:bg-neutral-50 hover:text-neutral-900"><span class="truncate">forms.py</span><span class="ml-auto flex shrink-0 items-center gap-1.5 text-[0.6875rem]"><span class="text-emerald-600">+8</span><span class="text-emerald-600">A</span></span></a></li>
+                  </ul>
+                  <a href="#ui" class="mt-0.5 flex items-center gap-2 rounded-md px-2 py-1.5 text-neutral-500 transition hover:bg-neutral-50 hover:text-neutral-900"><span class="truncate">README.md</span><span class="ml-auto flex shrink-0 items-center gap-1.5 text-[0.6875rem]"><span class="text-emerald-600">+5</span><span class="text-rose-600">−2</span><span class="text-amber-600">M</span></span></a>
+                </div>
+              </aside>
+
+              <!-- diff -->
+              <div class="min-w-0">
+                <!-- diff header -->
+                <div class="flex items-center gap-2 border-b border-black/5 px-4 py-3">
+                  <svg viewBox="0 0 24 24" class="size-4 shrink-0 text-blue-500" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>
+                  <span class="font-mono text-sm font-medium text-neutral-900">auth/login.py</span>
+                  <span class="ml-auto flex items-center gap-2 font-mono text-xs"><span class="text-emerald-600">+4</span><span class="text-rose-600">−1</span></span>
+                </div>
+
+                <!-- diff body -->
+                <div class="overflow-x-auto text-[0.8125rem] leading-6">
+                  <div class="flex"><span class="w-10 shrink-0 select-none px-2 text-right text-neutral-400">22</span><span class="w-5 shrink-0 select-none text-center text-neutral-300" aria-hidden="true"> </span><code class="whitespace-pre pr-4 font-mono text-neutral-700"><span class="text-violet-600">def</span> login(request):</code></div>
+                  <div class="flex"><span class="w-10 shrink-0 select-none px-2 text-right text-neutral-400">23</span><span class="w-5 shrink-0 select-none text-center text-neutral-300" aria-hidden="true"> </span><code class="whitespace-pre pr-4 font-mono text-neutral-700">    form = LoginForm(request.POST)</code></div>
+                  <div class="flex bg-rose-50"><span class="w-10 shrink-0 select-none px-2 text-right text-rose-400">24</span><span class="w-5 shrink-0 select-none text-center text-rose-400">−</span><code class="whitespace-pre pr-4 font-mono text-neutral-700">    user = authenticate(form)</code></div>
+                  <div class="flex bg-emerald-50"><span class="w-10 shrink-0 select-none px-2 text-right text-emerald-600">24</span><span class="w-5 shrink-0 select-none text-center text-emerald-500">+</span><code class="whitespace-pre pr-4 font-mono text-neutral-700">    user = authenticate(form.cleaned_data)</code></div>
+                  <div class="flex bg-emerald-50"><span class="w-10 shrink-0 select-none px-2 text-right text-emerald-600">25</span><span class="w-5 shrink-0 select-none text-center text-emerald-500">+</span><code class="whitespace-pre pr-4 font-mono text-neutral-700">    <span class="text-violet-600">if</span> user <span class="text-violet-600">is</span> <span class="text-violet-600">None</span>:</code></div>
+                  <div class="flex bg-emerald-50"><span class="w-10 shrink-0 select-none px-2 text-right text-emerald-600">26</span><span class="w-5 shrink-0 select-none text-center text-emerald-500">+</span><code class="whitespace-pre pr-4 font-mono text-neutral-700">        <span class="text-violet-600">raise</span> InvalidCredentials()</code></div>
+
+                  <!-- AI review comment -->
+                  <div class="border-y border-cake-100 bg-cake-50/50 px-4 py-3">
+                    <div class="flex items-start gap-x-3">
+                      <div class="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-cake-500/10 ring-1 ring-cake-200">
+                        <svg viewBox="0 0 24 24" class="size-3.5 text-cake-600" fill="currentColor" aria-hidden="true"><path d="M12 2l1.9 5.1L19 9l-5.1 1.9L12 16l-1.9-5.1L5 9l5.1-1.9L12 2z"/></svg>
+                      </div>
+                      <div class="min-w-0">
+                        <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                          <span class="text-xs font-semibold text-neutral-900">shortcake review</span>
+                          <span class="rounded bg-white px-1.5 py-0.5 font-mono text-[0.6875rem] text-neutral-500 ring-1 ring-black/10">claude-opus</span>
+                          <span class="inline-flex items-center gap-x-1 text-xs text-amber-600"><span class="size-1.5 rounded-full bg-amber-500" aria-hidden="true"></span>warning</span>
+                        </div>
+                        <p class="mt-1 text-sm text-pretty text-neutral-700">Failed logins aren't rate-limited here — consider throttling by IP to slow down credential stuffing.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="flex"><span class="w-10 shrink-0 select-none px-2 text-right text-neutral-400">27</span><span class="w-5 shrink-0 select-none text-center text-neutral-300" aria-hidden="true"> </span><code class="whitespace-pre pr-4 font-mono text-neutral-700">    <span class="text-violet-600">return</span> user</code></div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -262,27 +410,31 @@ main
 
         <div class="relative mx-auto max-w-3xl px-6 py-24 text-center sm:py-28">
           <h2 class="text-3xl font-semibold tracking-tight text-balance text-white sm:text-4xl">
-            Slice your next big PR into a stack.
+            Start with one branch on top of another.
           </h2>
           <p class="mx-auto mt-5 max-w-xl text-lg text-pretty text-neutral-400">
-            Install Shortcake and turn your pile of branches into an ordered, reviewable stack.
+            Install Shortcake, create a focused branch, and use <code class="font-mono text-neutral-200">sc ls</code>
+            to see the stack before you open PRs.
           </p>
 
           <div class="mx-auto mt-8 flex max-w-md items-center justify-between gap-x-3 rounded-lg bg-white/5 px-4 py-3 ring-1 ring-white/10">
-            <code class="overflow-x-auto font-mono text-sm text-neutral-200"><span class="text-cake-400">$</span> <span id="install-cmd">uv add shortcake</span></code>
+            <code class="min-w-0 flex-1 overflow-x-auto whitespace-nowrap text-left font-mono text-sm text-neutral-200"><span class="text-cake-400">$</span> <span id="install-cmd">uv tool install shortcake</span></code>
             <button id="copy-btn" type="button" class="relative -mr-1 inline-flex shrink-0 items-center justify-center rounded-md p-1.5 text-neutral-400 transition hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cake-400" aria-label="Copy install command">
               <svg id="copy-icon" viewBox="0 0 24 24" class="size-4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
               <svg id="check-icon" viewBox="0 0 24 24" class="hidden size-4 text-cake-400" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"/></svg>
               <span class="pointer-fine:hidden absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2" aria-hidden="true"></span>
             </button>
           </div>
+          <p class="mx-auto mt-3 max-w-md text-sm text-neutral-500">
+            Requires Python 3.14+. The install exposes both <code class="font-mono text-neutral-300">shortcake</code> and <code class="font-mono text-neutral-300">sc</code>.
+          </p>
 
           <div class="mt-8 flex flex-wrap items-center justify-center gap-4">
-            <a href="https://github.com/patrick91/shortcake" class="inline-flex items-center justify-center gap-x-2 rounded-lg bg-cake-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-cake-500/30 transition hover:bg-cake-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cake-500">
-              Get started
+            <a href="https://github.com/patrick91/shortcake/blob/main/e2e/docs/01-getting-started.md" class="inline-flex items-center justify-center gap-x-2 rounded-lg bg-cake-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-cake-500/30 transition hover:bg-cake-600 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cake-500">
+              Read the quickstart
             </a>
             <a href="https://github.com/patrick91/shortcake" class="group inline-flex items-center gap-x-1.5 text-sm font-semibold text-white transition hover:text-cake-300">
-              Read the docs
+              View on GitHub
               <svg viewBox="0 0 24 24" class="size-4 transition-transform group-hover:translate-x-0.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 5l7 7-7 7"/></svg>
             </a>
           </div>
@@ -294,12 +446,16 @@ main
     <footer class="border-t border-black/5">
       <div class="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 px-6 py-10 sm:flex-row">
         <a href="#top" class="inline-flex items-center" aria-label="shortcake home">
-          <img src="logo.svg" alt="shortcake" class="h-5 w-auto">
+          <img src="/static/logo.svg" alt="shortcake" class="h-5 w-auto">
         </a>
 
-        <p class="text-sm text-neutral-500">A stacked-PR workflow tool built on git trailers.</p>
+        <p class="text-sm text-neutral-500">A stacked-PR workflow tool for review-sized changes.</p>
 
         <div class="flex items-center gap-x-5 text-sm">
+          <a href="https://github.com/sponsors/patrick91" class="inline-flex items-center gap-x-1.5 font-medium text-neutral-600 transition hover:text-cake-600">
+            <svg viewBox="0 0 24 24" class="size-4 text-cake-500" fill="currentColor" aria-hidden="true"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
+            Sponsor
+          </a>
           <a href="https://github.com/patrick91/shortcake" class="font-medium text-neutral-600 transition hover:text-neutral-950">GitHub</a>
           <span class="text-neutral-500">MIT License</span>
         </div>
@@ -320,6 +476,31 @@ main
           document.getElementById('copy-icon')?.classList.remove('hidden');
         }, 1600);
       } catch {}
+    });
+
+    // Interactive stack diagram — click a branch to show its commit + parent trailer
+    const branchBtns = document.querySelectorAll('.sc-branch');
+    const subjectEl = document.getElementById('sc-commit-subject');
+    const trailerEl = document.getElementById('sc-commit-trailer');
+    const BRANCH_ACTIVE = ['bg-cake-500', 'text-white', 'ring-cake-600', 'font-medium'];
+    const BRANCH_INACTIVE = ['bg-white', 'text-neutral-700', 'ring-black/10'];
+    branchBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        branchBtns.forEach((b) => {
+          b.classList.remove(...BRANCH_ACTIVE);
+          b.classList.add(...BRANCH_INACTIVE);
+          b.removeAttribute('aria-current');
+        });
+        btn.classList.remove(...BRANCH_INACTIVE);
+        btn.classList.add(...BRANCH_ACTIVE);
+        btn.setAttribute('aria-current', 'true');
+        if (subjectEl) subjectEl.textContent = btn.dataset.subject;
+        if (trailerEl) {
+          trailerEl.innerHTML = btn.dataset.parent
+            ? '<span class="text-cake-300">Shortcake-Parent:</span> ' + btn.dataset.parent
+            : '<span class="text-neutral-600"># trunk — no Shortcake-Parent</span>';
+        }
+      });
     });
   </script>
 </body>
