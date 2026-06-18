@@ -1,5 +1,5 @@
 ---
-release type: minor
+release type: major
 ---
 
 Initial release of Shortcake! 🍰
