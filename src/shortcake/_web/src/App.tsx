@@ -10,6 +10,7 @@ import { getFiletypeFromFileName, getSingularPatch, setLanguageOverride } from '
 import { preloadDiffHTML } from '@pierre/diffs/ssr';
 import DiffsWorker from '@pierre/diffs/worker/worker.js?worker';
 import type { FileTreeRowDecoration, GitStatusEntry } from '@pierre/trees';
+import { prepareFileTreeInput } from '@pierre/trees';
 import { FileTree as PierreFileTree, useFileTree } from '@pierre/trees/react';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Popover } from '@base-ui-components/react/popover';
@@ -234,9 +235,12 @@ function parsePatchStatus(patch: string): GitStatusEntry['status'] {
   return 'modified';
 }
 
+function patchFilePath(patch: string, index: number): string {
+  return patch.match(/^diff --git a\/.+ b\/(.+)$/m)?.[1] ?? `file-${index}`;
+}
+
 function parseFileInfo(patch: string, index: number): FileInfo {
-  const headerMatch = patch.match(/^diff --git a\/.+ b\/(.+)$/m);
-  const path = headerMatch?.[1] ?? `file-${index}`;
+  const path = patchFilePath(patch, index);
   const name = path.split('/').pop() ?? path;
 
   let additions = 0;
@@ -254,6 +258,20 @@ function parseFileInfo(patch: string, index: number): FileInfo {
   }
 
   return { path, name, additions, deletions, status: parsePatchStatus(patch), patchIndex: index };
+}
+
+// Order the per-file patches to match the sidebar file tree (folders first,
+// natural sort) so the diff list and the tree stay in sync. We reuse the tree
+// library's own prepare step so the ordering is guaranteed identical.
+function orderPatchesForTree(patches: string[]): string[] {
+  if (patches.length <= 1) return patches;
+  const treeRank = new Map(
+    prepareFileTreeInput(patches.map(patchFilePath)).paths.map((path, rank) => [path, rank]),
+  );
+  return patches
+    .map((patch, index) => ({ patch, index, rank: treeRank.get(patchFilePath(patch, index)) ?? index }))
+    .sort((a, b) => a.rank - b.rank || a.index - b.index)
+    .map((entry) => entry.patch);
 }
 
 function buildChangedFilesTreeUnsafeCSS(): string {
@@ -1960,7 +1978,7 @@ export default function App() {
   const activePatch = selection?.type === 'working' ? workingPatch : diff?.patch;
 
   const diffPatches = useMemo(
-    () => splitPatchIntoFiles(activePatch ?? ''),
+    () => orderPatchesForTree(splitPatchIntoFiles(activePatch ?? '')),
     [activePatch],
   );
 
