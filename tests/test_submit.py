@@ -9,7 +9,9 @@ from typer.testing import CliRunner
 
 from shortcake._github import GitHubClient, PRInfo
 from shortcake._pr_stack import (
+    SHORTCAKE_URL,
     STACK_END_MARKER,
+    STACK_HEADING,
     STACK_START_MARKER,
     _build_stack_section,
     _parse_all_prs_from_body,
@@ -68,6 +70,9 @@ def test_build_stack_section() -> None:
     assert "**#2** (`branch_b`) <-- this PR" in section
     assert "#1 (`branch_a`)" in section
     assert "#3 (`branch_c`)" in section
+    # The heading carries a 🍰 link back to the project.
+    assert STACK_HEADING in section
+    assert SHORTCAKE_URL in section
 
 
 def test_build_stack_section_missing_pr() -> None:
