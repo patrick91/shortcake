@@ -13,6 +13,10 @@ from shortcake.commands.restack import _get_stack_in_order
 STACK_START_MARKER = "<!-- shortcake:start -->"
 STACK_END_MARKER = "<!-- shortcake:end -->"
 
+# Stack section heading, with a 🍰 link back to the project
+SHORTCAKE_URL = "https://shortcake.patrick.wtf"
+STACK_HEADING = f"## Stack [🍰]({SHORTCAKE_URL})"
+
 # Regex patterns for parsing stack sections
 # Matches: - #42 (merged) (`branch-name`)
 _MERGED_PR_PATTERN = re.compile(r"-\s*#(\d+)\s*\(merged\)\s*\(`([^`]+)`\)")
@@ -93,7 +97,7 @@ def _build_stack_section(
     if merged_pr_numbers is None:
         merged_pr_numbers = {}
 
-    lines = [STACK_START_MARKER, "## Stack", ""]
+    lines = [STACK_START_MARKER, STACK_HEADING, ""]
 
     # Show stack in reverse order (top to bottom) for readability
     for branch in reversed(stack_branches):

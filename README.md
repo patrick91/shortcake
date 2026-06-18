@@ -1,8 +1,8 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="website/static/logo-dark.svg">
-  <img src="website/static/logo.svg" alt="Shortcake" width="320">
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/patrick91/shortcake/main/website/static/logo-dark.svg">
+  <img src="https://raw.githubusercontent.com/patrick91/shortcake/main/website/static/logo.svg" alt="Shortcake" width="320">
 </picture>
 
 ### Turn big changes into pull requests reviewers can follow.
@@ -178,11 +178,11 @@ uv run --group linting ruff format --check src/ tests/
 uv run --group typing ty check src/
 ```
 
-See [`CLAUDE.md`](CLAUDE.md) for the project layout and conventions.
+See [`CLAUDE.md`](https://github.com/patrick91/shortcake/blob/main/CLAUDE.md) for the project layout and conventions.
 
 ## License
 
-[MIT](LICENSE) © [Patrick Arminio](https://github.com/patrick91). If Shortcake is useful to
+[MIT](https://github.com/patrick91/shortcake/blob/main/LICENSE) © [Patrick Arminio](https://github.com/patrick91). If Shortcake is useful to
 you, consider [sponsoring](https://github.com/sponsors/patrick91). 🍰
 </content>
 </invoke>
