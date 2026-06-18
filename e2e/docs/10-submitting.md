@@ -208,6 +208,8 @@ When submitting a stack, each PR description is automatically updated with a sta
 - #45 (`feature-c`)
 - **#44** (`feature-b`) <-- this PR
 - #43 (`feature-a`)
+
+🍰 Stacked with [shortcake](https://shortcake.patrick.wtf)
 <!-- shortcake:end -->
 
 [Your original PR description]
@@ -217,6 +219,7 @@ The visualization shows:
 - All PRs in the stack
 - Which PR you're currently viewing (marked with `**bold**`)
 - The parent-child relationships
+- A footer linking back to [shortcake](https://shortcake.patrick.wtf)
 
 ## Restacking Before Submit
 
