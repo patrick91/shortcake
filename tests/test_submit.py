@@ -11,7 +11,7 @@ from shortcake._github import GitHubClient, PRInfo
 from shortcake._pr_stack import (
     SHORTCAKE_URL,
     STACK_END_MARKER,
-    STACK_FOOTER,
+    STACK_HEADING,
     STACK_START_MARKER,
     _build_stack_section,
     _parse_all_prs_from_body,
@@ -70,10 +70,9 @@ def test_build_stack_section() -> None:
     assert "**#2** (`branch_b`) <-- this PR" in section
     assert "#1 (`branch_a`)" in section
     assert "#3 (`branch_c`)" in section
-    # The footer links back to the project and sits just before the end marker.
-    assert STACK_FOOTER in section
+    # The heading carries a 🍰 link back to the project.
+    assert STACK_HEADING in section
     assert SHORTCAKE_URL in section
-    assert section.endswith(f"\n{STACK_FOOTER}\n{STACK_END_MARKER}")
 
 
 def test_build_stack_section_missing_pr() -> None:
