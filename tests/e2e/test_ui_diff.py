@@ -295,8 +295,10 @@ def test_marking_viewed_preserves_diff_scroll_anchor(page: Page, ui_url: str):
           const scroller = document.querySelector('.diff-content');
           const section = scroller?.querySelector('[data-file-path="a_middle.py"]');
           if (!scroller || !section) return null;
+          const sectionTop = section.getBoundingClientRect().top;
+          const scrollerTop = scroller.getBoundingClientRect().top;
           return {
-            offset: section.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
+            offset: sectionTop - scrollerTop,
             scrollTop: scroller.scrollTop,
           };
         }
@@ -316,8 +318,10 @@ def test_marking_viewed_preserves_diff_scroll_anchor(page: Page, ui_url: str):
           const scroller = document.querySelector('.diff-content');
           const section = scroller?.querySelector('[data-file-path="a_middle.py"]');
           if (!scroller || !section) return null;
+          const sectionTop = section.getBoundingClientRect().top;
+          const scrollerTop = scroller.getBoundingClientRect().top;
           return {
-            offset: section.getBoundingClientRect().top - scroller.getBoundingClientRect().top,
+            offset: sectionTop - scrollerTop,
             scrollTop: scroller.scrollTop,
           };
         }
