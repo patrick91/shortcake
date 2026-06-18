@@ -188,9 +188,9 @@ def test_file_click_scrolls_to_clicked_file_section(page: Page, ui_url: str):
     """Clicking a file in a multi-file diff scrolls to that file's section."""
     mock_patch = "".join(
         [
-            _new_file_patch("z_first.py", "FIRST"),
-            _new_file_patch("a_middle.py", "MIDDLE"),
-            _new_file_patch("m_last.py", "LAST"),
+            _new_file_patch("a_first.py", "FIRST"),
+            _new_file_patch("b_middle.py", "MIDDLE"),
+            _new_file_patch("c_last.py", "LAST"),
         ]
     )
     page.route(
@@ -210,14 +210,14 @@ def test_file_click_scrolls_to_clicked_file_section(page: Page, ui_url: str):
     page.evaluate("document.querySelector('.diff-content').scrollTop = 0")
     page.locator(
         "aside file-tree-container "
-        '[data-type="item"][data-item-type="file"][data-item-path="a_middle.py"]'
+        '[data-type="item"][data-item-type="file"][data-item-path="b_middle.py"]'
     ).click()
 
     page.wait_for_function(
         """
         () => {
           const scroller = document.querySelector('.diff-content');
-          const target = scroller?.querySelector('[data-file-path="a_middle.py"]');
+          const target = scroller?.querySelector('[data-file-path="b_middle.py"]');
           if (!scroller || !target) return false;
           const scrollerRect = scroller.getBoundingClientRect();
           const targetRect = target.getBoundingClientRect();
@@ -231,7 +231,7 @@ def test_file_click_scrolls_to_clicked_file_section(page: Page, ui_url: str):
         """
         () => {
           const scroller = document.querySelector('.diff-content');
-          const target = scroller.querySelector('[data-file-path="a_middle.py"]');
+          const target = scroller.querySelector('[data-file-path="b_middle.py"]');
           if (!target) return null;
           const scrollerRect = scroller.getBoundingClientRect();
           const targetRect = target.getBoundingClientRect();
@@ -251,9 +251,9 @@ def test_marking_viewed_preserves_diff_scroll_anchor(page: Page, ui_url: str):
     """Collapsing a viewed file keeps its compact header anchored."""
     mock_patch = "".join(
         [
-            _new_file_patch("z_first.py", "FIRST"),
-            _new_file_patch("a_middle.py", "MIDDLE"),
-            _new_file_patch("m_last.py", "LAST"),
+            _new_file_patch("a_first.py", "FIRST"),
+            _new_file_patch("b_middle.py", "MIDDLE"),
+            _new_file_patch("c_last.py", "LAST"),
         ]
     )
     page.route(
@@ -272,13 +272,13 @@ def test_marking_viewed_preserves_diff_scroll_anchor(page: Page, ui_url: str):
 
     page.locator(
         "aside file-tree-container "
-        '[data-type="item"][data-item-type="file"][data-item-path="a_middle.py"]'
+        '[data-type="item"][data-item-type="file"][data-item-path="b_middle.py"]'
     ).click()
     page.wait_for_function(
         """
         () => {
           const scroller = document.querySelector('.diff-content');
-          const target = scroller?.querySelector('[data-file-path="a_middle.py"]');
+          const target = scroller?.querySelector('[data-file-path="b_middle.py"]');
           if (!scroller || !target) return false;
           const scrollerRect = scroller.getBoundingClientRect();
           const targetRect = target.getBoundingClientRect();
@@ -293,7 +293,7 @@ def test_marking_viewed_preserves_diff_scroll_anchor(page: Page, ui_url: str):
         """
         () => {
           const scroller = document.querySelector('.diff-content');
-          const section = scroller?.querySelector('[data-file-path="a_middle.py"]');
+          const section = scroller?.querySelector('[data-file-path="b_middle.py"]');
           if (!scroller || !section) return null;
           const sectionTop = section.getBoundingClientRect().top;
           const scrollerTop = scroller.getBoundingClientRect().top;
@@ -307,16 +307,16 @@ def test_marking_viewed_preserves_diff_scroll_anchor(page: Page, ui_url: str):
     assert before is not None
     assert before["offset"] < -100
 
-    page.locator('[data-file-path="a_middle.py"] diffs-container').get_by_role(
+    page.locator('[data-file-path="b_middle.py"] diffs-container').get_by_role(
         "button", name="Viewed"
     ).click()
 
-    page.wait_for_selector('[data-file-path="a_middle.py"] >> text=Viewed')
+    page.wait_for_selector('[data-file-path="b_middle.py"] >> text=Viewed')
     after = page.evaluate(
         """
         () => {
           const scroller = document.querySelector('.diff-content');
-          const section = scroller?.querySelector('[data-file-path="a_middle.py"]');
+          const section = scroller?.querySelector('[data-file-path="b_middle.py"]');
           if (!scroller || !section) return null;
           const sectionTop = section.getBoundingClientRect().top;
           const scrollerTop = scroller.getBoundingClientRect().top;
