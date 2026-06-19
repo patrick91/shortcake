@@ -17,6 +17,8 @@
   --color-accent: #34d399;
   --color-accent-bg: rgba(52, 211, 153, 0.08);
   --color-danger: #f87171;
+  --color-warning: #fbbf24;
+  --color-warning-bg: rgba(251, 191, 36, 0.08);
   --color-stat-add: #4ade80;
   --color-stat-del: #f87171;
 
@@ -138,6 +140,8 @@ body::before {
   --color-accent: #059669;
   --color-accent-bg: rgba(5, 150, 105, 0.08);
   --color-danger: #dc2626;
+  --color-warning: #b45309;
+  --color-warning-bg: rgba(180, 83, 9, 0.07);
   --color-stat-add: #16a34a;
   --color-stat-del: #dc2626;
 }
