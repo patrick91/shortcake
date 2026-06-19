@@ -1075,13 +1075,13 @@ function LargeFilePlaceholder({
           </button>
         )}
       </div>
-      <div className="flex flex-col items-center justify-center py-8 gap-2 mx-3 my-3 rounded-md border border-yellow-500/30 bg-yellow-500/[0.06]">
-        <p className="text-[0.8rem] text-yellow-200/80">
+      <div className="flex flex-col items-center justify-center py-8 gap-2 mx-3 my-3 rounded-md border border-warning/30 bg-warning-bg">
+        <p className="text-[0.8rem] text-warning">
           Large file — <span className="font-mono text-[0.72rem]">{fileInfo.additions + fileInfo.deletions}</span> lines changed
         </p>
         <button
           type="button"
-          className="appearance-none border border-yellow-500/40 bg-yellow-500/10 text-yellow-200/90 text-[0.75rem] font-mono px-3 py-1 rounded cursor-pointer hover:bg-yellow-500/20 hover:text-yellow-100 hover:border-yellow-500/60 transition-colors duration-100"
+          className="appearance-none border border-warning/40 bg-warning/10 text-warning text-[0.75rem] font-mono px-3 py-1 rounded cursor-pointer hover:bg-warning/15 hover:border-warning/60 transition-colors duration-100"
           onClick={onShow}
         >
           Show changes
