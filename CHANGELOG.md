@@ -1,6 +1,17 @@
 CHANGELOG
 =========
 
+1.0.3 - 2026-06-19
+------------------
+
+**`sc ui`**: the "Large file" diff placeholder (the "Show changes" prompt for
+big files) used fixed dark-theme yellows, so in light mode the pale text and
+button sat on a pale tint with almost no contrast. The diff pane now uses
+theme-aware `warning` color tokens that adapt to both light and dark themes,
+so the placeholder and its button stay legible either way.
+
+This release was contributed by [@patrick91](https://github.com/patrick91) in [#121](https://github.com/patrick91/shortcake/pull/121)
+
 1.0.2 - 2026-06-18
 ------------------
 
