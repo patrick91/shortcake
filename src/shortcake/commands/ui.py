@@ -48,6 +48,11 @@ from shortcake.commands.move_lines import (
 )
 
 
+UI_STATE_VERSION = 1
+UI_STATE_FILE = "ui-state.json"
+DIFF_STYLES = {"unified", "split"}
+
+
 @dataclass(frozen=True)
 class StackDiffBranch:
     name: str
@@ -58,6 +63,107 @@ class StackDiffBranch:
     commit: str
     commit_short: str
     commit_subject: str
+
+
+def _empty_persisted_ui_state() -> dict[str, Any]:
+    return {
+        "version": UI_STATE_VERSION,
+        "diffStyle": "unified",
+        "viewedFiles": {},
+    }
+
+
+def _get_shortcake_state_dir(repo: Repo) -> Path:
+    state_dir = Path(repo.path) / "shortcake"
+    state_dir.mkdir(exist_ok=True)
+    return state_dir
+
+
+def _get_persisted_ui_state_path(repo: Repo) -> Path:
+    return _get_shortcake_state_dir(repo) / UI_STATE_FILE
+
+
+def _normalize_persisted_ui_state(data: Any) -> dict[str, Any]:
+    if not isinstance(data, dict) or data.get("version") != UI_STATE_VERSION:
+        return _empty_persisted_ui_state()
+
+    diff_style = data.get("diffStyle")
+    if diff_style not in DIFF_STYLES:
+        diff_style = "unified"
+
+    viewed_files: dict[str, dict[str, str]] = {}
+    raw_viewed_files = data.get("viewedFiles", {})
+    if isinstance(raw_viewed_files, dict):
+        for raw_scope, raw_files in raw_viewed_files.items():
+            if not isinstance(raw_scope, str) or not isinstance(raw_files, dict):
+                continue
+            files = {
+                path: patch_key
+                for path, patch_key in raw_files.items()
+                if isinstance(path, str) and isinstance(patch_key, str)
+            }
+            if files:
+                viewed_files[raw_scope] = files
+
+    return {
+        "version": UI_STATE_VERSION,
+        "diffStyle": diff_style,
+        "viewedFiles": viewed_files,
+    }
+
+
+def _load_persisted_ui_state(repo: Repo) -> dict[str, Any]:
+    state_path = _get_persisted_ui_state_path(repo)
+    if not state_path.exists():
+        return _empty_persisted_ui_state()
+
+    try:
+        with open(state_path) as f:
+            return _normalize_persisted_ui_state(json.load(f))
+    except (json.JSONDecodeError, OSError, TypeError):
+        return _empty_persisted_ui_state()
+
+
+def _save_persisted_ui_state(repo: Repo, state: dict[str, Any]) -> None:
+    state_path = _get_persisted_ui_state_path(repo)
+    try:
+        with open(state_path, "w") as f:
+            json.dump(_normalize_persisted_ui_state(state), f, indent=2)
+    except OSError:
+        pass
+
+
+def _update_persisted_ui_state(repo: Repo, body: Any) -> dict[str, Any]:
+    if not isinstance(body, dict):
+        raise ValueError("JSON body must be an object")
+
+    state = _load_persisted_ui_state(repo)
+
+    if "diffStyle" in body:
+        diff_style = body["diffStyle"]
+        if diff_style not in DIFF_STYLES:
+            raise ValueError("diffStyle must be 'unified' or 'split'")
+        state["diffStyle"] = diff_style
+
+    if "viewedScope" in body or "viewedFiles" in body:
+        scope = body.get("viewedScope")
+        raw_files = body.get("viewedFiles")
+        if not isinstance(scope, str) or not isinstance(raw_files, dict):
+            raise ValueError("viewedScope and viewedFiles are required")
+
+        files = {
+            path: patch_key
+            for path, patch_key in raw_files.items()
+            if isinstance(path, str) and isinstance(patch_key, str)
+        }
+        viewed_files = state.setdefault("viewedFiles", {})
+        if files:
+            viewed_files[scope] = files
+        elif isinstance(viewed_files, dict) and scope in viewed_files:
+            del viewed_files[scope]
+
+    _save_persisted_ui_state(repo, state)
+    return _load_persisted_ui_state(repo)
 
 
 def _tracked_branch_parents(repo: Repo) -> dict[str, str]:
@@ -398,6 +504,14 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
                     _write_json(self, 500, {"error": str(exc)})
                 return
 
+            if parsed.path == "/api/review-state":
+                try:
+                    repo = _open_repo()
+                    _write_json(self, 200, _load_persisted_ui_state(repo))
+                except Exception as exc:
+                    _write_json(self, 500, {"error": str(exc)})
+                return
+
             if parsed.path == "/api/github-info":
                 try:
                     repo = _open_repo()
@@ -469,6 +583,24 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
+
+            if parsed.path == "/api/review-state":
+                content_length = int(self.headers.get("Content-Length", 0))
+                raw = self.rfile.read(content_length)
+                try:
+                    body = json.loads(raw)
+                except (json.JSONDecodeError, ValueError):
+                    _write_json(self, 400, {"error": "Invalid JSON body"})
+                    return
+
+                try:
+                    repo = _open_repo()
+                    _write_json(self, 200, _update_persisted_ui_state(repo, body))
+                except ValueError as exc:
+                    _write_json(self, 400, {"error": str(exc)})
+                except Exception as exc:
+                    _write_json(self, 500, {"error": str(exc)})
+                return
 
             if parsed.path == "/api/move-hunks":
                 content_length = int(self.headers.get("Content-Length", 0))

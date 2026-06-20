@@ -332,6 +332,80 @@ def test_marking_viewed_preserves_diff_scroll_anchor(page: Page, ui_url: str):
     assert after["scrollTop"] < before["scrollTop"]
 
 
+def test_marking_viewed_persists_after_reload(page: Page, ui_url: str):
+    """Viewed files are restored from persisted review state after reloading."""
+    path = "persisted_viewed.py"
+    mock_patch = _new_file_patch(path, "PERSISTED")
+
+    page.route(
+        re.compile(r"/api/diff\?"),
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {"branch": "branch_b", "parent": "branch_a", "patch": mock_patch}
+            ),
+        ),
+    )
+    page.goto(ui_url)
+    select_diff_option(page, "branch_b")
+    page.wait_for_selector(f'[data-file-path="{path}"] diffs-container', timeout=10_000)
+
+    page.locator(f'[data-file-path="{path}"] diffs-container').get_by_role(
+        "button", name="Viewed"
+    ).click()
+    expect(page.locator(f'[data-file-path="{path}"] diffs-container')).to_have_count(0)
+
+    page.reload()
+    page.wait_for_selector(f'[data-file-path="{path}"]', timeout=10_000)
+
+    expect(page.locator(f'[data-file-path="{path}"] diffs-container')).to_have_count(0)
+    expect(page.locator(f'[data-file-path="{path}"]')).to_contain_text("Viewed")
+
+
+def test_marking_viewed_resets_when_file_patch_changes(page: Page, ui_url: str):
+    """A stored viewed mark is ignored when the file's patch changes."""
+    path = "changed_viewed.py"
+    current_patch = {"value": _new_file_patch(path, "BEFORE")}
+
+    page.route(
+        re.compile(r"/api/diff\?"),
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps(
+                {
+                    "branch": "branch_b",
+                    "parent": "branch_a",
+                    "patch": current_patch["value"],
+                }
+            ),
+        ),
+    )
+    page.goto(ui_url)
+    select_diff_option(page, "branch_b")
+    page.wait_for_selector(f'[data-file-path="{path}"] diffs-container', timeout=10_000)
+
+    page.locator(f'[data-file-path="{path}"] diffs-container').get_by_role(
+        "button", name="Viewed"
+    ).click()
+    expect(page.locator(f'[data-file-path="{path}"] diffs-container')).to_have_count(0)
+
+    current_patch["value"] = _new_file_patch(path, "AFTER")
+    page.reload()
+    page.wait_for_selector(f'[data-file-path="{path}"] diffs-container', timeout=10_000)
+
+    expect(page.locator(f'[data-file-path="{path}"] diffs-container')).to_have_count(1)
+    expect(page.locator(f'[data-file-path="{path}"]')).to_contain_text("AFTER line 1")
+
+    current_patch["value"] = _new_file_patch(path, "BEFORE")
+    page.reload()
+    page.wait_for_selector(f'[data-file-path="{path}"] diffs-container', timeout=10_000)
+
+    expect(page.locator(f'[data-file-path="{path}"] diffs-container')).to_have_count(1)
+    expect(page.locator(f'[data-file-path="{path}"]')).to_contain_text("BEFORE line 1")
+
+
 def test_unified_split_toggle(ui_page: Page):
     """Switching between unified and split diff layouts."""
     split_btn = ui_page.get_by_role("button", name="Split")
@@ -342,6 +416,22 @@ def test_unified_split_toggle(ui_page: Page):
     expect(split_btn).to_have_class(re.compile(r"bg-surface-active"))
 
     # Switch back to unified
+    unified_btn.click()
+    expect(unified_btn).to_have_class(re.compile(r"bg-surface-active"))
+
+
+def test_diff_layout_persists_after_reload(ui_page: Page):
+    """The selected diff layout is restored after reloading the UI."""
+    split_btn = ui_page.get_by_role("button", name="Split")
+    unified_btn = ui_page.get_by_role("button", name="Unified")
+
+    split_btn.click()
+    expect(split_btn).to_have_class(re.compile(r"bg-surface-active"))
+
+    ui_page.reload()
+    ui_page.wait_for_selector(".diff-content", timeout=10_000)
+    expect(split_btn).to_have_class(re.compile(r"bg-surface-active"))
+
     unified_btn.click()
     expect(unified_btn).to_have_class(re.compile(r"bg-surface-active"))
 
