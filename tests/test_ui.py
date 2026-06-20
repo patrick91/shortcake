@@ -22,11 +22,13 @@ from shortcake.commands.ui import (
     _git_diff_patch,
     _git_working_diff,
     _git_working_diff_key,
+    _load_persisted_ui_state,
     _resolve_frontend_dir,
     _resolve_js_runtime,
     _run_dev_server,
     _run_install,
     _runtime_candidates,
+    _update_persisted_ui_state,
     _start_api_server,
     _write_json,
     ui,
@@ -355,6 +357,78 @@ def test_build_ui_state_payload_includes_stack_and_working_key(
     assert len(payload["workingDiffKey"]) == 64
 
 
+def test_persisted_ui_state_defaults(repo_with_stack: Repo) -> None:
+    """Persistent UI review state defaults to unified with no viewed files."""
+    payload = _load_persisted_ui_state(repo_with_stack)
+
+    assert payload == {
+        "version": 1,
+        "diffStyle": "unified",
+        "viewedFiles": {},
+    }
+
+
+def test_update_persisted_ui_state_writes_git_shortcake_file(
+    repo_with_stack: Repo,
+) -> None:
+    """Persistent UI review state is stored under .git/shortcake."""
+    payload = _update_persisted_ui_state(
+        repo_with_stack,
+        {
+            "diffStyle": "split",
+            "viewedScope": "branch:branch_b",
+            "viewedFiles": {"b.txt": "patch-key"},
+        },
+    )
+
+    assert payload["diffStyle"] == "split"
+    assert payload["viewedFiles"] == {"branch:branch_b": {"b.txt": "patch-key"}}
+
+    state_path = Path(repo_with_stack.path) / "shortcake" / "ui-state.json"
+    assert state_path.exists()
+    assert _load_persisted_ui_state(repo_with_stack) == payload
+
+
+def test_update_persisted_ui_state_removes_empty_viewed_scope(
+    repo_with_stack: Repo,
+) -> None:
+    """Posting an empty viewed scope prunes stale viewed entries."""
+    _update_persisted_ui_state(
+        repo_with_stack,
+        {"viewedScope": "branch:branch_b", "viewedFiles": {"b.txt": "old"}},
+    )
+
+    payload = _update_persisted_ui_state(
+        repo_with_stack,
+        {"viewedScope": "branch:branch_b", "viewedFiles": {}},
+    )
+
+    assert payload["viewedFiles"] == {}
+
+
+def test_persisted_ui_state_invalid_json_returns_defaults(
+    repo_with_stack: Repo,
+) -> None:
+    """Invalid persisted UI state is ignored."""
+    state_dir = Path(repo_with_stack.path) / "shortcake"
+    state_dir.mkdir(exist_ok=True)
+    (state_dir / "ui-state.json").write_text("not json")
+
+    assert _load_persisted_ui_state(repo_with_stack) == {
+        "version": 1,
+        "diffStyle": "unified",
+        "viewedFiles": {},
+    }
+
+
+def test_update_persisted_ui_state_rejects_bad_diff_style(
+    repo_with_stack: Repo,
+) -> None:
+    """Only supported diff layout values are persisted."""
+    with pytest.raises(ValueError, match="diffStyle"):
+        _update_persisted_ui_state(repo_with_stack, {"diffStyle": "sideways"})
+
+
 # --- HTTP request handler ---
 
 
@@ -473,6 +547,14 @@ def test_handler_ui_state_error(temp_repo: Repo) -> None:
     assert "state failed" in fake.response_json()["error"]
 
 
+def test_handler_review_state_get(repo_with_stack: Repo) -> None:
+    fake = _make_handler(repo_with_stack, "/api/review-state")
+    assert fake._status == 200
+    data = fake.response_json()
+    assert data["diffStyle"] == "unified"
+    assert data["viewedFiles"] == {}
+
+
 def test_handler_working_diff_error(temp_repo: Repo) -> None:
     """Working diff endpoint returns 500 on error."""
     with patch(
@@ -516,6 +598,41 @@ def _make_post_handler(
         fake.headers = {"Content-Length": "0"}
     handler_cls.do_POST(fake)  # type: ignore[arg-type]
     return fake
+
+
+def test_post_review_state_updates_layout_and_viewed_files(
+    repo_with_stack: Repo,
+) -> None:
+    fake = _make_post_handler(
+        repo_with_stack,
+        "/api/review-state",
+        {
+            "diffStyle": "split",
+            "viewedScope": "branch:branch_b",
+            "viewedFiles": {"b.txt": "patch-key"},
+        },
+    )
+
+    assert fake._status == 200
+    data = fake.response_json()
+    assert data["diffStyle"] == "split"
+    assert data["viewedFiles"] == {"branch:branch_b": {"b.txt": "patch-key"}}
+
+
+def test_post_review_state_invalid_json(temp_repo: Repo) -> None:
+    fake = _make_post_handler(temp_repo, "/api/review-state", "not json{{")
+    assert fake._status == 400
+    assert "Invalid JSON" in fake.response_json()["error"]
+
+
+def test_post_review_state_invalid_diff_style(temp_repo: Repo) -> None:
+    fake = _make_post_handler(
+        temp_repo,
+        "/api/review-state",
+        {"diffStyle": "sideways"},
+    )
+    assert fake._status == 400
+    assert "diffStyle" in fake.response_json()["error"]
 
 
 def test_post_move_hunks_invalid_json(temp_repo: Repo) -> None:
