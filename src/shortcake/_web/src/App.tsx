@@ -99,6 +99,18 @@ type UIStateResponse = StackResponse & {
   workingDiffKey: string;
 };
 
+type PersistedUIStateResponse = {
+  version: number;
+  diffStyle: DiffStyle;
+  viewedFiles: Record<string, Record<string, string>>;
+};
+
+type PersistedUIStateUpdate = {
+  diffStyle?: DiffStyle;
+  viewedScope?: string;
+  viewedFiles?: Record<string, string>;
+};
+
 type GitHubBranchInfo = {
   prNumber: number | null;
   prUrl: string | null;
@@ -129,6 +141,13 @@ function selectionToHash(sel: DiffSelection): string {
   return `#/branch/${encodeURIComponent(sel.name)}`;
 }
 
+function diffSelectionsEqual(a: DiffSelection | null, b: DiffSelection | null): boolean {
+  if (a === b) return true;
+  if (!a || !b || a.type !== b.type) return false;
+  if (a.type === 'working') return true;
+  return b.type === 'branch' && a.name === b.name;
+}
+
 function stackPollKey(stack: StackResponse): string {
   return JSON.stringify({
     currentBranch: stack.currentBranch,
@@ -151,6 +170,67 @@ const STACK_CARD_INDENT_BASE = 4;
 const STACK_CARD_INDENT_STEP = 10;
 const STACK_GUIDE_OFFSET = 6;
 const STACK_GUIDE_STEP = 10;
+
+function hashString(value: string): string {
+  let h1 = 0xdeadbeef ^ value.length;
+  let h2 = 0x41c6ce57 ^ value.length;
+
+  for (let i = 0; i < value.length; i++) {
+    const ch = value.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+
+  return `${(h2 >>> 0).toString(36)}${(h1 >>> 0).toString(36)}`;
+}
+
+function viewedFilesScopeKey(selection: DiffSelection | null): string | null {
+  if (!selection) return null;
+
+  if (selection.type === 'working') return 'working';
+  return `branch:${selection.name}`;
+}
+
+function loadPersistedViewedFileSet(
+  persistedFiles: Record<string, string> | undefined,
+  filePatchKeys: Map<string, string>,
+): Set<string> {
+  const viewed = new Set<string>();
+  for (const [path, patchKey] of filePatchKeys) {
+    if (persistedFiles?.[path] === patchKey) {
+      viewed.add(path);
+    }
+  }
+  return viewed;
+}
+
+function buildPersistedViewedFileRecord(
+  viewedFiles: Set<string>,
+  filePatchKeys: Map<string, string>,
+): Record<string, string> {
+  const files: Record<string, string> = {};
+
+  for (const path of viewedFiles) {
+    const patchKey = filePatchKeys.get(path);
+    if (patchKey) files[path] = patchKey;
+  }
+
+  return files;
+}
+
+function viewedFileRecordsEqual(
+  a: Record<string, string> | undefined,
+  b: Record<string, string>,
+): boolean {
+  const aEntries = Object.entries(a ?? {});
+  const bEntries = Object.entries(b);
+
+  if (aEntries.length !== bEntries.length) return false;
+  return bEntries.every(([path, patchKey]) => a?.[path] === patchKey);
+}
 
 function buildDiffUnsafeCSS(resolvedTheme: 'dark' | 'light'): string {
   const headerBg = resolvedTheme === 'light' ? '#ececed' : '#16161c';
@@ -226,6 +306,45 @@ async function fetchJSON<T>(path: string): Promise<T> {
   }
 
   return payload as T;
+}
+
+async function postJSON<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const payload: unknown = await response.json();
+
+  if (!response.ok) {
+    const message =
+      typeof payload === 'object' &&
+      payload !== null &&
+      'error' in payload &&
+      typeof payload.error === 'string'
+        ? payload.error
+        : `Request failed (${response.status})`;
+    throw new Error(message);
+  }
+
+  return payload as T;
+}
+
+async function postPersistedUIStateUpdate(
+  update: PersistedUIStateUpdate,
+): Promise<PersistedUIStateResponse | null> {
+  const body = JSON.stringify(update);
+  const path = '/api/review-state';
+
+  if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+    const queued = navigator.sendBeacon(
+      `${API_BASE}${path}`,
+      new Blob([body], { type: 'application/json' }),
+    );
+    if (queued) return null;
+  }
+
+  return postJSON<PersistedUIStateResponse>(path, update);
 }
 
 function parsePatchStatus(patch: string): GitStatusEntry['status'] {
@@ -1784,6 +1903,8 @@ export default function App() {
   const [isDiffLoading, setIsDiffLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [diffStyle, setDiffStyle] = useState<DiffStyle>('unified');
+  const [isPersistedUIStateLoaded, setIsPersistedUIStateLoaded] = useState(false);
+  const [persistedViewedFiles, setPersistedViewedFiles] = useState<Record<string, Record<string, string>>>({});
   const [fileFilter, setFileFilter] = useState('');
   const [activeFileIndex, setActiveFileIndex] = useState<number | null>(null);
   const diffContentRef = useRef<HTMLDivElement>(null);
@@ -1806,7 +1927,7 @@ export default function App() {
   const isReviewing = reviewModelStatus.size > 0 && [...reviewModelStatus.values()].some((s) => s === 'pending');
 
   const setSelection = useCallback((sel: DiffSelection | null) => {
-    setSelectionRaw(sel);
+    setSelectionRaw((prev) => (diffSelectionsEqual(prev, sel) ? prev : sel));
     if (sel) {
       const newHash = selectionToHash(sel);
       if (window.location.hash !== newHash) {
@@ -1818,7 +1939,7 @@ export default function App() {
   useEffect(() => {
     const onHashChange = () => {
       const sel = selectionFromHash(window.location.hash);
-      if (sel) setSelectionRaw(sel);
+      if (sel) setSelectionRaw((prev) => (diffSelectionsEqual(prev, sel) ? prev : sel));
     };
     window.addEventListener('hashchange', onHashChange);
     window.addEventListener('popstate', onHashChange);
@@ -1876,6 +1997,44 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('shortcake-diff-theme-light', diffThemeLight);
   }, [diffThemeLight]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadPersistedUIState = async () => {
+      try {
+        const data = await fetchJSON<PersistedUIStateResponse>('/api/review-state');
+        if (cancelled) return;
+
+        if (data.diffStyle === 'unified' || data.diffStyle === 'split') {
+          setDiffStyle(data.diffStyle);
+        }
+        setPersistedViewedFiles(data.viewedFiles ?? {});
+      } catch {
+        // Persistence is optional; keep the in-memory defaults if it fails.
+      } finally {
+        if (!cancelled) setIsPersistedUIStateLoaded(true);
+      }
+    };
+
+    void loadPersistedUIState();
+    return () => { cancelled = true; };
+  }, []);
+
+  const persistUIStateUpdate = useCallback((update: PersistedUIStateUpdate) => {
+    void postPersistedUIStateUpdate(update)
+      .then((data) => {
+        if (data) setPersistedViewedFiles(data.viewedFiles ?? {});
+      })
+      .catch(() => {
+        // State persistence is a convenience; do not interrupt review on write errors.
+      });
+  }, []);
+
+  const setAndPersistDiffStyle = useCallback((style: DiffStyle) => {
+    setDiffStyle(style);
+    persistUIStateUpdate({ diffStyle: style });
+  }, [persistUIStateUpdate]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1968,14 +2127,17 @@ export default function App() {
     setComments([]);
     setActiveInput(null);
     setEditingComment(null);
-    setViewedFiles(new Set());
     setIsReviewDialogOpen(false);
     setReviewModelStatus(new Map());
     setReviewSummaries(new Map());
     setReviewFixPrompt(null);
   }, [selection]);
 
-  const activePatch = selection?.type === 'working' ? workingPatch : diff?.patch;
+  const activePatch = selection?.type === 'working'
+    ? workingPatch
+    : selection?.type === 'branch' && diff?.branch === selection.name
+      ? diff.patch
+      : undefined;
 
   const diffPatches = useMemo(
     () => orderPatchesForTree(splitPatchIntoFiles(activePatch ?? '')),
@@ -1985,6 +2147,78 @@ export default function App() {
   const fileInfos = useMemo(
     () => diffPatches.map((patch, i) => parseFileInfo(patch, i)),
     [diffPatches],
+  );
+
+  const activeDiffVersion = useMemo(() => {
+    if (selection?.type === 'branch') {
+      const branch = stack?.branches.find((item) => item.name === selection.name);
+      return branch ? `${branch.name}:${branch.parent}:${branch.commit}` : null;
+    }
+    if (selection?.type === 'working') {
+      return `working:${hashString(activePatch ?? '')}`;
+    }
+    return null;
+  }, [activePatch, selection, stack]);
+
+  const filePatchKeys = useMemo(
+    () => activeDiffVersion == null
+      ? new Map<string, string>()
+      : new Map(fileInfos.map((info, index) => [info.path, hashString(`${activeDiffVersion}\n${diffPatches[index] ?? ''}`)])),
+    [activeDiffVersion, diffPatches, fileInfos],
+  );
+
+  const viewedScopeKey = useMemo(
+    () => viewedFilesScopeKey(selection),
+    [selection],
+  );
+
+  useLayoutEffect(() => {
+    if (!isPersistedUIStateLoaded) return;
+    if (!viewedScopeKey || filePatchKeys.size === 0) {
+      setViewedFiles(new Set());
+      return;
+    }
+
+    const persistedFiles = persistedViewedFiles[viewedScopeKey];
+    const restoredViewedFiles = loadPersistedViewedFileSet(persistedFiles, filePatchKeys);
+    const restoredFileRecord = buildPersistedViewedFileRecord(restoredViewedFiles, filePatchKeys);
+    setViewedFiles(restoredViewedFiles);
+    if (!viewedFileRecordsEqual(persistedFiles, restoredFileRecord)) {
+      setPersistedViewedFiles((prev) => {
+        const next = { ...prev };
+        if (Object.keys(restoredFileRecord).length > 0) {
+          next[viewedScopeKey] = restoredFileRecord;
+        } else {
+          delete next[viewedScopeKey];
+        }
+        return next;
+      });
+      persistUIStateUpdate({
+        viewedScope: viewedScopeKey,
+        viewedFiles: restoredFileRecord,
+      });
+    }
+  }, [filePatchKeys, isPersistedUIStateLoaded, persistedViewedFiles, persistUIStateUpdate, viewedScopeKey]);
+
+  const persistViewedFiles = useCallback(
+    (nextViewedFiles: Set<string>) => {
+      if (!viewedScopeKey || filePatchKeys.size === 0) return;
+      const viewedFileRecord = buildPersistedViewedFileRecord(nextViewedFiles, filePatchKeys);
+      setPersistedViewedFiles((prev) => {
+        const next = { ...prev };
+        if (Object.keys(viewedFileRecord).length > 0) {
+          next[viewedScopeKey] = viewedFileRecord;
+        } else {
+          delete next[viewedScopeKey];
+        }
+        return next;
+      });
+      persistUIStateUpdate({
+        viewedScope: viewedScopeKey,
+        viewedFiles: viewedFileRecord,
+      });
+    },
+    [filePatchKeys, persistUIStateUpdate, viewedScopeKey],
   );
 
   const commentsByFile = useMemo(() => {
@@ -2022,9 +2256,10 @@ export default function App() {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
       else next.add(path);
+      persistViewedFiles(next);
       return next;
     });
-  }, [captureViewedScrollAnchor, viewedFiles]);
+  }, [captureViewedScrollAnchor, persistViewedFiles, viewedFiles]);
 
   useLayoutEffect(() => {
     const anchor = viewedScrollAnchorRef.current;
@@ -2062,6 +2297,7 @@ export default function App() {
       setViewedFiles((prev) => {
         const next = new Set(prev);
         next.delete(info.path);
+        persistViewedFiles(next);
         return next;
       });
     }
@@ -2100,7 +2336,7 @@ export default function App() {
       timeoutId = window.setTimeout(cleanup, 600);
       fileScrollCleanupRef.current = cleanup;
     });
-  }, [alignFileInDiffPane, fileInfos, viewedFiles]);
+  }, [alignFileInDiffPane, fileInfos, persistViewedFiles, viewedFiles]);
 
   useEffect(() => {
     return () => {
@@ -2531,14 +2767,14 @@ export default function App() {
             >
               <button
                 className={`appearance-none border-none rounded-[6px] font-mono text-[0.7rem] tracking-[0.02em] px-2.5 py-1 cursor-pointer transition-[color,background] duration-[120ms] ease-in-out ${diffStyle === 'unified' ? 'text-text-primary bg-surface-active' : 'bg-transparent text-text-muted hover:text-text-secondary'}`}
-                onClick={() => setDiffStyle('unified')}
+                onClick={() => setAndPersistDiffStyle('unified')}
                 type="button"
               >
                 Unified
               </button>
               <button
                 className={`appearance-none border-none rounded-[6px] font-mono text-[0.7rem] tracking-[0.02em] px-2.5 py-1 cursor-pointer transition-[color,background] duration-[120ms] ease-in-out ${diffStyle === 'split' ? 'text-text-primary bg-surface-active' : 'bg-transparent text-text-muted hover:text-text-secondary'}`}
-                onClick={() => setDiffStyle('split')}
+                onClick={() => setAndPersistDiffStyle('split')}
                 type="button"
               >
                 Split
