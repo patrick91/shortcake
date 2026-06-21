@@ -9,7 +9,7 @@ import {
 import { getFiletypeFromFileName, getSingularPatch, setLanguageOverride } from '@pierre/diffs';
 import { preloadDiffHTML } from '@pierre/diffs/ssr';
 import DiffsWorker from '@pierre/diffs/worker/worker.js?worker';
-import type { FileTreeRowDecoration, GitStatusEntry } from '@pierre/trees';
+import type { FileTreeRowDecoration, FileTreeSortComparator, GitStatusEntry } from '@pierre/trees';
 import { prepareFileTreeInput } from '@pierre/trees';
 import { FileTree as PierreFileTree, useFileTree } from '@pierre/trees/react';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
@@ -95,6 +95,38 @@ type WorkingDiffResponse = {
   patch: string;
 };
 
+type RecapSource = {
+  kind: 'branch' | 'working';
+  branch?: string;
+  parent?: string;
+  head: string;
+  patchHash: string;
+};
+
+type RecapMeta = {
+  id: string;
+  title: string;
+  createdAt: string;
+  source: RecapSource;
+  files: FileInfo[];
+};
+
+type RecapResponse = RecapMeta & {
+  mdx: string;
+  patch: string;
+};
+
+type RecapAnnotation = {
+  line?: number;
+  startLine?: number;
+  endLine?: number;
+  side?: AnnotationSide;
+  text: string;
+  title?: string;
+  severity?: string;
+  model?: string;
+};
+
 type UIStateResponse = StackResponse & {
   workingDiffKey: string;
 };
@@ -126,14 +158,40 @@ type DiffSelection =
   | { type: 'branch'; name: string }
   | { type: 'working' };
 
+type RecapRoute = {
+  id: string;
+  sectionId: string | null;
+};
+
 function selectionFromHash(hash: string): DiffSelection | null {
   const path = hash.replace(/^#\/?/, '');
+  if (path.startsWith('recap/')) return null;
   if (path === 'working') return { type: 'working' };
   if (path.startsWith('branch/')) {
     const name = decodeURIComponent(path.slice('branch/'.length));
     if (name) return { type: 'branch', name };
   }
   return null;
+}
+
+function recapRouteFromHash(hash: string): RecapRoute | null {
+  const path = hash.replace(/^#\/?/, '');
+  if (!path.startsWith('recap/')) return null;
+  const rawRoute = path.slice('recap/'.length);
+  const [idPart, query = ''] = rawRoute.split('?', 2);
+  const id = decodeURIComponent(idPart ?? '');
+  if (!id) return null;
+  const sectionId = new URLSearchParams(query).get('section');
+  return { id, sectionId: sectionId || null };
+}
+
+function recapIdFromHash(hash: string): string | null {
+  return recapRouteFromHash(hash)?.id ?? null;
+}
+
+function recapRouteToHash(recapId: string, sectionId?: string): string {
+  const route = `#/recap/${encodeURIComponent(recapId)}`;
+  return sectionId ? `${route}?section=${encodeURIComponent(sectionId)}` : route;
 }
 
 function selectionToHash(sel: DiffSelection): string {
@@ -247,6 +305,12 @@ function buildDiffUnsafeCSS(resolvedTheme: 'dark' | 'light'): string {
       box-shadow: ${headerShadow};
     }
     [data-selected-line] { background: rgba(250, 204, 21, 0.10) !important; }
+    [data-annotation-content] {
+      padding: 0;
+    }
+    [data-line-annotation] {
+      --diffs-annotation-bg: ${resolvedTheme === 'light' ? '#fff7f9' : 'rgba(244, 63, 94, 0.07)'};
+    }
     [data-line] span[style*="--diffs-token-light"],
     [data-line] span[style*="--diffs-token-dark"] {
       --shortcake-token-color-light: var(--diffs-token-light, var(--diffs-fg));
@@ -459,6 +523,8 @@ type ChangedFilesTreeProps = {
   activeFileIndex: number | null;
   viewedFiles: Set<string>;
   resolvedTheme: 'dark' | 'light';
+  preserveInputOrder?: boolean;
+  search?: boolean;
   onFilterChange: (value: string) => void;
   onFileClick: (index: number) => void;
 };
@@ -469,10 +535,17 @@ function ChangedFilesTree({
   activeFileIndex,
   viewedFiles,
   resolvedTheme,
+  preserveInputOrder = false,
+  search = true,
   onFilterChange,
   onFileClick,
 }: ChangedFilesTreeProps) {
   const paths = useMemo(() => fileInfos.map((file) => file.path), [fileInfos]);
+  const fileOrder = useMemo(
+    () => new Map(paths.map((path, index) => [path, index])),
+    [paths],
+  );
+  const fileOrderRef = useRef(fileOrder);
   const fileByPath = useMemo(
     () => new Map(fileInfos.map((file) => [file.path, file])),
     [fileInfos],
@@ -484,6 +557,8 @@ function ChangedFilesTree({
   const activePath = activeFileIndex == null ? null : fileInfos[activeFileIndex]?.path ?? null;
   const fileByPathRef = useRef(fileByPath);
   const viewedFilesRef = useRef(viewedFiles);
+
+  fileOrderRef.current = fileOrder;
 
   useEffect(() => {
     fileByPathRef.current = fileByPath;
@@ -508,15 +583,26 @@ function ChangedFilesTree({
     };
   }, []);
 
+  const inputOrderSort = useCallback<FileTreeSortComparator>((left, right) => {
+    const order = fileOrderRef.current;
+    const leftRank = order.get(left.path);
+    const rightRank = order.get(right.path);
+
+    if (leftRank !== undefined && rightRank !== undefined) return leftRank - rightRank;
+    if (leftRank !== undefined) return -1;
+    if (rightRank !== undefined) return 1;
+    return left.path.localeCompare(right.path);
+  }, []);
+
   const handleSelectionChange = useCallback((selectedPaths: readonly string[]) => {
     const selectedPath = [...selectedPaths]
       .reverse()
       .find((path) => fileByPathRef.current.has(path));
     if (!selectedPath) return;
 
-    const file = fileByPathRef.current.get(selectedPath);
-    if (file) onFileClick(file.patchIndex);
-  }, [onFileClick]);
+    const selectedIndex = fileInfos.findIndex((file) => file.path === selectedPath);
+    if (selectedIndex >= 0) onFileClick(selectedIndex);
+  }, [fileInfos, onFileClick]);
 
   const { model } = useFileTree({
     density: 'compact',
@@ -524,17 +610,18 @@ function ChangedFilesTree({
     flattenEmptyDirectories: false,
     gitStatus,
     initialExpansion: 'open',
-    initialSearchQuery: fileFilter || null,
+    initialSearchQuery: search && fileFilter ? fileFilter : null,
     initialSelectedPaths: activePath ? [activePath] : [],
-    itemHeight: 26,
-    onSearchChange: (value) => onFilterChange(value ?? ''),
+    itemHeight: FILE_TREE_ITEM_HEIGHT,
+    onSearchChange: search ? (value) => onFilterChange(value ?? '') : undefined,
     onSelectionChange: handleSelectionChange,
     overscan: 16,
     paths,
     renderRowDecoration,
-    search: true,
+    search,
     searchBlurBehavior: 'retain',
     stickyFolders: false,
+    sort: preserveInputOrder ? inputOrderSort : undefined,
     unsafeCSS: buildChangedFilesTreeUnsafeCSS(),
   });
 
@@ -543,8 +630,8 @@ function ChangedFilesTree({
   }, [model, paths]);
 
   useEffect(() => {
-    model.setSearch(fileFilter.trim() ? fileFilter : null);
-  }, [fileFilter, model]);
+    if (search) model.setSearch(fileFilter.trim() ? fileFilter : null);
+  }, [fileFilter, model, search]);
 
   useEffect(() => {
     model.setGitStatus(gitStatus);
@@ -599,7 +686,7 @@ function ChangedFilesTree({
   );
 
   return (
-    <div className="flex-1 min-h-0 overflow-hidden px-2.5 pt-2 pb-1.5">
+    <div className="h-full flex-1 min-h-0 overflow-hidden px-2.5 pt-2 pb-1.5">
       <PierreFileTree
         className="block h-full w-full"
         model={model}
@@ -1418,6 +1505,1305 @@ const DiffFileSection = React.memo(function DiffFileSection({
   );
 });
 
+type RecapComponentName =
+  | 'FileMap'
+  | 'Diff'
+  | 'DiffTabs'
+  | 'Mermaid'
+  | 'DataModel'
+  | 'Endpoint'
+  | 'StateSummary';
+
+type RecapBlock =
+  | { type: 'heading'; depth: number; text: string }
+  | { type: 'paragraph'; text: string }
+  | { type: 'list'; ordered: boolean; items: string[] }
+  | { type: 'code'; language: string; code: string }
+  | { type: 'table'; headers: string[]; rows: string[][] }
+  | { type: 'component'; name: RecapComponentName; props: Record<string, string>; children?: string };
+
+type RecapDiffTabFile = {
+  path: string;
+  summary?: string;
+  annotations?: RecapAnnotation[];
+};
+
+type RecapRenderContext = {
+  fileInfos: FileInfo[];
+  patchByPath: Map<string, string>;
+  resolvedTheme: 'dark' | 'light';
+  diffTheme: string;
+  diffStyle: DiffStyle;
+};
+
+type RecapAnnotationMeta = {
+  text: string;
+  title?: string;
+  lineLabel: string;
+};
+
+const SUPPORTED_RECAP_COMPONENTS = new Set<RecapComponentName>([
+  'FileMap',
+  'Diff',
+  'DiffTabs',
+  'Mermaid',
+  'DataModel',
+  'Endpoint',
+  'StateSummary',
+]);
+
+const EMPTY_VIEWED_FILES = new Set<string>();
+const FILE_TREE_ITEM_HEIGHT = 26;
+const RECAP_FILE_SELECT_EVENT = 'shortcake:recap-file-select';
+let recapMermaidRenderSerial = 0;
+
+function recapDiffElementId(path: string): string {
+  return `recap-diff-${hashString(path)}`;
+}
+
+function selectedRecapFilePath(event: Event): string | null {
+  const detail = (event as CustomEvent<{ path?: unknown }>).detail;
+  return typeof detail?.path === 'string' ? detail.path : null;
+}
+
+function scrollToRecapDiff(path: string): void {
+  const scroll = () => {
+    document.getElementById(recapDiffElementId(path))?.scrollIntoView({
+      block: 'start',
+      behavior: 'smooth',
+    });
+  };
+  window.requestAnimationFrame(() => window.requestAnimationFrame(scroll));
+}
+
+function recapHeadingId(block: RecapBlock, index: number): string {
+  if (block.type !== 'heading') return `recap-block-${index}`;
+  const slug = block.text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 48);
+  return `recap-${slug || 'section'}-${hashString(`${index}:${block.text}`)}`;
+}
+
+function isFileMapBlock(block: RecapBlock): boolean {
+  return block.type === 'component' && block.name === 'FileMap';
+}
+
+function stripRecapFrontmatter(mdx: string): string {
+  return mdx.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, '');
+}
+
+function findUnquotedRecapTagEnd(value: string, start = 0): number | null {
+  let quote: string | null = null;
+  for (let index = start; index < value.length; index += 1) {
+    const char = value[index];
+    if (quote) {
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      quote = char;
+    } else if (char === '>') {
+      return index;
+    }
+  }
+  return null;
+}
+
+function collapseRecapComponentTagNewlines(body: string): string {
+  const lines = body.split(/\r?\n/);
+  const output: string[] = [];
+  let pending: string[] | null = null;
+  let inFence = false;
+
+  for (const line of lines) {
+    if (!pending && line.trimStart().startsWith('```')) {
+      inFence = !inFence;
+      output.push(line);
+      continue;
+    }
+
+    if (inFence) {
+      output.push(line);
+      continue;
+    }
+
+    if (pending) {
+      pending.push(line);
+      const joined = pending.join('\n');
+      if (findUnquotedRecapTagEnd(joined) !== null) {
+        output.push(joined.replace(/\s*\r?\n\s*/g, ' '));
+        pending = null;
+      }
+      continue;
+    }
+
+    const trimmed = line.trimStart();
+    const componentStart = trimmed.match(/^<\s*[A-Z][A-Za-z0-9]*\b/);
+    if (componentStart && findUnquotedRecapTagEnd(trimmed, componentStart[0].length) === null) {
+      pending = [line];
+      continue;
+    }
+
+    output.push(line);
+  }
+
+  if (pending) {
+    output.push(...pending);
+  }
+
+  return output.join('\n');
+}
+
+function parseRecapAttributes(raw: string, name: string): Record<string, string> {
+  if (/\bon[A-Z][A-Za-z0-9_]*\s*=/.test(raw)) {
+    throw new Error(`<${name}> uses an event handler prop`);
+  }
+  if (/=\s*{/.test(raw)) {
+    throw new Error(`<${name}> uses a JS expression prop`);
+  }
+
+  const attrs: Record<string, string> = {};
+  let remainder = raw;
+  const attrRe = /([A-Za-z_:][\w:.-]*)\s*=\s*("[^"]*"|'[^']*')/g;
+  let match: RegExpExecArray | null;
+  while ((match = attrRe.exec(raw)) !== null) {
+    const attrName = match[1]!;
+    const quoted = match[2]!;
+    attrs[attrName] = quoted.slice(1, -1);
+    remainder = remainder.replace(match[0], ' '.repeat(match[0].length));
+  }
+
+  if (remainder.trim().replace(/\/$/, '').trim() !== '') {
+    throw new Error(`<${name}> has a non-static prop`);
+  }
+
+  return attrs;
+}
+
+function validateRecapLine(line: string, lineNumber: number): void {
+  if (/^\s*(import|export)\b/.test(line)) {
+    throw new Error(`MDX import/export is not supported on line ${lineNumber}`);
+  }
+  if (/^\s*{.*}\s*$/.test(line)) {
+    throw new Error(`MDX expressions are not supported on line ${lineNumber}`);
+  }
+
+  const componentRe = /<\s*\/?\s*([A-Z][A-Za-z0-9]*)\b([^>]*)>/g;
+  let match: RegExpExecArray | null;
+  while ((match = componentRe.exec(line)) !== null) {
+    const name = match[1] as RecapComponentName;
+    if (!SUPPORTED_RECAP_COMPONENTS.has(name)) {
+      throw new Error(`Unsupported MDX component <${match[1]}> on line ${lineNumber}`);
+    }
+    parseRecapAttributes(match[2] ?? '', match[1]!);
+  }
+}
+
+function isRecapTableStart(lines: string[], index: number): boolean {
+  const current = lines[index] ?? '';
+  const next = lines[index + 1] ?? '';
+  return current.includes('|') && /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(next);
+}
+
+function splitRecapTableRow(line: string): string[] {
+  return line
+    .trim()
+    .replace(/^\|/, '')
+    .replace(/\|$/, '')
+    .split('|')
+    .map((cell) => cell.trim());
+}
+
+function parseRecapComponentLine(
+  line: string,
+): { name: RecapComponentName; props: Record<string, string>; selfClosing: boolean } | null {
+  const trimmed = line.trim();
+  const selfClosing = trimmed.match(/^<([A-Z][A-Za-z0-9]*)([\s\S]*?)\/>$/);
+  if (selfClosing) {
+    const name = selfClosing[1] as RecapComponentName;
+    if (!SUPPORTED_RECAP_COMPONENTS.has(name)) {
+      throw new Error(`Unsupported MDX component <${selfClosing[1]}>`);
+    }
+    return {
+      name,
+      props: parseRecapAttributes(selfClosing[2] ?? '', name),
+      selfClosing: true,
+    };
+  }
+
+  const blockStart = trimmed.match(/^<([A-Z][A-Za-z0-9]*)([\s\S]*?)>$/);
+  if (!blockStart || trimmed.startsWith('</')) return null;
+
+  const name = blockStart[1] as RecapComponentName;
+  if (!SUPPORTED_RECAP_COMPONENTS.has(name)) {
+    throw new Error(`Unsupported MDX component <${blockStart[1]}>`);
+  }
+  return {
+    name,
+    props: parseRecapAttributes(blockStart[2] ?? '', name),
+    selfClosing: false,
+  };
+}
+
+function recapListItemMatch(line: string, ordered: boolean): RegExpMatchArray | null {
+  return ordered
+    ? line.match(/^\s*\d+[.)]\s+(.+)$/)
+    : line.match(/^\s*[-*]\s+(.+)$/);
+}
+
+function isRecapAnyListItem(line: string): boolean {
+  return /^\s*[-*]\s+/.test(line) || /^\s*\d+[.)]\s+/.test(line);
+}
+
+function isRecapBlockBoundary(lines: string[], index: number): boolean {
+  const line = lines[index] ?? '';
+  const trimmed = line.trim();
+  return (
+    trimmed === '' ||
+    trimmed.startsWith('```') ||
+    /^#{1,6}\s+/.test(line) ||
+    isRecapAnyListItem(line) ||
+    parseRecapComponentLine(line) !== null ||
+    isRecapTableStart(lines, index)
+  );
+}
+
+function parseRestrictedRecapMdx(mdx: string): RecapBlock[] {
+  const body = collapseRecapComponentTagNewlines(stripRecapFrontmatter(mdx));
+  const lines = body.split(/\r?\n/);
+  const blocks: RecapBlock[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i] ?? '';
+    const trimmed = line.trim();
+    if (trimmed === '') {
+      i += 1;
+      continue;
+    }
+
+    if (trimmed.startsWith('```')) {
+      const language = trimmed.slice(3).trim();
+      const codeLines: string[] = [];
+      i += 1;
+      while (i < lines.length && !(lines[i] ?? '').trim().startsWith('```')) {
+        codeLines.push(lines[i] ?? '');
+        i += 1;
+      }
+      if (i < lines.length) i += 1;
+      blocks.push({ type: 'code', language, code: codeLines.join('\n') });
+      continue;
+    }
+
+    validateRecapLine(line, i + 1);
+    const component = parseRecapComponentLine(line);
+    if (component) {
+      if (component.selfClosing) {
+        blocks.push({ type: 'component', name: component.name, props: component.props });
+        i += 1;
+        continue;
+      }
+
+      const children: string[] = [];
+      const closeTag = `</${component.name}>`;
+      i += 1;
+      while (i < lines.length && (lines[i] ?? '').trim() !== closeTag) {
+        children.push(lines[i] ?? '');
+        i += 1;
+      }
+      if (i >= lines.length) {
+        throw new Error(`<${component.name}> is missing a closing tag`);
+      }
+      blocks.push({
+        type: 'component',
+        name: component.name,
+        props: component.props,
+        children: children.join('\n'),
+      });
+      i += 1;
+      continue;
+    }
+
+    const heading = line.match(/^(#{1,6})\s+(.+)$/);
+    if (heading) {
+      blocks.push({
+        type: 'heading',
+        depth: heading[1]!.length,
+        text: heading[2]!.trim(),
+      });
+      i += 1;
+      continue;
+    }
+
+    if (isRecapAnyListItem(line)) {
+      const ordered = /^\s*\d+[.)]\s+/.test(line);
+      const items: string[] = [];
+      while (i < lines.length) {
+        const itemLine = lines[i] ?? '';
+        const itemMatch = recapListItemMatch(itemLine, ordered);
+        if (!itemMatch) break;
+        validateRecapLine(itemLine, i + 1);
+        const itemParts = [itemMatch[1]!.trim()];
+        i += 1;
+
+        while (i < lines.length && !isRecapBlockBoundary(lines, i)) {
+          const continuationLine = lines[i] ?? '';
+          validateRecapLine(continuationLine, i + 1);
+          itemParts.push(continuationLine.trim());
+          i += 1;
+        }
+
+        items.push(itemParts.join(' '));
+      }
+      blocks.push({ type: 'list', ordered, items });
+      continue;
+    }
+
+    if (isRecapTableStart(lines, i)) {
+      const headers = splitRecapTableRow(line);
+      i += 2;
+      const rows: string[][] = [];
+      while (i < lines.length && (lines[i] ?? '').includes('|') && (lines[i] ?? '').trim() !== '') {
+        validateRecapLine(lines[i] ?? '', i + 1);
+        rows.push(splitRecapTableRow(lines[i] ?? ''));
+        i += 1;
+      }
+      blocks.push({ type: 'table', headers, rows });
+      continue;
+    }
+
+    const paragraph: string[] = [];
+    while (i < lines.length) {
+      const paragraphLine = lines[i] ?? '';
+      const paragraphTrimmed = paragraphLine.trim();
+      if (
+        isRecapBlockBoundary(lines, i)
+      ) {
+        break;
+      }
+      validateRecapLine(paragraphLine, i + 1);
+      paragraph.push(paragraphTrimmed);
+      i += 1;
+    }
+    blocks.push({ type: 'paragraph', text: paragraph.join(' ') });
+  }
+
+  return blocks;
+}
+
+function renderRecapInline(text: string): React.ReactNode[] {
+  return text.split(/(`[^`]+`|\*\*[^*]+\*\*)/g).map((part, index) => {
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return (
+        <code key={index} className="rounded bg-surface-hover px-1 py-0.5 font-mono text-[0.78em] text-text-primary">
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    return part;
+  });
+}
+
+function parseRecapJSON<T>(raw: string | undefined, fallback: T): T {
+  if (!raw?.trim()) return fallback;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function extractFencedPayload(children: string | undefined): string {
+  if (!children) return '';
+  const match = children.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  return (match?.[1] ?? children).trim();
+}
+
+function normalizeRecapAnnotations(value: unknown): RecapAnnotation[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): RecapAnnotation[] => {
+    if (!item || typeof item !== 'object') return [];
+    const raw = item as Record<string, unknown>;
+    if (typeof raw.text !== 'string') return [];
+    const line = typeof raw.line === 'number' ? raw.line : undefined;
+    const startLine = typeof raw.startLine === 'number' ? raw.startLine : line;
+    const endLine = typeof raw.endLine === 'number' ? raw.endLine : startLine;
+    return [{
+      line,
+      startLine,
+      endLine,
+      side: normalizeAnnotationSide(raw.side),
+      text: raw.text,
+      title: typeof raw.title === 'string' ? raw.title : undefined,
+      severity: typeof raw.severity === 'string' ? raw.severity : undefined,
+      model: typeof raw.model === 'string' ? raw.model : undefined,
+    }];
+  });
+}
+
+function formatRecapAnnotationLineLabel(annotation: RecapAnnotation): string {
+  const startLine = annotation.startLine ?? annotation.line ?? annotation.endLine ?? 1;
+  const endLine = annotation.endLine ?? annotation.line ?? startLine;
+  return formatLineLabel(startLine, endLine);
+}
+
+function normalizeRecapDiffTabs(value: unknown): RecapDiffTabFile[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item): RecapDiffTabFile[] => {
+    if (typeof item === 'string') return [{ path: item }];
+    if (!item || typeof item !== 'object') return [];
+    const raw = item as Record<string, unknown>;
+    if (typeof raw.path !== 'string') return [];
+    return [{
+      path: raw.path,
+      summary: typeof raw.summary === 'string' ? raw.summary : undefined,
+      annotations: normalizeRecapAnnotations(raw.annotations),
+    }];
+  });
+}
+
+function recapDocumentDiffPaths(blocks: { block: RecapBlock }[]): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  const addPath = (path: string | undefined) => {
+    if (!path || seen.has(path)) return;
+    seen.add(path);
+    paths.push(path);
+  };
+
+  for (const { block } of blocks) {
+    if (block.type !== 'component') continue;
+    if (block.name === 'Diff') {
+      addPath(block.props.path);
+    } else if (block.name === 'DiffTabs') {
+      for (const file of normalizeRecapDiffTabs(parseRecapJSON(block.props.files, []))) {
+        addPath(file.path);
+      }
+    }
+  }
+
+  return paths;
+}
+
+function orderRecapFileInfosForDocument(
+  fileInfos: FileInfo[],
+  documentPaths: string[],
+): FileInfo[] {
+  if (documentPaths.length === 0) return fileInfos;
+
+  const documentRank = new Map(documentPaths.map((path, index) => [path, index]));
+  return fileInfos
+    .map((file, index) => ({ file, index, rank: documentRank.get(file.path) }))
+    .sort((a, b) => {
+      if (a.rank !== undefined && b.rank !== undefined) return a.rank - b.rank;
+      if (a.rank !== undefined) return -1;
+      if (b.rank !== undefined) return 1;
+      return a.index - b.index;
+    })
+    .map((entry) => entry.file);
+}
+
+function recapDisplayTitle(recap: RecapResponse): string {
+  const rangeMatch = recap.title.match(/^Recap:\s+.+\.\.\.(.+)$/);
+  if (rangeMatch?.[1]) return rangeMatch[1];
+
+  const recapPrefixMatch = recap.title.match(/^Recap:\s+(.+)$/);
+  if (recapPrefixMatch?.[1]) {
+    const title = recapPrefixMatch[1];
+    return title === 'working changes' ? 'Working changes' : title;
+  }
+
+  return recap.title;
+}
+
+function recapFileTreeRowCount(fileInfos: FileInfo[]): number {
+  const directories = new Set<string>();
+
+  for (const file of fileInfos) {
+    const segments = file.path.split('/').filter(Boolean);
+    for (let index = 1; index < segments.length; index += 1) {
+      directories.add(segments.slice(0, index).join('/'));
+    }
+  }
+
+  return fileInfos.length + directories.size;
+}
+
+function recapFileTreeHeight(fileInfos: FileInfo[]): React.CSSProperties {
+  const rowCount = recapFileTreeRowCount(fileInfos);
+  return {
+    height: `${Math.max(56, rowCount * FILE_TREE_ITEM_HEIGHT + 18)}px`,
+  };
+}
+
+function normalizeAnnotationSide(side: unknown): AnnotationSide {
+  return side === 'deletions' || side === 'left' ? 'deletions' : 'additions';
+}
+
+function RecapFileMap({
+  fileInfos,
+  documentPaths = [],
+  resolvedTheme,
+  className = '',
+}: {
+  fileInfos: FileInfo[];
+  documentPaths?: string[];
+  resolvedTheme: 'dark' | 'light';
+  className?: string;
+}) {
+  const [fileFilter, setFileFilter] = useState('');
+  const [activeFileIndex, setActiveFileIndex] = useState<number | null>(null);
+  const documentPathSet = useMemo(
+    () => new Set(documentPaths),
+    [documentPaths],
+  );
+  const documentFileInfos = useMemo(
+    () => documentPaths.length === 0
+      ? fileInfos
+      : fileInfos.filter((file) => documentPathSet.has(file.path)),
+    [documentPathSet, documentPaths.length, fileInfos],
+  );
+  const remainingFileInfos = useMemo(
+    () => documentPaths.length === 0
+      ? []
+      : fileInfos.filter((file) => !documentPathSet.has(file.path)),
+    [documentPathSet, documentPaths.length, fileInfos],
+  );
+  const activePath = activeFileIndex == null ? null : fileInfos[activeFileIndex]?.path ?? null;
+  const activeDocumentFileIndex = activePath == null
+    ? null
+    : documentFileInfos.findIndex((file) => file.path === activePath);
+  const activeRemainingFileIndex = activePath == null
+    ? null
+    : remainingFileInfos.findIndex((file) => file.path === activePath);
+  const indexByPath = useMemo(
+    () => new Map(fileInfos.map((file, index) => [file.path, index])),
+    [fileInfos],
+  );
+  const totals = useMemo(
+    () => fileInfos.reduce(
+      (acc, file) => ({
+        additions: acc.additions + file.additions,
+        deletions: acc.deletions + file.deletions,
+      }),
+      { additions: 0, deletions: 0 },
+    ),
+    [fileInfos],
+  );
+
+  const handleFileClick = useCallback((index: number) => {
+    setActiveFileIndex(index);
+    const path = fileInfos[index]?.path;
+    if (!path) return;
+    window.dispatchEvent(new CustomEvent(RECAP_FILE_SELECT_EVENT, { detail: { path } }));
+    scrollToRecapDiff(path);
+  }, [fileInfos]);
+
+  const handleDocumentFileClick = useCallback((index: number) => {
+    const path = documentFileInfos[index]?.path;
+    const globalIndex = path ? indexByPath.get(path) : undefined;
+    if (globalIndex !== undefined) handleFileClick(globalIndex);
+  }, [documentFileInfos, handleFileClick, indexByPath]);
+
+  const handleRemainingFileClick = useCallback((index: number) => {
+    const path = remainingFileInfos[index]?.path;
+    const globalIndex = path ? indexByPath.get(path) : undefined;
+    if (globalIndex !== undefined) handleFileClick(globalIndex);
+  }, [handleFileClick, indexByPath, remainingFileInfos]);
+
+  return (
+    <section className={className}>
+      <div className="mb-4 flex items-end justify-between gap-3">
+        <div>
+          <h2 className="font-mono text-[0.68rem] font-semibold uppercase tracking-normal text-text-muted">
+            Files changed
+          </h2>
+          <p className="m-0 mt-3 font-mono text-[0.7rem] text-text-secondary">
+            {fileInfos.length} file{fileInfos.length === 1 ? '' : 's'}
+          </p>
+        </div>
+        <div className="flex shrink-0 gap-1.5 font-mono text-[0.66rem]">
+          {totals.additions > 0 && (
+            <span className="text-stat-add">+{totals.additions}</span>
+          )}
+          {totals.deletions > 0 && (
+            <span className="text-blue-400">-{totals.deletions}</span>
+          )}
+        </div>
+      </div>
+      <div className="pr-1" data-recap-file-map-list>
+        <div style={recapFileTreeHeight(documentFileInfos)}>
+          <ChangedFilesTree
+            fileInfos={documentFileInfos}
+            fileFilter={fileFilter}
+            activeFileIndex={activeDocumentFileIndex === -1 ? null : activeDocumentFileIndex}
+            viewedFiles={EMPTY_VIEWED_FILES}
+            resolvedTheme={resolvedTheme}
+            preserveInputOrder
+            search={false}
+            onFilterChange={setFileFilter}
+            onFileClick={handleDocumentFileClick}
+          />
+        </div>
+        {remainingFileInfos.length > 0 && (
+          <>
+            <p className="m-0 mt-4 border-t border-border pt-4 font-mono text-[0.62rem] font-semibold uppercase tracking-normal text-text-muted">
+              Other files
+            </p>
+            <div className="mt-2" style={recapFileTreeHeight(remainingFileInfos)}>
+              <ChangedFilesTree
+                fileInfos={remainingFileInfos}
+                fileFilter={fileFilter}
+                activeFileIndex={activeRemainingFileIndex === -1 ? null : activeRemainingFileIndex}
+                viewedFiles={EMPTY_VIEWED_FILES}
+                resolvedTheme={resolvedTheme}
+                preserveInputOrder
+                search={false}
+                onFilterChange={setFileFilter}
+                onFileClick={handleRemainingFileClick}
+              />
+            </div>
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function RecapDiffBlock({
+  path,
+  summary,
+  annotations = [],
+  context,
+}: {
+  path: string;
+  summary?: string;
+  annotations?: RecapAnnotation[];
+  context: RecapRenderContext;
+}) {
+  const patch = context.patchByPath.get(path);
+  const fileLanguage = getFiletypeFromFileName(path || 'text.txt');
+  const fileDiff = useMemo(
+    () => (patch ? setLanguageOverride(getSingularPatch(patch), fileLanguage) : null),
+    [patch, fileLanguage],
+  );
+  const options = useMemo<FileDiffProps<RecapAnnotationMeta>['options']>(
+    () => ({
+      diffStyle: context.diffStyle,
+      diffIndicators: 'classic',
+      hunkSeparators: 'metadata',
+      theme: context.diffTheme,
+      themeType: context.resolvedTheme,
+      overflow: 'scroll',
+      lineDiffType: 'word',
+      enableLineSelection: false,
+      unsafeCSS: buildDiffUnsafeCSS(context.resolvedTheme),
+    }),
+    [context.diffStyle, context.diffTheme, context.resolvedTheme],
+  );
+  const lineAnnotations = useMemo<DiffLineAnnotation<RecapAnnotationMeta>[]>(
+    () => annotations.map((annotation) => ({
+      lineNumber: annotation.endLine ?? annotation.line ?? annotation.startLine ?? 1,
+      side: normalizeAnnotationSide(annotation.side),
+      metadata: {
+        text: annotation.text,
+        title: annotation.title,
+        lineLabel: formatRecapAnnotationLineLabel(annotation),
+      },
+    })),
+    [annotations],
+  );
+  const renderAnnotation = useCallback(
+    (annotation: DiffLineAnnotation<RecapAnnotationMeta>) => {
+      return (
+        <aside
+          className="w-full border-y border-rose-200/70 bg-rose-50/70 px-3 py-2.5 font-sans dark:border-rose-300/20 dark:bg-rose-300/[0.055]"
+          aria-label={`Review comment for ${annotation.metadata.lineLabel}`}
+          data-recap-inline-comment
+          data-recap-inline-comment-line={annotation.metadata.lineLabel}
+        >
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="inline-flex size-6 shrink-0 items-center justify-center rounded-[6px] border border-rose-300 bg-rose-100 dark:border-rose-300/40 dark:bg-rose-300/10">
+              <img
+                src="/favicon.svg"
+                alt=""
+                className="size-3.5"
+                aria-hidden="true"
+              />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="m-0 whitespace-pre-wrap break-words text-[0.86rem] leading-6 text-text-primary">
+                {annotation.metadata.title && (
+                  <strong className="font-semibold">{annotation.metadata.title}. </strong>
+                )}
+                {annotation.metadata.text}
+              </p>
+            </div>
+          </div>
+        </aside>
+      );
+    },
+    [],
+  );
+
+  if (!patch || !fileDiff) {
+    return (
+      <section className="my-5 rounded-md border border-danger/30 bg-danger/5 px-4 py-3 text-[0.82rem] text-danger">
+        Diff path not found: <code className="font-mono">{path}</code>
+      </section>
+    );
+  }
+
+  return (
+    <section
+      id={recapDiffElementId(path)}
+      data-recap-diff-path={path}
+      className="my-5 overflow-hidden rounded-md border border-border bg-surface"
+    >
+      {summary && (
+        <p className="m-0 border-b border-border bg-surface-hover px-4 py-3 text-[0.78rem] leading-relaxed text-text-secondary">
+          {summary}
+        </p>
+      )}
+      <div className="diff-content">
+        <FileDiff<RecapAnnotationMeta>
+          fileDiff={fileDiff}
+          options={options}
+          lineAnnotations={lineAnnotations}
+          renderAnnotation={renderAnnotation}
+        />
+      </div>
+    </section>
+  );
+}
+
+function RecapDiffTabs({
+  files,
+  context,
+}: {
+  files: RecapDiffTabFile[];
+  context: RecapRenderContext;
+}) {
+  const [activePath, setActivePath] = useState(() => files[0]?.path ?? '');
+
+  useEffect(() => {
+    const handleFileSelect = (event: Event) => {
+      const path = selectedRecapFilePath(event);
+      if (path && files.some((file) => file.path === path)) {
+        setActivePath(path);
+      }
+    };
+
+    window.addEventListener(RECAP_FILE_SELECT_EVENT, handleFileSelect);
+    return () => window.removeEventListener(RECAP_FILE_SELECT_EVENT, handleFileSelect);
+  }, [files]);
+
+  useEffect(() => {
+    if (files.length > 0 && !files.some((file) => file.path === activePath)) {
+      setActivePath(files[0]!.path);
+    }
+  }, [activePath, files]);
+
+  const active = files.find((file) => file.path === activePath) ?? files[0];
+  if (!active) return null;
+
+  return (
+    <section className="my-5">
+      <div className="mb-2 flex gap-1 overflow-x-auto rounded-md border border-border bg-surface-hover p-1">
+        {files.map((file) => (
+          <button
+            key={file.path}
+            type="button"
+            className={`shrink-0 appearance-none rounded-[6px] border-none px-2.5 py-1.5 font-mono text-[0.68rem] transition-colors duration-100 ${
+              file.path === active.path
+                ? 'bg-surface-active text-text-primary'
+                : 'bg-transparent text-text-muted hover:text-text-secondary'
+            }`}
+            onClick={() => setActivePath(file.path)}
+          >
+            {file.path}
+          </button>
+        ))}
+      </div>
+      <RecapDiffBlock
+        path={active.path}
+        summary={active.summary}
+        annotations={active.annotations}
+        context={context}
+      />
+    </section>
+  );
+}
+
+function RecapStructuredBlock({
+  kind,
+  title,
+  children,
+}: {
+  kind: string;
+  title?: string;
+  children?: string;
+}) {
+  const payload = extractFencedPayload(children);
+  const parsed = parseRecapJSON<unknown>(payload, null);
+
+  return (
+    <section className="my-5 rounded-md border border-border bg-surface px-4 py-3">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="rounded border border-border bg-surface-hover px-1.5 py-0.5 font-mono text-[0.58rem] uppercase tracking-normal text-text-muted">
+          {kind}
+        </span>
+        {title && <h2 className="text-[0.9rem] text-text-primary">{title}</h2>}
+      </div>
+      {parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (
+        <dl className="grid grid-cols-[minmax(120px,0.32fr)_1fr] gap-x-4 gap-y-2">
+          {Object.entries(parsed as Record<string, unknown>).map(([key, value]) => (
+            <React.Fragment key={key}>
+              <dt className="font-mono text-[0.68rem] text-text-muted">{key}</dt>
+              <dd className="m-0 min-w-0 break-words font-mono text-[0.72rem] text-text-secondary">
+                {typeof value === 'string' ? value : JSON.stringify(value)}
+              </dd>
+            </React.Fragment>
+          ))}
+        </dl>
+      ) : (
+        <pre className="m-0 overflow-auto rounded-md bg-surface-hover p-3 font-mono text-[0.72rem] leading-relaxed text-text-secondary">
+          {payload}
+        </pre>
+      )}
+    </section>
+  );
+}
+
+function normalizeRecapMermaidDiagram(diagram: string): string {
+  return diagram
+    .split('\n')
+    .map((line) => (
+      line.replace(
+        /(-->|---|==>|-.->|--o|--x)\|([^|"'\n]*@[^|\n]*)\|/g,
+        (_match, edge: string, label: string) => (
+          `${edge}|"${label.replace(/"/g, '&quot;')}"|`
+        ),
+      )
+    ))
+    .join('\n');
+}
+
+function RecapMermaidBlock({
+  title,
+  children,
+  resolvedTheme,
+}: {
+  title?: string;
+  children?: string;
+  resolvedTheme: 'dark' | 'light';
+}) {
+  const diagram = children?.trim() ?? '';
+  const renderDiagramSource = normalizeRecapMermaidDiagram(diagram);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [renderedSvg, setRenderedSvg] = useState<string | null>(null);
+  const [renderError, setRenderError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isCancelled = false;
+    setRenderedSvg(null);
+    setRenderError(null);
+
+    if (!diagram) return undefined;
+
+    async function renderDiagram() {
+      try {
+        const mermaid = (await import('mermaid')).default;
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: 'strict',
+          suppressErrorRendering: true,
+          theme: resolvedTheme === 'dark' ? 'dark' : 'default',
+        });
+
+        const renderId = `recap-mermaid-${hashString(renderDiagramSource)}-${recapMermaidRenderSerial++}`;
+        const { svg, bindFunctions } = await mermaid.render(renderId, renderDiagramSource);
+        if (isCancelled) return;
+
+        setRenderedSvg(svg);
+        window.requestAnimationFrame(() => {
+          if (!isCancelled && containerRef.current) {
+            bindFunctions?.(containerRef.current);
+          }
+        });
+      } catch (err) {
+        if (!isCancelled) {
+          setRenderError(err instanceof Error ? err.message : 'Could not render Mermaid diagram.');
+        }
+      }
+    }
+
+    void renderDiagram();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [diagram, renderDiagramSource, resolvedTheme]);
+
+  return (
+    <section className="my-5 rounded-md border border-border bg-surface px-4 py-3" data-recap-mermaid>
+      {title && <h2 className="mb-2 text-[0.9rem] text-text-primary">{title}</h2>}
+      {renderedSvg ? (
+        <div
+          ref={containerRef}
+          className="overflow-auto rounded-md bg-surface-hover p-3 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
+          data-recap-mermaid-svg
+          dangerouslySetInnerHTML={{ __html: renderedSvg }}
+        />
+      ) : (
+        <div className="rounded-md bg-surface-hover p-3 font-mono text-[0.72rem] leading-relaxed text-text-secondary">
+          {renderError ?? 'Rendering diagram...'}
+        </div>
+      )}
+      {renderError && (
+        <pre className="mt-3 overflow-auto rounded-md bg-surface-hover p-3 font-mono text-[0.72rem] leading-relaxed text-text-muted">
+          {diagram}
+        </pre>
+      )}
+    </section>
+  );
+}
+
+function RecapToc({
+  recapId,
+  items,
+}: {
+  recapId: string;
+  items: { id: string; depth: number; text: string }[];
+}) {
+  if (items.length === 0) return null;
+
+  return (
+    <nav className="sticky top-7 hidden self-start xl:block">
+      <h2 className="mb-5 font-mono text-[0.68rem] font-semibold uppercase tracking-normal text-text-muted">
+        On this recap
+      </h2>
+      <div className="flex flex-col gap-3">
+        {items.map((item) => {
+          const href = recapRouteToHash(recapId, item.id);
+          return (
+            <a
+              key={item.id}
+              href={href}
+              className={`text-[0.82rem] font-semibold no-underline transition-colors duration-100 hover:text-accent ${
+                item.depth > 2 ? 'pl-3 text-text-muted' : 'text-text-secondary'
+              }`}
+              onClick={(event) => {
+                if (window.location.hash !== href) return;
+                event.preventDefault();
+                document.getElementById(item.id)?.scrollIntoView({ block: 'start' });
+              }}
+            >
+              {item.text}
+            </a>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+function renderRecapBlock(block: RecapBlock, index: number, context: RecapRenderContext): React.ReactNode {
+  if (block.type === 'heading') {
+    const Tag = `h${Math.min(block.depth, 3)}` as 'h1' | 'h2' | 'h3';
+    const size = block.depth === 1
+      ? 'text-[2.1rem] leading-tight'
+      : block.depth === 2
+        ? 'text-[1.22rem]'
+        : 'text-[0.98rem]';
+    return (
+      <Tag
+        key={index}
+        id={recapHeadingId(block, index)}
+        className={`scroll-mt-8 mt-8 mb-3 text-text-primary ${size}`}
+      >
+        {block.text}
+      </Tag>
+    );
+  }
+  if (block.type === 'paragraph') {
+    return (
+      <p key={index} className="my-4 text-[1rem] leading-8 text-text-secondary">
+        {renderRecapInline(block.text)}
+      </p>
+    );
+  }
+  if (block.type === 'list') {
+    const Tag = block.ordered ? 'ol' : 'ul';
+    const marker = block.ordered ? 'list-decimal' : 'list-disc';
+    return (
+      <Tag
+        key={index}
+        className={`my-4 ${marker} list-outside space-y-2 pl-6 text-[0.92rem] leading-7 text-text-secondary marker:text-accent`}
+      >
+        {block.items.map((item, itemIndex) => (
+          <li key={itemIndex} className="pl-1">
+            {renderRecapInline(item)}
+          </li>
+        ))}
+      </Tag>
+    );
+  }
+  if (block.type === 'code') {
+    if (block.language.toLowerCase() === 'mermaid') {
+      return (
+        <RecapMermaidBlock
+          key={index}
+          resolvedTheme={context.resolvedTheme}
+        >
+          {block.code}
+        </RecapMermaidBlock>
+      );
+    }
+    return (
+      <pre key={index} className="my-4 overflow-auto rounded-md border border-border bg-surface-hover p-3 font-mono text-[0.74rem] leading-relaxed text-text-secondary">
+        {block.code}
+      </pre>
+    );
+  }
+  if (block.type === 'table') {
+    return (
+      <div key={index} className="my-4 overflow-auto rounded-md border border-border">
+        <table className="w-full border-collapse text-left text-[0.82rem] text-text-secondary">
+          <thead className="bg-surface-hover text-text-primary">
+            <tr>{block.headers.map((header) => <th key={header} className="border-b border-border px-3 py-2 font-semibold">{header}</th>)}</tr>
+          </thead>
+          <tbody>
+            {block.rows.map((row, rowIndex) => (
+              <tr key={rowIndex} className="border-b border-border last:border-b-0">
+                {block.headers.map((header, cellIndex) => (
+                  <td key={`${header}-${cellIndex}`} className="px-3 py-2">{renderRecapInline(row[cellIndex] ?? '')}</td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+
+  if (block.name === 'FileMap') {
+    return null;
+  }
+  if (block.name === 'Diff') {
+    return (
+      <RecapDiffBlock
+        key={index}
+        path={block.props.path ?? ''}
+        summary={block.props.summary}
+        annotations={normalizeRecapAnnotations(parseRecapJSON(block.props.annotations, []))}
+        context={context}
+      />
+    );
+  }
+  if (block.name === 'DiffTabs') {
+    return (
+      <RecapDiffTabs
+        key={index}
+        files={normalizeRecapDiffTabs(parseRecapJSON(block.props.files, []))}
+        context={context}
+      />
+    );
+  }
+  if (block.name === 'Mermaid') {
+    return (
+      <RecapMermaidBlock
+        key={index}
+        title={block.props.title}
+        resolvedTheme={context.resolvedTheme}
+      >
+        {block.children}
+      </RecapMermaidBlock>
+    );
+  }
+  if (block.name === 'Endpoint') {
+    const label = [block.props.method, block.props.path].filter(Boolean).join(' ');
+    return <RecapStructuredBlock key={index} kind="endpoint" title={label} children={block.children} />;
+  }
+  if (block.name === 'DataModel') {
+    return <RecapStructuredBlock key={index} kind="data model" title={block.props.title} children={block.children} />;
+  }
+  if (block.name === 'StateSummary') {
+    return <RecapStructuredBlock key={index} kind="state" title={block.props.title} children={block.children} />;
+  }
+  return null;
+}
+
+function RecapView({
+  recapId,
+  sectionId,
+  diffStyle,
+  resolvedTheme,
+  diffTheme,
+}: {
+  recapId: string;
+  sectionId: string | null;
+  diffStyle: DiffStyle;
+  resolvedTheme: 'dark' | 'light';
+  diffTheme: string;
+}) {
+  const [recap, setRecap] = useState<RecapResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoading(true);
+    setError(null);
+    setRecap(null);
+    setSelectedFilePath(null);
+
+    const loadRecap = async () => {
+      try {
+        const data = await fetchJSON<RecapResponse>(`/api/recaps/${encodeURIComponent(recapId)}`);
+        if (!cancelled) setRecap(data);
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load recap');
+      } finally {
+        if (!cancelled) setIsLoading(false);
+      }
+    };
+
+    void loadRecap();
+    return () => { cancelled = true; };
+  }, [recapId]);
+
+  useEffect(() => {
+    const handleFileSelect = (event: Event) => {
+      const path = selectedRecapFilePath(event);
+      if (path) setSelectedFilePath(path);
+    };
+
+    window.addEventListener(RECAP_FILE_SELECT_EVENT, handleFileSelect);
+    return () => window.removeEventListener(RECAP_FILE_SELECT_EVENT, handleFileSelect);
+  }, []);
+
+  const renderState = useMemo(() => {
+    if (!recap) return null;
+    try {
+      const diffPatches = orderPatchesForTree(splitPatchIntoFiles(recap.patch));
+      const fileInfos = diffPatches.map((patch, index) => parseFileInfo(patch, index));
+      const patchByPath = new Map(fileInfos.map((info, index) => [info.path, diffPatches[index] ?? '']));
+      const blocks = parseRestrictedRecapMdx(recap.mdx);
+      const context: RecapRenderContext = {
+        fileInfos,
+        patchByPath,
+        resolvedTheme,
+        diffTheme,
+        diffStyle,
+      };
+      return { blocks, context, error: null as string | null };
+    } catch (err) {
+      return {
+        blocks: [] as RecapBlock[],
+        context: null,
+        error: err instanceof Error ? err.message : 'Could not parse recap MDX',
+      };
+    }
+  }, [diffStyle, diffTheme, recap, resolvedTheme]);
+
+  useEffect(() => {
+    if (!sectionId || !renderState?.context) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      document.getElementById(sectionId)?.scrollIntoView({ block: 'start' });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [renderState, sectionId]);
+
+  if (isLoading) {
+    return <p className="m-[1.15rem] text-text-muted text-[0.88rem]">Loading recap...</p>;
+  }
+  if (error) {
+    return <p className="m-[1.15rem] text-danger text-[0.88rem]">{error}</p>;
+  }
+  if (!recap || !renderState) {
+    return <p className="m-[1.15rem] text-text-muted text-[0.88rem]">Recap not found.</p>;
+  }
+  if (renderState.error || !renderState.context) {
+    return <p className="m-[1.15rem] text-danger text-[0.88rem]">{renderState.error}</p>;
+  }
+
+  let skippedHeroHeading = false;
+  const articleBlocks = renderState.blocks
+    .map((block, index) => ({ block, index }))
+    .filter(({ block }) => {
+      if (!skippedHeroHeading && block.type === 'heading' && block.depth === 1) {
+        skippedHeroHeading = true;
+        return false;
+      }
+      return true;
+    });
+  const tocItems = articleBlocks.flatMap(({ block, index }) => {
+    if (block.type !== 'heading' || block.depth === 1 || block.depth > 3) return [];
+    return [{ id: recapHeadingId(block, index), depth: block.depth, text: block.text }];
+  });
+  const documentDiffPaths = recapDocumentDiffPaths(articleBlocks);
+  const orderedFileInfos = orderRecapFileInfosForDocument(
+    renderState.context.fileInfos,
+    documentDiffPaths,
+  );
+  const explicitlyRenderedDiffPaths = new Set(documentDiffPaths);
+  const shouldRenderSelectedDiff =
+    selectedFilePath !== null &&
+    renderState.context.patchByPath.has(selectedFilePath) &&
+    !explicitlyRenderedDiffPaths.has(selectedFilePath);
+  const selectedDiffPath = shouldRenderSelectedDiff ? selectedFilePath : null;
+  const displayTitle = recapDisplayTitle(recap);
+  const articleNodes = articleBlocks
+    .filter(({ block }) => !isFileMapBlock(block))
+    .map(({ block, index }) => renderRecapBlock(block, index, renderState.context));
+
+  return (
+    <div className="flex-1 overflow-auto bg-bg">
+      <div className="mx-auto grid max-w-[1760px] grid-cols-1 gap-9 px-6 py-8 xl:grid-cols-[280px_minmax(0,940px)_220px] xl:gap-10 xl:px-10">
+        <aside className="order-2 border-t border-border pt-6 xl:sticky xl:top-7 xl:order-1 xl:self-start xl:border-r xl:border-t-0 xl:pr-5 xl:pt-1">
+          <RecapFileMap
+            fileInfos={orderedFileInfos}
+            documentPaths={documentDiffPaths}
+            resolvedTheme={resolvedTheme}
+          />
+        </aside>
+
+        <article className="order-1 min-w-0 xl:order-2">
+          <header className="mb-8 border-b border-border pb-7">
+            <h1 className="m-0 max-w-[900px] text-[2.65rem] leading-[1.08] text-text-primary max-sm:text-[2rem]">
+              {displayTitle}
+            </h1>
+          </header>
+          {articleNodes}
+          {selectedDiffPath && (
+            <section className="mt-10 border-t border-border pt-8" data-recap-other-files-section>
+              <h2 className="mb-5 text-[1.45rem] leading-tight text-text-primary">
+                Other files
+              </h2>
+              <RecapDiffBlock
+                key={`selected-file-${selectedDiffPath}`}
+                path={selectedDiffPath}
+                context={renderState.context}
+              />
+            </section>
+          )}
+        </article>
+
+        <div className="order-3">
+          <RecapToc recapId={recapId} items={tocItems} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const DIFF_THEMES: { group: string; themes: string[] }[] = [
   { group: 'Pierre', themes: ['pierre-dark', 'pierre-light'] },
   { group: 'GitHub', themes: ['github-dark', 'github-dark-default', 'github-dark-dimmed', 'github-dark-high-contrast', 'github-light', 'github-light-default', 'github-light-high-contrast'] },
@@ -1897,6 +3283,12 @@ export default function App() {
   const [selection, setSelectionRaw] = useState<DiffSelection | null>(
     () => selectionFromHash(window.location.hash),
   );
+  const [recapId, setRecapId] = useState<string | null>(
+    () => recapIdFromHash(window.location.hash),
+  );
+  const [recapSectionId, setRecapSectionId] = useState<string | null>(
+    () => recapRouteFromHash(window.location.hash)?.sectionId ?? null,
+  );
   const [diff, setDiff] = useState<DiffResponse | null>(null);
   const [workingPatch, setWorkingPatch] = useState<string | null>(null);
   const [isStackLoading, setIsStackLoading] = useState(true);
@@ -1927,6 +3319,8 @@ export default function App() {
   const isReviewing = reviewModelStatus.size > 0 && [...reviewModelStatus.values()].some((s) => s === 'pending');
 
   const setSelection = useCallback((sel: DiffSelection | null) => {
+    setRecapId(null);
+    setRecapSectionId(null);
     setSelectionRaw((prev) => (diffSelectionsEqual(prev, sel) ? prev : sel));
     if (sel) {
       const newHash = selectionToHash(sel);
@@ -1938,6 +3332,16 @@ export default function App() {
 
   useEffect(() => {
     const onHashChange = () => {
+      const nextRecapRoute = recapRouteFromHash(window.location.hash);
+      if (nextRecapRoute) {
+        setRecapId(nextRecapRoute.id);
+        setRecapSectionId(nextRecapRoute.sectionId);
+        setSelectionRaw(null);
+        return;
+      }
+
+      setRecapId(null);
+      setRecapSectionId(null);
       const sel = selectionFromHash(window.location.hash);
       if (sel) setSelectionRaw((prev) => (diffSelectionsEqual(prev, sel) ? prev : sel));
     };
@@ -2047,6 +3451,14 @@ export default function App() {
         if (cancelled) return;
 
         setStack(data);
+
+        const hashRecapRoute = recapRouteFromHash(window.location.hash);
+        if (hashRecapRoute) {
+          setRecapId(hashRecapRoute.id);
+          setRecapSectionId(hashRecapRoute.sectionId);
+          setSelectionRaw(null);
+          return;
+        }
 
         // If we already have a selection from the URL hash, keep it
         // (but validate branch selections still exist)
@@ -2641,6 +4053,7 @@ export default function App() {
   );
 
   const branches = stack?.branches ?? [];
+  const isRecapRoute = recapId !== null;
 
   const parentIndexMap = useMemo(() => {
     const map = new Map<string, number>();
@@ -2684,23 +4097,37 @@ export default function App() {
               height="99"
             />
             <div className="hidden sm:block h-7 w-px bg-border shrink-0" aria-hidden="true" />
-            <DiffSwitcher
-              diff={diff}
-              open={switcherOpen}
-              onOpenChange={setSwitcherOpen}
-              selection={selection}
-              branches={branches}
-              isStackLoading={isStackLoading}
-              isGithubInfoLoading={isGithubInfoLoading}
-              githubInfo={githubInfo}
-              parentIndexMap={parentIndexMap}
-              lastChildIndexMap={lastChildIndexMap}
-              onSelect={(sel) => { setSelection(sel); setSwitcherOpen(false); }}
-            />
+            {isRecapRoute ? (
+              <div className="inline-flex min-w-0 max-w-full items-center gap-2.5 rounded-md border border-border bg-surface-hover px-2.5 py-1.5">
+                <span className="text-accent shrink-0"><GitBranchIcon /></span>
+                <span className="flex min-w-0 flex-col leading-tight">
+                  <span className="font-mono text-[0.56rem] font-medium uppercase tracking-normal text-text-muted">
+                    Viewing recap
+                  </span>
+                  <span className="truncate font-mono text-[0.82rem] font-semibold text-text-primary">
+                    {recapId}
+                  </span>
+                </span>
+              </div>
+            ) : (
+              <DiffSwitcher
+                diff={diff}
+                open={switcherOpen}
+                onOpenChange={setSwitcherOpen}
+                selection={selection}
+                branches={branches}
+                isStackLoading={isStackLoading}
+                isGithubInfoLoading={isGithubInfoLoading}
+                githubInfo={githubInfo}
+                parentIndexMap={parentIndexMap}
+                lastChildIndexMap={lastChildIndexMap}
+                onSelect={(sel) => { setSelection(sel); setSwitcherOpen(false); }}
+              />
+            )}
           </div>
 
           <div className="flex items-center gap-2 min-w-0 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-            {selection && !isDiffLoading && diffPatches.length > 0 && (
+            {!isRecapRoute && selection && !isDiffLoading && diffPatches.length > 0 && (
               isReviewing ? (
                 <div className="flex items-center gap-1.5 border border-border rounded-md px-2.5 py-1">
                   {[...reviewModelStatus.entries()].map(([model, status]) => {
@@ -2725,7 +4152,7 @@ export default function App() {
                 </button>
               )
             )}
-            {comments.length > 0 && (
+            {!isRecapRoute && comments.length > 0 && (
               <button
                 type="button"
                 className="appearance-none border border-accent bg-accent/10 text-accent text-[0.7rem] font-mono px-2.5 py-1 rounded-md cursor-pointer hover:bg-accent/20 transition-colors duration-100 whitespace-nowrap"
@@ -2734,12 +4161,12 @@ export default function App() {
                 {copyFeedback ? 'Copied!' : `Copy ${comments.length} comment${comments.length === 1 ? '' : 's'}`}
               </button>
             )}
-            {!isDiffLoading && diffPatches.length > 0 && viewedFiles.size > 0 && (
+            {!isRecapRoute && !isDiffLoading && diffPatches.length > 0 && viewedFiles.size > 0 && (
               <span className="font-mono text-[0.68rem] text-accent bg-accent/10 border border-accent/20 px-2 py-[3px] rounded-full whitespace-nowrap">
                 {viewedFiles.size}/{diffPatches.length} viewed
               </span>
             )}
-            {!isDiffLoading && diffPatches.length > 0 && (
+            {!isRecapRoute && !isDiffLoading && diffPatches.length > 0 && (
               <span className="font-mono text-[0.68rem] text-text-secondary bg-surface-hover border border-border px-2 py-[3px] rounded-full whitespace-nowrap">
                 {diffPatches.length} file{diffPatches.length === 1 ? '' : 's'}
               </span>
@@ -2791,15 +4218,25 @@ export default function App() {
           </div>
         </header>
 
-        {error ? (
+        {isRecapRoute && recapId ? (
+          <RecapView
+            recapId={recapId}
+            sectionId={recapSectionId}
+            diffStyle={diffStyle}
+            resolvedTheme={resolvedTheme}
+            diffTheme={activeDiffTheme}
+          />
+        ) : null}
+
+        {!isRecapRoute && error ? (
           <p className="m-[1.15rem] text-danger text-[0.88rem]">{error}</p>
         ) : null}
 
-        {isDiffLoading ? (
+        {!isRecapRoute && isDiffLoading ? (
           <p className="m-[1.15rem] text-text-muted text-[0.88rem]">Loading diff…</p>
         ) : null}
 
-        {!isDiffLoading && activePatch !== undefined && activePatch !== null && activePatch.trim() === '' ? (
+        {!isRecapRoute && !isDiffLoading && activePatch !== undefined && activePatch !== null && activePatch.trim() === '' ? (
           <p className="m-[1.15rem] text-text-muted text-[0.88rem]">
             {selection?.type === 'working'
               ? 'No uncommitted changes.'
@@ -2807,13 +4244,13 @@ export default function App() {
           </p>
         ) : null}
 
-        {!isDiffLoading && activePatch && activePatch.trim() !== '' && diffPatches.length === 0 ? (
+        {!isRecapRoute && !isDiffLoading && activePatch && activePatch.trim() !== '' && diffPatches.length === 0 ? (
           <p className="m-[1.15rem] text-danger text-[0.88rem]">
             Could not render this diff patch.
           </p>
         ) : null}
 
-        {!isDiffLoading && activePatch && diffPatches.length > 0 && (
+        {!isRecapRoute && !isDiffLoading && activePatch && diffPatches.length > 0 && (
           <div className="flex flex-1 min-h-0">
             {isWideScreen && (
             <aside className="w-[280px] min-w-[280px] border-r border-border flex flex-col overflow-hidden max-[1100px]:hidden">
@@ -2902,7 +4339,7 @@ export default function App() {
         )}
       </section>
 
-      {isReviewDialogOpen && (
+      {!isRecapRoute && isReviewDialogOpen && (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 w-[320px]">
           <ReviewDialog
             models={reviewModels}

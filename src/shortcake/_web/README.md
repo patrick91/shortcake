@@ -11,12 +11,21 @@ From any git repo managed by Shortcake:
 sc ui
 ```
 
+By default, `sc ui` serves the built `dist/` assets and the API from the same
+local server. It does not start Vite or require Bun unless the built assets are
+missing.
+
 Useful flags:
 
 ```bash
 sc ui --skip-install
-sc ui --host 127.0.0.1 --api-port 8765 --web-port 5173
+sc ui --host 127.0.0.1 --ui-port 8765
+sc ui --build-ui
+sc ui --dev --web-port 6173
 ```
+
+The UI port can also be configured with `SHORTCAKE_UI_PORT` or git config
+`shortcake.uiPort`.
 
 ## Run frontend manually
 
