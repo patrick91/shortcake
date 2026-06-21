@@ -1396,6 +1396,12 @@ index 0000000..2f3a4b5
 }
 
 const MOCK_WORKING_PATCH = normalizeMockPatch(generateWorkingChangesPatch());
+const MOCK_WORKING_DIFF_KEY = '0'.repeat(64);
+let mockReviewState = {
+  version: 1,
+  diffStyle: 'unified',
+  viewedFiles: {} as Record<string, Record<string, string>>,
+};
 
 function json(res: import('http').ServerResponse, status: number, data: unknown) {
   const body = JSON.stringify(data);
@@ -1420,6 +1426,48 @@ export function mockApi(): Plugin {
 
         if (url.pathname === '/api/stack') {
           return json(res, 200, MOCK_STACK);
+        }
+
+        if (url.pathname === '/api/state') {
+          return json(res, 200, {
+            ...MOCK_STACK,
+            workingDiffKey: MOCK_WORKING_DIFF_KEY,
+          });
+        }
+
+        if (url.pathname === '/api/review-state') {
+          if (req.method === 'GET') {
+            return json(res, 200, mockReviewState);
+          }
+
+          if (req.method === 'POST') {
+            let body = '';
+            req.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+            req.on('end', () => {
+              try {
+                const data = JSON.parse(body);
+                if (data.diffStyle === 'unified' || data.diffStyle === 'split') {
+                  mockReviewState = { ...mockReviewState, diffStyle: data.diffStyle };
+                }
+                if (typeof data.viewedScope === 'string' && typeof data.viewedFiles === 'object' && data.viewedFiles !== null) {
+                  const nextViewedFiles = { ...mockReviewState.viewedFiles };
+                  if (Object.keys(data.viewedFiles).length > 0) {
+                    nextViewedFiles[data.viewedScope] = data.viewedFiles;
+                  } else {
+                    delete nextViewedFiles[data.viewedScope];
+                  }
+                  mockReviewState = {
+                    ...mockReviewState,
+                    viewedFiles: nextViewedFiles,
+                  };
+                }
+                return json(res, 200, mockReviewState);
+              } catch {
+                return json(res, 400, { error: 'Invalid JSON body' });
+              }
+            });
+            return;
+          }
         }
 
         if (url.pathname === '/api/github-info') {
