@@ -1,23 +1,37 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import mimetypes
 import os
 import shutil
 import socket
 import subprocess
+import sys
 import threading
+import time
+import urllib.error
+import urllib.request
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import typer
 
 from shortcake import _git as git
+from shortcake._recap import (
+    RecapError,
+    build_branch_patch,
+    build_working_patch,
+    list_recaps,
+    load_recap,
+    stored_recap_payload,
+)
 
 if TYPE_CHECKING:
     from shortcake._git._core import Repo
@@ -47,8 +61,17 @@ from shortcake.commands.move_lines import (
     _split_lines_batch,
 )
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None  # type: ignore[assignment]
+
+DEFAULT_UI_PORT = 8765
+DEFAULT_DEV_WEB_PORT = 6173
+BACKGROUND_START_TIMEOUT_SECONDS = 30.0
 UI_STATE_VERSION = 1
 UI_STATE_FILE = "ui-state.json"
+UI_SESSION_FILE = "ui-session.json"
 DIFF_STYLES = {"unified", "split"}
 
 
@@ -62,6 +85,16 @@ class StackDiffBranch:
     commit: str
     commit_short: str
     commit_subject: str
+
+
+@dataclass(frozen=True)
+class UISession:
+    host: str
+    port: int
+    pid: int
+    repo_path: str
+    origin: str
+    mode: str
 
 
 def _empty_persisted_ui_state() -> dict[str, Any]:
@@ -80,6 +113,23 @@ def _get_shortcake_state_dir(repo: Repo) -> Path:
 
 def _get_persisted_ui_state_path(repo: Repo) -> Path:
     return _get_shortcake_state_dir(repo) / UI_STATE_FILE
+
+
+@contextlib.contextmanager
+def _locked_file(path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+") as lock_file:
+        if fcntl is not None:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            if fcntl is not None:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _get_persisted_ui_state_lock_path(repo: Repo) -> Path:
+    return _get_shortcake_state_dir(repo) / "ui-state.lock"
 
 
 def _normalize_persisted_ui_state(data: Any) -> dict[str, Any]:
@@ -125,10 +175,15 @@ def _load_persisted_ui_state(repo: Repo) -> dict[str, Any]:
 
 def _save_persisted_ui_state(repo: Repo, state: dict[str, Any]) -> None:
     state_path = _get_persisted_ui_state_path(repo)
+    tmp_path = state_path.with_name(f".{state_path.name}.{os.getpid()}.tmp")
     try:
-        with open(state_path, "w") as f:
+        with open(tmp_path, "w") as f:
             json.dump(_normalize_persisted_ui_state(state), f, indent=2)
+            f.write("\n")
+        os.replace(tmp_path, state_path)
     except OSError:
+        with contextlib.suppress(OSError):
+            tmp_path.unlink()
         pass
 
 
@@ -136,33 +191,34 @@ def _update_persisted_ui_state(repo: Repo, body: Any) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise ValueError("JSON body must be an object")
 
-    state = _load_persisted_ui_state(repo)
+    with _locked_file(_get_persisted_ui_state_lock_path(repo)):
+        state = _load_persisted_ui_state(repo)
 
-    if "diffStyle" in body:
-        diff_style = body["diffStyle"]
-        if diff_style not in DIFF_STYLES:
-            raise ValueError("diffStyle must be 'unified' or 'split'")
-        state["diffStyle"] = diff_style
+        if "diffStyle" in body:
+            diff_style = body["diffStyle"]
+            if diff_style not in DIFF_STYLES:
+                raise ValueError("diffStyle must be 'unified' or 'split'")
+            state["diffStyle"] = diff_style
 
-    if "viewedScope" in body or "viewedFiles" in body:
-        scope = body.get("viewedScope")
-        raw_files = body.get("viewedFiles")
-        if not isinstance(scope, str) or not isinstance(raw_files, dict):
-            raise ValueError("viewedScope and viewedFiles are required")
+        if "viewedScope" in body or "viewedFiles" in body:
+            scope = body.get("viewedScope")
+            raw_files = body.get("viewedFiles")
+            if not isinstance(scope, str) or not isinstance(raw_files, dict):
+                raise ValueError("viewedScope and viewedFiles are required")
 
-        files = {
-            path: patch_key
-            for path, patch_key in raw_files.items()
-            if isinstance(path, str) and isinstance(patch_key, str)
-        }
-        viewed_files = state.setdefault("viewedFiles", {})
-        if files:
-            viewed_files[scope] = files
-        elif isinstance(viewed_files, dict) and scope in viewed_files:
-            del viewed_files[scope]
+            files = {
+                path: patch_key
+                for path, patch_key in raw_files.items()
+                if isinstance(path, str) and isinstance(patch_key, str)
+            }
+            viewed_files = state.setdefault("viewedFiles", {})
+            if files:
+                viewed_files[scope] = files
+            elif isinstance(viewed_files, dict) and scope in viewed_files:
+                del viewed_files[scope]
 
-    _save_persisted_ui_state(repo, state)
-    return _load_persisted_ui_state(repo)
+        _save_persisted_ui_state(repo, state)
+        return _load_persisted_ui_state(repo)
 
 
 def _tracked_branch_parents(repo: Repo) -> dict[str, str]:
@@ -256,24 +312,10 @@ def _build_stack_payload(repo: Repo) -> dict[str, Any]:
 
 def _git_diff_patch(repo_path: Path, parent: str, branch: str) -> str:
     """Return git patch for branch compared to parent (PR-style triple-dot diff)."""
-    result = subprocess.run(
-        [
-            "git",
-            "diff",
-            "--no-color",
-            "--find-renames",
-            "--full-index",
-            f"{parent}...{branch}",
-        ],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        message = result.stderr.strip() or "Failed to build diff patch"
-        raise ValueError(message)
-    return result.stdout
+    try:
+        return build_branch_patch(repo_path, parent, branch)
+    except RecapError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _build_diff_payload(repo: Repo, branch: str) -> dict[str, Any]:
@@ -296,53 +338,10 @@ def _build_diff_payload(repo: Repo, branch: str) -> dict[str, Any]:
 
 def _git_working_diff(repo_path: Path) -> str:
     """Return git diff for uncommitted changes."""
-    result = subprocess.run(
-        ["git", "diff", "--no-color", "--find-renames", "--full-index", "HEAD"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        message = result.stderr.strip() or "Failed to build working diff"
-        raise ValueError(message)
-    diff = result.stdout
-
-    # Include untracked files as new-file diffs
-    untracked = subprocess.run(
-        ["git", "ls-files", "--others", "--exclude-standard"],
-        cwd=repo_path,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    for filepath in untracked.stdout.splitlines():
-        filepath = filepath.strip()
-        if not filepath:
-            continue
-        full_path = repo_path / filepath
-        try:
-            content = full_path.read_text()
-        except (OSError, UnicodeDecodeError):
-            continue
-        lines = content.splitlines(True)
-        line_count = len(lines)
-        body = "".join(
-            f"+{line}"
-            if line.endswith("\n")
-            else f"+{line}\n\\ No newline at end of file\n"
-            for line in lines
-        )
-        diff += (
-            f"diff --git a/{filepath} b/{filepath}\n"
-            f"new file mode 100644\n"
-            f"--- /dev/null\n"
-            f"+++ b/{filepath}\n"
-            f"@@ -0,0 +1,{line_count} @@\n"
-            f"{body}"
-        )
-
-    return diff
+    try:
+        return build_working_patch(repo_path)
+    except RecapError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _build_working_diff_payload(repo: Repo) -> dict[str, Any]:
@@ -475,7 +474,79 @@ def _write_json(
         pass
 
 
-def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
+def _write_bytes(
+    handler: BaseHTTPRequestHandler,
+    status: int,
+    body: bytes,
+    *,
+    content_type: str,
+    cache_control: str = "no-store",
+) -> None:
+    try:
+        handler.send_response(status)
+        handler.send_header("Content-Type", content_type)
+        handler.send_header("Cache-Control", cache_control)
+        handler.send_header("Content-Length", str(len(body)))
+        handler.end_headers()
+        handler.wfile.write(body)
+    except (BrokenPipeError, ConnectionError):  # pragma: no cover
+        pass
+
+
+def _safe_static_path(static_dir: Path, request_path: str) -> Path | None:
+    if request_path in ("", "/"):
+        request_path = "/index.html"
+
+    relative = unquote(request_path).lstrip("/")
+    candidate = (static_dir / relative).resolve()
+    try:
+        candidate.relative_to(static_dir.resolve())
+    except ValueError:
+        return None
+
+    if candidate.is_file():
+        return candidate
+    return None
+
+
+def _serve_static_ui(
+    handler: BaseHTTPRequestHandler,
+    static_dir: Path,
+    request_path: str,
+) -> None:
+    target = _safe_static_path(static_dir, request_path)
+    if target is None and not request_path.startswith("/api/"):
+        target = static_dir / "index.html"
+
+    if target is None or not target.is_file():
+        _write_json(handler, 404, {"error": "Not found"})
+        return
+
+    content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+    cache_control = (
+        "public, max-age=31536000, immutable"
+        if "/assets/" in target.as_posix()
+        else "no-store"
+    )
+    try:
+        body = target.read_bytes()
+    except OSError as exc:
+        _write_json(handler, 500, {"error": str(exc)})
+        return
+
+    _write_bytes(
+        handler,
+        200,
+        body,
+        content_type=content_type,
+        cache_control=cache_control,
+    )
+
+
+def _build_request_handler(
+    repo_path: Path,
+    static_dir: Path | None = None,
+) -> type[BaseHTTPRequestHandler]:
     def _open_repo() -> Repo:
         return git.open_repo(repo_path)
 
@@ -484,7 +555,7 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
             parsed = urlparse(self.path)
 
             if parsed.path == "/api/health":
-                _write_json(self, 200, {"ok": True})
+                _write_json(self, 200, {"ok": True, "repoPath": str(repo_path)})
                 return
 
             if parsed.path == "/api/stack":
@@ -519,6 +590,44 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
                     _write_json(
                         self, 200, _build_github_info_payload(repo, branch_names)
                     )
+                except Exception as exc:
+                    _write_json(self, 500, {"error": str(exc)})
+                return
+
+            if parsed.path == "/api/recaps":
+                try:
+                    repo = _open_repo()
+                    _write_json(
+                        self,
+                        200,
+                        {
+                            "recaps": [
+                                meta.model_dump(mode="json", by_alias=True)
+                                for meta in list_recaps(repo)
+                            ]
+                        },
+                    )
+                except Exception as exc:
+                    _write_json(self, 500, {"error": str(exc)})
+                return
+
+            if parsed.path.startswith("/api/recaps/"):
+                recap_id = unquote(parsed.path.removeprefix("/api/recaps/"))
+                if not recap_id:
+                    _write_json(self, 400, {"error": "Missing recap id"})
+                    return
+
+                try:
+                    repo = _open_repo()
+                    _write_json(
+                        self,
+                        200,
+                        stored_recap_payload(load_recap(repo, recap_id)),
+                    )
+                except FileNotFoundError as exc:
+                    _write_json(self, 404, {"error": str(exc)})
+                except RecapError as exc:
+                    _write_json(self, 400, {"error": str(exc)})
                 except Exception as exc:
                     _write_json(self, 500, {"error": str(exc)})
                 return
@@ -576,6 +685,10 @@ def _build_request_handler(repo_path: Path) -> type[BaseHTTPRequestHandler]:
 
             if parsed.path == "/api/review/models":
                 _write_json(self, 200, {"models": _get_available_models()})
+                return
+
+            if static_dir is not None:
+                _serve_static_ui(self, static_dir, parsed.path)
                 return
 
             _write_json(self, 404, {"error": "Not found"})
@@ -1060,12 +1173,159 @@ def _start_api_server(
     repo_path: Path,
     host: str,
     port: int,
+    static_dir: Path | None = None,
 ) -> ThreadingHTTPServer:
-    handler = _build_request_handler(repo_path)
+    handler = _build_request_handler(repo_path, static_dir=static_dir)
     server = ThreadingHTTPServer((host, port), handler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server
+
+
+def _start_api_server_on_available_port(
+    repo_path: Path,
+    host: str,
+    start_port: int,
+    *,
+    static_dir: Path | None = None,
+    max_tries: int = 100,
+) -> tuple[ThreadingHTTPServer, int]:
+    last_error: OSError | None = None
+    for offset in range(max_tries):
+        candidate = start_port + offset
+        try:
+            server = _start_api_server(
+                repo_path,
+                host,
+                candidate,
+                static_dir=static_dir,
+            )
+        except OSError as exc:
+            last_error = exc
+            continue
+        return server, candidate
+
+    message = f"Could not bind an available port on {host} starting at {start_port}"
+    if last_error is not None:
+        message = f"{message}: {last_error}"
+    raise ValueError(message)
+
+
+def _get_ui_session_path(repo: Repo) -> Path:
+    return _get_shortcake_state_dir(repo) / UI_SESSION_FILE
+
+
+def _get_ui_session_lock_path(repo: Repo) -> Path:
+    return _get_shortcake_state_dir(repo) / "ui-session.lock"
+
+
+def _ui_origin(host: str, port: int) -> str:
+    return f"http://{host}:{port}"
+
+
+def _ui_url(origin: str, route_hash: str = "") -> str:
+    if not route_hash:
+        return origin
+    return f"{origin}/{route_hash}"
+
+
+def _read_ui_session(repo: Repo) -> UISession | None:
+    path = _get_ui_session_path(repo)
+    try:
+        raw = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+
+    if not isinstance(raw, dict):
+        return None
+    try:
+        host = raw["host"]
+        port = raw["port"]
+        pid = raw["pid"]
+        repo_path = raw["repoPath"]
+        origin = raw["origin"]
+        mode = raw.get("mode", "static")
+    except KeyError:
+        return None
+
+    if (
+        not isinstance(host, str)
+        or not isinstance(port, int)
+        or not isinstance(pid, int)
+        or not isinstance(repo_path, str)
+        or not isinstance(origin, str)
+        or not isinstance(mode, str)
+    ):
+        return None
+
+    return UISession(
+        host=host,
+        port=port,
+        pid=pid,
+        repo_path=repo_path,
+        origin=origin,
+        mode=mode,
+    )
+
+
+def _write_ui_session(repo: Repo, session: UISession) -> None:
+    path = _get_ui_session_path(repo)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    payload = {
+        "host": session.host,
+        "port": session.port,
+        "pid": session.pid,
+        "repoPath": session.repo_path,
+        "origin": session.origin,
+        "mode": session.mode,
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path.write_text(json.dumps(payload, indent=2) + "\n")
+    os.replace(tmp_path, path)
+
+
+def _clear_ui_session(repo: Repo, session: UISession) -> None:
+    path = _get_ui_session_path(repo)
+    current = _read_ui_session(repo)
+    if current != session:
+        return
+    with contextlib.suppress(OSError):
+        path.unlink()
+
+
+def _session_health_payload(session: UISession) -> dict[str, Any] | None:
+    try:
+        with urllib.request.urlopen(
+            f"{session.origin}/api/health",
+            timeout=0.35,
+        ) as response:
+            if response.status != 200:
+                return None
+            payload = json.loads(response.read().decode())
+    except (OSError, urllib.error.URLError, json.JSONDecodeError, TimeoutError):
+        return None
+
+    return payload if isinstance(payload, dict) else None
+
+
+def _live_ui_session_unlocked(repo: Repo, host: str) -> UISession | None:
+    session = _read_ui_session(repo)
+    if session is None or session.host != host:
+        return None
+
+    payload = _session_health_payload(session)
+    repo_path = str(Path(repo.workdir).resolve())
+    if payload and payload.get("ok") is True and payload.get("repoPath") == repo_path:
+        return session
+
+    with contextlib.suppress(OSError):
+        _get_ui_session_path(repo).unlink()
+    return None
+
+
+def _live_ui_session(repo: Repo, host: str) -> UISession | None:
+    with _locked_file(_get_ui_session_lock_path(repo)):
+        return _live_ui_session_unlocked(repo, host)
 
 
 def _resolve_js_runtime() -> str | None:
@@ -1115,6 +1375,109 @@ def _resolve_frontend_dir(repo_path: Path) -> Path | None:
         if has_package and has_index:
             return candidate
     return None
+
+
+def _resolve_static_ui_dir(repo_path: Path) -> Path | None:
+    explicit = os.environ.get("SHORTCAKE_UI_DIST_DIR")
+    candidates: list[Path] = []
+    if explicit:
+        candidates.append(Path(explicit).expanduser())
+
+    frontend_dir = _resolve_frontend_dir(repo_path)
+    if frontend_dir is not None:
+        candidates.append(frontend_dir / "dist")
+
+    for candidate in candidates:
+        if (candidate / "index.html").is_file():
+            return candidate
+    return None
+
+
+def _run_build(runtime: str, frontend_dir: Path) -> str:
+    candidates = _runtime_candidates(runtime)
+    for candidate in candidates:
+        result = subprocess.run(
+            [candidate, "run", "build"],
+            cwd=frontend_dir,
+            check=False,
+        )
+        if result.returncode == 0:
+            return candidate
+
+    joined = " or ".join(f"'{candidate} run build'" for candidate in candidates)
+    raise ValueError(f"UI build failed with {joined}")
+
+
+def _config_int(repo: Repo, key: str) -> int | None:
+    try:
+        value = repo.config[key]
+    except (KeyError, TypeError):
+        return None
+
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _env_int(name: str) -> int | None:
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _resolve_ui_port(repo: Repo, requested_port: int | None) -> int:
+    return (
+        requested_port
+        or _env_int("SHORTCAKE_UI_PORT")
+        or _config_int(repo, "shortcake.uiPort")
+        or DEFAULT_UI_PORT
+    )
+
+
+def _resolve_dev_web_port(repo: Repo, requested_port: int | None) -> int:
+    return (
+        requested_port
+        or _env_int("SHORTCAKE_UI_DEV_PORT")
+        or _config_int(repo, "shortcake.uiDevPort")
+        or DEFAULT_DEV_WEB_PORT
+    )
+
+
+def _prepare_static_ui_dir(
+    repo_path: Path,
+    *,
+    build_ui: bool,
+    skip_install: bool,
+) -> Path:
+    frontend_dir = _resolve_frontend_dir(repo_path)
+    static_dir = _resolve_static_ui_dir(repo_path)
+
+    if build_ui or static_dir is None:
+        if frontend_dir is None:
+            raise ValueError("frontend directory not found")
+
+        runtime = _resolve_js_runtime()
+        if runtime is None:
+            raise ValueError(
+                "built UI assets were not found, and neither 'pybun' nor 'bun' "
+                "was found in PATH to build them"
+            )
+
+        if not skip_install:
+            runtime = _run_install(runtime, frontend_dir)
+        _run_build(runtime, frontend_dir)
+        static_dir = frontend_dir / "dist"
+
+    if static_dir is None or not (static_dir / "index.html").is_file():
+        raise ValueError("built UI assets not found")
+    return static_dir
 
 
 def _run_install(runtime: str, frontend_dir: Path) -> str:
@@ -1197,22 +1560,198 @@ def _find_open_port(host: str, start_port: int, max_tries: int = 100) -> int:
     )
 
 
+def _wait_for_interrupt() -> None:  # pragma: no cover
+    while True:
+        time.sleep(3600)
+
+
+def _shortcake_cli_command() -> list[str]:
+    executable = shutil.which("shortcake") or shutil.which("sc")
+    if executable:
+        return [executable]
+    return [sys.argv[0]]
+
+
+def _start_static_ui_background(
+    repo: Repo,
+    *,
+    host: str,
+    port: int,
+    build_ui: bool,
+    skip_install: bool,
+) -> UISession:
+    repo_path = Path(repo.workdir).resolve()
+    log_path = _get_shortcake_state_dir(repo) / "ui-background.log"
+    command = [
+        *_shortcake_cli_command(),
+        "ui",
+        "--host",
+        host,
+        "--ui-port",
+        str(port),
+        "--no-open-browser",
+    ]
+    if build_ui:
+        command.append("--build-ui")
+    if skip_install:
+        command.append("--skip-install")
+
+    with log_path.open("ab") as log:
+        process = subprocess.Popen(
+            command,
+            cwd=repo_path,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            close_fds=True,
+            start_new_session=True,
+        )
+
+    deadline = time.monotonic() + BACKGROUND_START_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        session = _live_ui_session(repo, host)
+        if session is not None:
+            return session
+        if process.poll() is not None:
+            raise ValueError(
+                "background UI server exited before becoming healthy "
+                f"(exit code {process.returncode}); see {log_path}"
+            )
+        time.sleep(0.15)
+
+    raise ValueError(
+        "background UI server did not become healthy within "
+        f"{BACKGROUND_START_TIMEOUT_SECONDS:g}s; see {log_path}"
+    )
+
+
+def _open_or_start_static_ui(
+    repo: Repo,
+    *,
+    host: str,
+    port: int,
+    route_hash: str = "",
+    open_browser: bool = True,
+    build_ui: bool = False,
+    skip_install: bool = False,
+    background: bool = False,
+    label: str = "UI",
+) -> None:
+    repo_path = Path(repo.workdir).resolve()
+
+    existing = _live_ui_session(repo, host)
+    if existing is not None:
+        url = _ui_url(existing.origin, route_hash)
+        typer.echo(f"Using running Shortcake UI at {url}")
+        if open_browser:
+            webbrowser.open(url)
+        return
+
+    if background:
+        try:
+            session = _start_static_ui_background(
+                repo,
+                host=host,
+                port=port,
+                build_ui=build_ui,
+                skip_install=skip_install,
+            )
+        except ValueError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+
+        url = _ui_url(session.origin, route_hash)
+        typer.echo(f"Shortcake {label} running in background at {url}")
+        if open_browser:
+            webbrowser.open(url)
+        return
+
+    try:
+        static_dir = _prepare_static_ui_dir(
+            repo_path,
+            build_ui=build_ui,
+            skip_install=skip_install,
+        )
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
+
+    with _locked_file(_get_ui_session_lock_path(repo)):
+        existing = _live_ui_session_unlocked(repo, host)
+        if existing is not None:
+            url = _ui_url(existing.origin, route_hash)
+            typer.echo(f"Using running Shortcake UI at {url}")
+            if open_browser:
+                webbrowser.open(url)
+            return
+
+        try:
+            server, selected_port = _start_api_server_on_available_port(
+                repo_path,
+                host,
+                port,
+                static_dir=static_dir,
+            )
+        except ValueError as exc:
+            typer.echo(f"Error: {exc}", err=True)
+            raise typer.Exit(1) from exc
+
+        origin = _ui_origin(host, selected_port)
+        session = UISession(
+            host=host,
+            port=selected_port,
+            pid=os.getpid(),
+            repo_path=str(repo_path),
+            origin=origin,
+            mode="static",
+        )
+        _write_ui_session(repo, session)
+
+    url = _ui_url(origin, route_hash)
+    if selected_port != port:
+        typer.echo(f"Port {port} is in use, using {selected_port} for UI.")
+
+    typer.echo(f"Shortcake {label} running at {url}")
+    typer.echo("Press Ctrl+C to stop.")
+    if open_browser:
+        webbrowser.open(url)
+
+    try:
+        _wait_for_interrupt()
+    except KeyboardInterrupt:
+        return
+    finally:
+        server.shutdown()
+        server.server_close()
+        with _locked_file(_get_ui_session_lock_path(repo)):
+            _clear_ui_session(repo, session)
+
+
 def ui(
     host: Annotated[
         str,
         typer.Option(help="Host for API and Vite dev server."),
     ] = "127.0.0.1",
-    api_port: Annotated[
-        int,
-        typer.Option(help="Port for Shortcake stack-diff API."),
-    ] = 8765,
+    ui_port: Annotated[
+        int | None,
+        typer.Option(
+            "--ui-port",
+            "--api-port",
+            help=(
+                "Port for the built Shortcake UI/API server. Defaults to "
+                "SHORTCAKE_UI_PORT, git config shortcake.uiPort, or 8765."
+            ),
+        ),
+    ] = None,
     web_port: Annotated[
-        int,
-        typer.Option(help="Port for Vite React dev server."),
-    ] = 5173,
+        int | None,
+        typer.Option(help="Port for Vite React dev server when --dev is used."),
+    ] = None,
     skip_install: Annotated[
         bool,
-        typer.Option("--skip-install", help="Skip 'bun install'/'pybun install'."),
+        typer.Option(
+            "--skip-install",
+            help="Skip 'bun install'/'pybun install' before --dev or --build-ui.",
+        ),
     ] = False,
     open_browser: Annotated[
         bool,
@@ -1221,10 +1760,43 @@ def ui(
             help="Open the UI in the default browser after startup.",
         ),
     ] = True,
+    dev: Annotated[
+        bool,
+        typer.Option("--dev", help="Run the Vite dev server instead of built assets."),
+    ] = False,
+    build_ui: Annotated[
+        bool,
+        typer.Option("--build-ui", help="Build the static UI once before serving it."),
+    ] = False,
+    background: Annotated[
+        bool,
+        typer.Option(
+            "--background",
+            help="Start the built UI server in a detached background process.",
+        ),
+    ] = False,
 ) -> None:
-    """Launch stack diff UI (React + Vite) with a local API server."""
+    """Launch stack diff UI with a local API server."""
     repo = git.open_repo()
     repo_path = Path(repo.workdir)
+    selected_ui_port = _resolve_ui_port(repo, ui_port)
+
+    if not dev:
+        _open_or_start_static_ui(
+            repo,
+            host=host,
+            port=selected_ui_port,
+            open_browser=open_browser,
+            build_ui=build_ui,
+            skip_install=skip_install,
+            background=background,
+        )
+        return
+
+    if background:
+        typer.echo("Error: --background is only supported for the built UI.", err=True)
+        raise typer.Exit(1)
+
     frontend_dir = _resolve_frontend_dir(repo_path)
 
     if frontend_dir is None:
@@ -1244,15 +1816,28 @@ def ui(
         )
         raise typer.Exit(1)
 
-    selected_api_port = _find_open_port(host, api_port)
-    selected_web_port = _find_open_port(host, web_port)
-    api_origin = f"http://{host}:{selected_api_port}"
-    server = _start_api_server(repo_path, host, selected_api_port)
+    try:
+        server, selected_api_port = _start_api_server_on_available_port(
+            repo_path.resolve(),
+            host,
+            selected_ui_port,
+        )
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(1) from exc
 
-    if selected_api_port != api_port:
-        typer.echo(f"Port {api_port} is in use, using {selected_api_port} for API.")
-    if selected_web_port != web_port:
-        typer.echo(f"Port {web_port} is in use, using {selected_web_port} for UI.")
+    selected_web_port = _find_open_port(host, _resolve_dev_web_port(repo, web_port))
+    api_origin = f"http://{host}:{selected_api_port}"
+
+    if selected_api_port != selected_ui_port:
+        typer.echo(
+            f"Port {selected_ui_port} is in use, using {selected_api_port} for API."
+        )
+    default_web_port = _resolve_dev_web_port(repo, web_port)
+    if selected_web_port != default_web_port:
+        typer.echo(
+            f"Port {default_web_port} is in use, using {selected_web_port} for UI."
+        )
 
     typer.echo(f"Stack API running at {api_origin}")
     typer.echo(f"Starting UI dev server at http://{host}:{selected_web_port}")
