@@ -13,9 +13,11 @@ from shortcake.commands.ls import ls
 from shortcake.commands.modify import modify
 from shortcake.commands.move import move
 from shortcake.commands.pull import pull
+from shortcake.commands.recap import recap
 from shortcake.commands.reorder import reorder
 from shortcake.commands.restack import restack
 from shortcake.commands.review import review
+from shortcake.commands.skill import skill
 from shortcake.commands.submit import submit
 from shortcake.commands.sync import sync
 from shortcake.commands.top import top
@@ -45,9 +47,11 @@ app.command()(ls)
 app.command()(modify)
 app.command()(move)
 app.command()(pull)
+app.add_typer(recap, name="recap")
 app.command()(reorder)
 app.command()(restack)
 app.command()(review)
+app.command()(skill)
 app.command()(submit)
 app.command()(sync)
 app.command()(top)

@@ -7,10 +7,12 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import typer
 
 from shortcake import _git as git
 from shortcake._github import BranchGitHubInfo
 from shortcake.commands.ui import (
+    UISession,
     _build_diff_payload,
     _build_github_info_payload,
     _build_request_handler,
@@ -18,21 +20,37 @@ from shortcake.commands.ui import (
     _build_suggestions_payload,
     _build_ui_state_payload,
     _build_working_diff_payload,
+    _clear_ui_session,
     _find_open_port,
     _git_diff_patch,
     _git_working_diff,
     _git_working_diff_key,
+    _live_ui_session,
+    _live_ui_session_unlocked,
     _load_persisted_ui_state,
     _normalize_persisted_ui_state,
+    _open_or_start_static_ui,
+    _prepare_static_ui_dir,
+    _read_ui_session,
+    _resolve_dev_web_port,
     _resolve_frontend_dir,
     _resolve_js_runtime,
+    _resolve_static_ui_dir,
+    _resolve_ui_port,
+    _run_build,
     _run_dev_server,
     _run_install,
     _runtime_candidates,
+    _safe_static_path,
     _save_persisted_ui_state,
+    _session_health_payload,
+    _shortcake_cli_command,
     _start_api_server,
+    _start_api_server_on_available_port,
+    _start_static_ui_background,
     _update_persisted_ui_state,
     _write_json,
+    _write_ui_session,
     ui,
 )
 from tests._git_helpers import Repo
@@ -208,6 +226,82 @@ def test_resolve_frontend_dir_returns_none_when_no_candidates(
 
     result = _resolve_frontend_dir(tmp_path / "no" / "repo" / "here")
     assert result is None
+
+
+def test_resolve_static_ui_dir_uses_frontend_dist(
+    temp_repo: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Built UI assets are resolved from the frontend dist directory."""
+    frontend_dir = tmp_path / "web"
+    dist_dir = frontend_dir / "dist"
+    dist_dir.mkdir(parents=True)
+    (frontend_dir / "package.json").write_text("{}")
+    (frontend_dir / "index.html").write_text("<!doctype html>")
+    (dist_dir / "index.html").write_text("<!doctype html>")
+
+    monkeypatch.setattr(
+        "shortcake.commands.ui._resolve_frontend_dir", lambda _: frontend_dir
+    )
+
+    assert _resolve_static_ui_dir(Path(temp_repo.workdir)) == dist_dir
+
+
+def test_resolve_static_ui_dir_prefers_explicit_dist(
+    temp_repo: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    dist_dir.mkdir()
+    (dist_dir / "index.html").write_text("<!doctype html>")
+
+    monkeypatch.setenv("SHORTCAKE_UI_DIST_DIR", str(dist_dir))
+    monkeypatch.setattr("shortcake.commands.ui._resolve_frontend_dir", lambda _: None)
+
+    assert _resolve_static_ui_dir(Path(temp_repo.workdir)) == dist_dir
+
+
+def test_resolve_static_ui_dir_returns_none_without_assets(
+    temp_repo: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    empty_dist = tmp_path / "empty-dist"
+    empty_dist.mkdir()
+
+    monkeypatch.setenv("SHORTCAKE_UI_DIST_DIR", str(empty_dist))
+    monkeypatch.setattr("shortcake.commands.ui._resolve_frontend_dir", lambda _: None)
+
+    assert _resolve_static_ui_dir(Path(temp_repo.workdir)) is None
+
+
+def test_resolve_ui_port_prefers_explicit_env_then_git_config(
+    temp_repo: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("SHORTCAKE_UI_PORT", raising=False)
+    temp_repo.config["shortcake.uiPort"] = "9001"
+
+    assert _resolve_ui_port(temp_repo, 9100) == 9100
+    assert _resolve_ui_port(temp_repo, None) == 9001
+
+    monkeypatch.setenv("SHORTCAKE_UI_PORT", "9002")
+    assert _resolve_ui_port(temp_repo, None) == 9002
+
+
+def test_resolve_ports_ignore_invalid_env_and_config(
+    temp_repo: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SHORTCAKE_UI_PORT", "not-a-port")
+    monkeypatch.setenv("SHORTCAKE_UI_DEV_PORT", "-1")
+    temp_repo.config["shortcake.uiPort"] = "also-bad"
+    temp_repo.config["shortcake.uiDevPort"] = "0"
+
+    assert _resolve_ui_port(temp_repo, None) == 8765
+    assert _resolve_dev_web_port(temp_repo, None) == 6173
 
 
 def test_find_open_port_uses_requested_port_when_available() -> None:
@@ -531,7 +625,71 @@ def _make_handler(repo: Repo, path: str) -> FakeHandler:
 def test_handler_health(temp_repo: Repo) -> None:
     fake = _make_handler(temp_repo, "/api/health")
     assert fake._status == 200
-    assert fake.response_json() == {"ok": True}
+    payload = fake.response_json()
+    assert payload["ok"] is True
+    assert payload["repoPath"] == str(Path(temp_repo.workdir))
+
+
+def test_handler_serves_static_index_and_assets(
+    temp_repo: Repo,
+    tmp_path: Path,
+) -> None:
+    static_dir = tmp_path / "dist"
+    assets_dir = static_dir / "assets"
+    assets_dir.mkdir(parents=True)
+    (static_dir / "index.html").write_text("<!doctype html><div id='root'></div>")
+    (assets_dir / "app.js").write_text("console.log('shortcake')")
+
+    handler_cls = _build_request_handler(Path(temp_repo.workdir), static_dir=static_dir)
+
+    index = FakeHandler("/")
+    handler_cls.do_GET(index)  # type: ignore[arg-type]
+    assert index._status == 200
+    assert ("Content-Type", "text/html") in index._headers
+    assert b"root" in index.wfile.getvalue()
+
+    fallback = FakeHandler("/missing")
+    handler_cls.do_GET(fallback)  # type: ignore[arg-type]
+    assert fallback._status == 200
+    assert b"root" in fallback.wfile.getvalue()
+
+    asset = FakeHandler("/assets/app.js")
+    handler_cls.do_GET(asset)  # type: ignore[arg-type]
+    assert asset._status == 200
+    assert b"shortcake" in asset.wfile.getvalue()
+
+
+def test_safe_static_path_rejects_path_traversal(tmp_path: Path) -> None:
+    static_dir = tmp_path / "dist"
+    static_dir.mkdir()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("secret")
+
+    assert _safe_static_path(static_dir, "/../secret.txt") is None
+
+
+def test_handler_static_errors(
+    temp_repo: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    static_dir = tmp_path / "dist"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("<!doctype html>")
+    handler_cls = _build_request_handler(Path(temp_repo.workdir), static_dir=static_dir)
+
+    missing_api = FakeHandler("/api/nope")
+    handler_cls.do_GET(missing_api)  # type: ignore[arg-type]
+    assert missing_api._status == 404
+
+    def fail_read_bytes(self: Path) -> bytes:
+        raise OSError("cannot read")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
+    read_error = FakeHandler("/")
+    handler_cls.do_GET(read_error)  # type: ignore[arg-type]
+    assert read_error._status == 500
+    assert "cannot read" in read_error.response_json()["error"]
 
 
 def test_handler_stack(repo_with_stack: Repo) -> None:
@@ -988,10 +1146,180 @@ def test_start_api_server(temp_repo: Repo) -> None:
         port = server.server_address[1]
         resp = urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health")
         data = json.loads(resp.read())
-        assert data == {"ok": True}
+        assert data["ok"] is True
+        assert data["repoPath"] == str(Path(temp_repo.workdir))
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_start_api_server_on_available_port_skips_taken_port(
+    temp_repo: Repo,
+) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        host, occupied_port = sock.getsockname()
+        sock.listen(1)
+
+        server, port = _start_api_server_on_available_port(
+            Path(temp_repo.workdir),
+            host,
+            occupied_port,
+            max_tries=20,
+        )
+
+    try:
+        assert port != occupied_port
+        assert port > occupied_port
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_start_api_server_on_available_port_raises_after_exhaustion(
+    temp_repo: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "shortcake.commands.ui._start_api_server",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("in use")),
+    )
+
+    with pytest.raises(ValueError, match="in use"):
+        _start_api_server_on_available_port(
+            Path(temp_repo.workdir),
+            "127.0.0.1",
+            8765,
+            max_tries=1,
+        )
+
+
+def test_run_build_success_and_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shutil, "which", lambda _: None)
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: MagicMock(returncode=0))
+
+    assert _run_build("bun", tmp_path) == "bun"
+
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: MagicMock(returncode=1))
+    with pytest.raises(ValueError, match="UI build failed"):
+        _run_build("bun", tmp_path)
+
+
+def test_prepare_static_ui_dir_builds_when_dist_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frontend_dir = tmp_path / "web"
+    dist_dir = frontend_dir / "dist"
+    frontend_dir.mkdir()
+    (frontend_dir / "package.json").write_text("{}")
+    (frontend_dir / "index.html").write_text("<!doctype html>")
+
+    def fake_run_build(runtime: str, frontend_dir_arg: Path) -> str:
+        assert runtime == "bun"
+        assert frontend_dir_arg == frontend_dir
+        dist_dir.mkdir()
+        (dist_dir / "index.html").write_text("<!doctype html>")
+        return runtime
+
+    monkeypatch.setattr(
+        "shortcake.commands.ui._resolve_frontend_dir", lambda _: frontend_dir
+    )
+    monkeypatch.setattr("shortcake.commands.ui._resolve_static_ui_dir", lambda _: None)
+    monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: "bun")
+    monkeypatch.setattr("shortcake.commands.ui._run_build", fake_run_build)
+
+    assert (
+        _prepare_static_ui_dir(tmp_path, build_ui=False, skip_install=True) == dist_dir
+    )
+
+
+def test_prepare_static_ui_dir_runs_install_before_build(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frontend_dir = tmp_path / "web"
+    dist_dir = frontend_dir / "dist"
+    frontend_dir.mkdir()
+    (frontend_dir / "package.json").write_text("{}")
+    (frontend_dir / "index.html").write_text("<!doctype html>")
+    calls: list[str] = []
+
+    def fake_run_install(runtime: str, frontend_dir_arg: Path) -> str:
+        calls.append(f"install:{runtime}:{frontend_dir_arg.name}")
+        return "bun"
+
+    def fake_run_build(runtime: str, frontend_dir_arg: Path) -> str:
+        calls.append(f"build:{runtime}:{frontend_dir_arg.name}")
+        dist_dir.mkdir()
+        (dist_dir / "index.html").write_text("<!doctype html>")
+        return runtime
+
+    monkeypatch.setattr(
+        "shortcake.commands.ui._resolve_frontend_dir", lambda _: frontend_dir
+    )
+    monkeypatch.setattr("shortcake.commands.ui._resolve_static_ui_dir", lambda _: None)
+    monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: "pybun")
+    monkeypatch.setattr("shortcake.commands.ui._run_install", fake_run_install)
+    monkeypatch.setattr("shortcake.commands.ui._run_build", fake_run_build)
+
+    assert (
+        _prepare_static_ui_dir(tmp_path, build_ui=False, skip_install=False) == dist_dir
+    )
+    assert calls == ["install:pybun:web", "build:bun:web"]
+
+
+def test_prepare_static_ui_dir_errors_without_frontend(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("shortcake.commands.ui._resolve_frontend_dir", lambda _: None)
+    monkeypatch.setattr("shortcake.commands.ui._resolve_static_ui_dir", lambda _: None)
+
+    with pytest.raises(ValueError, match="frontend directory not found"):
+        _prepare_static_ui_dir(tmp_path, build_ui=False, skip_install=True)
+
+
+def test_prepare_static_ui_dir_errors_without_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frontend_dir = tmp_path / "web"
+    frontend_dir.mkdir()
+    (frontend_dir / "package.json").write_text("{}")
+    (frontend_dir / "index.html").write_text("<!doctype html>")
+
+    monkeypatch.setattr(
+        "shortcake.commands.ui._resolve_frontend_dir", lambda _: frontend_dir
+    )
+    monkeypatch.setattr("shortcake.commands.ui._resolve_static_ui_dir", lambda _: None)
+    monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: None)
+
+    with pytest.raises(ValueError, match="neither 'pybun' nor 'bun'"):
+        _prepare_static_ui_dir(tmp_path, build_ui=False, skip_install=True)
+
+
+def test_prepare_static_ui_dir_errors_when_build_does_not_create_assets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    frontend_dir = tmp_path / "web"
+    frontend_dir.mkdir()
+    (frontend_dir / "package.json").write_text("{}")
+    (frontend_dir / "index.html").write_text("<!doctype html>")
+
+    monkeypatch.setattr(
+        "shortcake.commands.ui._resolve_frontend_dir", lambda _: frontend_dir
+    )
+    monkeypatch.setattr("shortcake.commands.ui._resolve_static_ui_dir", lambda _: None)
+    monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: "bun")
+    monkeypatch.setattr("shortcake.commands.ui._run_build", lambda *args: "bun")
+
+    with pytest.raises(ValueError, match="built UI assets not found"):
+        _prepare_static_ui_dir(tmp_path, build_ui=False, skip_install=True)
 
 
 # --- _run_install ---
@@ -1139,6 +1467,601 @@ def test_run_dev_server_open_browser(
     assert "5173" in timer_calls[0][2][0]
 
 
+def test_ui_session_file_roundtrip_and_invalid_payloads(temp_repo: Repo) -> None:
+    assert _read_ui_session(temp_repo) is None
+
+    session_path = Path(temp_repo.path) / "shortcake" / "ui-session.json"
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    session_path.write_text("{bad json")
+    assert _read_ui_session(temp_repo) is None
+
+    session_path.write_text("[]")
+    assert _read_ui_session(temp_repo) is None
+
+    session_path.write_text(json.dumps({"host": "127.0.0.1"}))
+    assert _read_ui_session(temp_repo) is None
+
+    session_path.write_text(
+        json.dumps(
+            {
+                "host": "127.0.0.1",
+                "port": "8765",
+                "pid": 123,
+                "repoPath": str(Path(temp_repo.workdir)),
+                "origin": "http://127.0.0.1:8765",
+                "mode": "static",
+            }
+        )
+    )
+    assert _read_ui_session(temp_repo) is None
+
+    session = UISession(
+        host="127.0.0.1",
+        port=8765,
+        pid=123,
+        repo_path=str(Path(temp_repo.workdir)),
+        origin="http://127.0.0.1:8765",
+        mode="static",
+    )
+    _write_ui_session(temp_repo, session)
+    assert _read_ui_session(temp_repo) == session
+
+    _clear_ui_session(
+        temp_repo,
+        UISession(
+            host="127.0.0.1",
+            port=8766,
+            pid=123,
+            repo_path=str(Path(temp_repo.workdir)),
+            origin="http://127.0.0.1:8766",
+            mode="static",
+        ),
+    )
+    assert _read_ui_session(temp_repo) == session
+
+    _clear_ui_session(temp_repo, session)
+    assert _read_ui_session(temp_repo) is None
+
+
+def test_session_health_payload_success_and_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = UISession(
+        host="127.0.0.1",
+        port=8765,
+        pid=123,
+        repo_path="/repo",
+        origin="http://127.0.0.1:8765",
+        mode="static",
+    )
+
+    class FakeResponse:
+        def __init__(self, status: int, body: str) -> None:
+            self.status = status
+            self.body = body
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self.body.encode()
+
+    monkeypatch.setattr(
+        "shortcake.commands.ui.urllib.request.urlopen",
+        lambda *args, **kwargs: FakeResponse(200, '{"ok": true}'),
+    )
+    assert _session_health_payload(session) == {"ok": True}
+
+    monkeypatch.setattr(
+        "shortcake.commands.ui.urllib.request.urlopen",
+        lambda *args, **kwargs: FakeResponse(500, '{"ok": false}'),
+    )
+    assert _session_health_payload(session) is None
+
+    monkeypatch.setattr(
+        "shortcake.commands.ui.urllib.request.urlopen",
+        lambda *args, **kwargs: FakeResponse(200, "[]"),
+    )
+    assert _session_health_payload(session) is None
+
+    monkeypatch.setattr(
+        "shortcake.commands.ui.urllib.request.urlopen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("down")),
+    )
+    assert _session_health_payload(session) is None
+
+
+def test_live_ui_session_unlocked_returns_only_healthy_matching_repo(
+    temp_repo: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo_path = str(Path(temp_repo.workdir).resolve())
+    session = UISession(
+        host="127.0.0.1",
+        port=8765,
+        pid=123,
+        repo_path=repo_path,
+        origin="http://127.0.0.1:8765",
+        mode="static",
+    )
+    _write_ui_session(temp_repo, session)
+
+    monkeypatch.setattr(
+        "shortcake.commands.ui._session_health_payload",
+        lambda _: {"ok": True, "repoPath": repo_path},
+    )
+    assert _live_ui_session_unlocked(temp_repo, "127.0.0.1") == session
+
+    monkeypatch.setattr(
+        "shortcake.commands.ui._session_health_payload",
+        lambda _: {"ok": True, "repoPath": "/other"},
+    )
+    assert _live_ui_session_unlocked(temp_repo, "127.0.0.1") is None
+    assert _read_ui_session(temp_repo) is None
+
+    _write_ui_session(temp_repo, session)
+    assert _live_ui_session_unlocked(temp_repo, "0.0.0.0") is None
+
+
+def test_live_ui_session_uses_lock(
+    temp_repo: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = UISession(
+        host="127.0.0.1",
+        port=8765,
+        pid=123,
+        repo_path=str(Path(temp_repo.workdir)),
+        origin="http://127.0.0.1:8765",
+        mode="static",
+    )
+    monkeypatch.setattr(
+        "shortcake.commands.ui._live_ui_session_unlocked",
+        lambda repo, host: session,
+    )
+
+    assert _live_ui_session(temp_repo, "127.0.0.1") == session
+
+
+def test_shortcake_cli_command_prefers_shortcake_then_sc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: "/bin/shortcake" if name == "shortcake" else None,
+    )
+    assert _shortcake_cli_command() == ["/bin/shortcake"]
+
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: "/bin/sc" if name == "sc" else None,
+    )
+    assert _shortcake_cli_command() == ["/bin/sc"]
+
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    monkeypatch.setattr("shortcake.commands.ui.sys.argv", ["python"])
+    assert _shortcake_cli_command() == ["python"]
+
+
+def test_start_static_ui_background_returns_healthy_session(
+    temp_repo: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = UISession(
+        host="127.0.0.1",
+        port=8766,
+        pid=456,
+        repo_path=str(Path(temp_repo.workdir)),
+        origin="http://127.0.0.1:8766",
+        mode="static",
+    )
+    popen_calls: list[list[str]] = []
+
+    class FakeProcess:
+        returncode = None
+
+        def poll(self) -> None:
+            return None
+
+    def fake_popen(command: list[str], **kwargs: object) -> FakeProcess:
+        popen_calls.append(command)
+        return FakeProcess()
+
+    monkeypatch.setattr("shortcake.commands.ui._shortcake_cli_command", lambda: ["sc"])
+    monkeypatch.setattr("shortcake.commands.ui.subprocess.Popen", fake_popen)
+    monkeypatch.setattr("shortcake.commands.ui._live_ui_session", lambda *args: session)
+
+    assert (
+        _start_static_ui_background(
+            temp_repo,
+            host="127.0.0.1",
+            port=8765,
+            build_ui=True,
+            skip_install=True,
+        )
+        == session
+    )
+    assert popen_calls[0][-2:] == ["--build-ui", "--skip-install"]
+
+
+def test_start_static_ui_background_reports_early_exit(
+    temp_repo: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeProcess:
+        returncode = 7
+
+        def poll(self) -> int:
+            return 7
+
+    monkeypatch.setattr("shortcake.commands.ui._shortcake_cli_command", lambda: ["sc"])
+    monkeypatch.setattr(
+        "shortcake.commands.ui.subprocess.Popen",
+        lambda *args, **kwargs: FakeProcess(),
+    )
+    monkeypatch.setattr("shortcake.commands.ui._live_ui_session", lambda *args: None)
+
+    with pytest.raises(ValueError, match="exited before becoming healthy"):
+        _start_static_ui_background(
+            temp_repo,
+            host="127.0.0.1",
+            port=8765,
+            build_ui=False,
+            skip_install=False,
+        )
+
+
+def test_start_static_ui_background_reports_timeout(
+    temp_repo: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeProcess:
+        returncode = None
+
+        def poll(self) -> None:
+            return None
+
+    monkeypatch.setattr("shortcake.commands.ui._shortcake_cli_command", lambda: ["sc"])
+    monkeypatch.setattr(
+        "shortcake.commands.ui.subprocess.Popen",
+        lambda *args, **kwargs: FakeProcess(),
+    )
+    monkeypatch.setattr("shortcake.commands.ui._live_ui_session", lambda *args: None)
+    monkeypatch.setattr("shortcake.commands.ui.BACKGROUND_START_TIMEOUT_SECONDS", 0)
+
+    with pytest.raises(ValueError, match="did not become healthy"):
+        _start_static_ui_background(
+            temp_repo,
+            host="127.0.0.1",
+            port=8765,
+            build_ui=False,
+            skip_install=False,
+        )
+
+
+def test_start_static_ui_background_sleeps_while_waiting(
+    temp_repo: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeProcess:
+        returncode = None
+
+        def poll(self) -> None:
+            return None
+
+    monotonic_values = iter([0.0, 0.1, 2.0])
+    sleeps: list[float] = []
+
+    monkeypatch.setattr("shortcake.commands.ui._shortcake_cli_command", lambda: ["sc"])
+    monkeypatch.setattr(
+        "shortcake.commands.ui.subprocess.Popen",
+        lambda *args, **kwargs: FakeProcess(),
+    )
+    monkeypatch.setattr("shortcake.commands.ui._live_ui_session", lambda *args: None)
+    monkeypatch.setattr("shortcake.commands.ui.BACKGROUND_START_TIMEOUT_SECONDS", 1)
+    monkeypatch.setattr(
+        "shortcake.commands.ui.time.monotonic",
+        lambda: next(monotonic_values),
+    )
+    monkeypatch.setattr(
+        "shortcake.commands.ui.time.sleep",
+        lambda value: sleeps.append(value),
+    )
+
+    with pytest.raises(ValueError, match="did not become healthy"):
+        _start_static_ui_background(
+            temp_repo,
+            host="127.0.0.1",
+            port=8765,
+            build_ui=False,
+            skip_install=False,
+        )
+
+    assert sleeps == [0.15]
+
+
+def test_open_or_start_static_ui_reuses_live_session(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_repo: Repo,
+) -> None:
+    session = UISession(
+        host="127.0.0.1",
+        port=8765,
+        pid=123,
+        repo_path=str(Path(temp_repo.workdir)),
+        origin="http://127.0.0.1:8765",
+        mode="static",
+    )
+    opened: list[str] = []
+
+    monkeypatch.setattr("shortcake.commands.ui._live_ui_session", lambda *a: session)
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+
+    _open_or_start_static_ui(
+        temp_repo,
+        host="127.0.0.1",
+        port=8765,
+        route_hash="#/recap/example",
+    )
+
+    assert opened == ["http://127.0.0.1:8765/#/recap/example"]
+
+
+def test_open_or_start_static_ui_reuses_session_found_inside_lock(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_repo: Repo,
+) -> None:
+    session = UISession(
+        host="127.0.0.1",
+        port=8765,
+        pid=123,
+        repo_path=str(Path(temp_repo.workdir)),
+        origin="http://127.0.0.1:8765",
+        mode="static",
+    )
+    opened: list[str] = []
+
+    monkeypatch.setattr("shortcake.commands.ui._live_ui_session", lambda *a: None)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._prepare_static_ui_dir",
+        lambda *args, **kwargs: Path(temp_repo.workdir),
+    )
+    monkeypatch.setattr(
+        "shortcake.commands.ui._live_ui_session_unlocked",
+        lambda *args: session,
+    )
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+
+    _open_or_start_static_ui(
+        temp_repo,
+        host="127.0.0.1",
+        port=8765,
+        route_hash="#/recap/example",
+    )
+
+    assert opened == ["http://127.0.0.1:8765/#/recap/example"]
+
+
+def test_open_or_start_static_ui_starts_static_server(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_repo: Repo,
+    tmp_path: Path,
+) -> None:
+    static_dir = tmp_path / "dist"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("<!doctype html>")
+    mock_server = MagicMock()
+
+    monkeypatch.setattr("shortcake.commands.ui._live_ui_session", lambda *a: None)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._live_ui_session_unlocked", lambda *a: None
+    )
+    monkeypatch.setattr(
+        "shortcake.commands.ui._prepare_static_ui_dir", lambda *a, **kw: static_dir
+    )
+    monkeypatch.setattr(
+        "shortcake.commands.ui._start_api_server_on_available_port",
+        lambda *a, **kw: (mock_server, 8766),
+    )
+    monkeypatch.setattr("shortcake.commands.ui._wait_for_interrupt", lambda: None)
+
+    _open_or_start_static_ui(
+        temp_repo,
+        host="127.0.0.1",
+        port=8765,
+        open_browser=False,
+    )
+
+    mock_server.shutdown.assert_called_once()
+    mock_server.server_close.assert_called_once()
+
+
+def test_open_or_start_static_ui_opens_foreground_url(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_repo: Repo,
+    tmp_path: Path,
+) -> None:
+    static_dir = tmp_path / "dist"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("<!doctype html>")
+    mock_server = MagicMock()
+    opened: list[str] = []
+
+    monkeypatch.setattr("shortcake.commands.ui._live_ui_session", lambda *a: None)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._live_ui_session_unlocked", lambda *a: None
+    )
+    monkeypatch.setattr(
+        "shortcake.commands.ui._prepare_static_ui_dir", lambda *a, **kw: static_dir
+    )
+    monkeypatch.setattr(
+        "shortcake.commands.ui._start_api_server_on_available_port",
+        lambda *a, **kw: (mock_server, 8765),
+    )
+    monkeypatch.setattr("shortcake.commands.ui._wait_for_interrupt", lambda: None)
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+
+    _open_or_start_static_ui(
+        temp_repo,
+        host="127.0.0.1",
+        port=8765,
+        route_hash="#/recap/example",
+    )
+
+    assert opened == ["http://127.0.0.1:8765/#/recap/example"]
+
+
+def test_open_or_start_static_ui_handles_keyboard_interrupt(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_repo: Repo,
+    tmp_path: Path,
+) -> None:
+    static_dir = tmp_path / "dist"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("<!doctype html>")
+    mock_server = MagicMock()
+
+    monkeypatch.setattr("shortcake.commands.ui._live_ui_session", lambda *a: None)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._live_ui_session_unlocked", lambda *a: None
+    )
+    monkeypatch.setattr(
+        "shortcake.commands.ui._prepare_static_ui_dir", lambda *a, **kw: static_dir
+    )
+    monkeypatch.setattr(
+        "shortcake.commands.ui._start_api_server_on_available_port",
+        lambda *a, **kw: (mock_server, 8765),
+    )
+    monkeypatch.setattr(
+        "shortcake.commands.ui._wait_for_interrupt",
+        lambda: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+
+    _open_or_start_static_ui(
+        temp_repo,
+        host="127.0.0.1",
+        port=8765,
+        open_browser=False,
+    )
+
+    mock_server.shutdown.assert_called_once()
+    mock_server.server_close.assert_called_once()
+
+
+def test_open_or_start_static_ui_background_starts_detached_server(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_repo: Repo,
+) -> None:
+    session = UISession(
+        host="127.0.0.1",
+        port=8766,
+        pid=456,
+        repo_path=str(Path(temp_repo.workdir)),
+        origin="http://127.0.0.1:8766",
+        mode="static",
+    )
+    opened: list[str] = []
+    started: list[dict[str, object]] = []
+
+    def fake_start_background(*args: object, **kwargs: object) -> UISession:
+        started.append(kwargs)
+        return session
+
+    monkeypatch.setattr("shortcake.commands.ui._live_ui_session", lambda *a: None)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._start_static_ui_background",
+        fake_start_background,
+    )
+    monkeypatch.setattr("webbrowser.open", lambda url: opened.append(url))
+
+    _open_or_start_static_ui(
+        temp_repo,
+        host="127.0.0.1",
+        port=8765,
+        route_hash="#/recap/example",
+        background=True,
+        label="recap",
+    )
+
+    assert started == [
+        {
+            "host": "127.0.0.1",
+            "port": 8765,
+            "build_ui": False,
+            "skip_install": False,
+        }
+    ]
+    assert opened == ["http://127.0.0.1:8766/#/recap/example"]
+
+
+def test_open_or_start_static_ui_reports_background_start_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_repo: Repo,
+) -> None:
+    monkeypatch.setattr("shortcake.commands.ui._live_ui_session", lambda *a: None)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._start_static_ui_background",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("no server")),
+    )
+
+    with pytest.raises(typer.Exit):
+        _open_or_start_static_ui(
+            temp_repo,
+            host="127.0.0.1",
+            port=8765,
+            background=True,
+        )
+
+
+def test_open_or_start_static_ui_reports_prepare_and_bind_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_repo: Repo,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr("shortcake.commands.ui._live_ui_session", lambda *a: None)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._prepare_static_ui_dir",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("no assets")),
+    )
+
+    with pytest.raises(typer.Exit):
+        _open_or_start_static_ui(
+            temp_repo,
+            host="127.0.0.1",
+            port=8765,
+            open_browser=False,
+        )
+
+    static_dir = tmp_path / "dist"
+    static_dir.mkdir()
+    (static_dir / "index.html").write_text("<!doctype html>")
+    monkeypatch.setattr(
+        "shortcake.commands.ui._prepare_static_ui_dir",
+        lambda *args, **kwargs: static_dir,
+    )
+    monkeypatch.setattr(
+        "shortcake.commands.ui._live_ui_session_unlocked",
+        lambda *args: None,
+    )
+    monkeypatch.setattr(
+        "shortcake.commands.ui._start_api_server_on_available_port",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("port busy")),
+    )
+
+    with pytest.raises(typer.Exit):
+        _open_or_start_static_ui(
+            temp_repo,
+            host="127.0.0.1",
+            port=8765,
+            open_browser=False,
+        )
+
+
 # --- ui() command ---
 
 
@@ -1152,7 +2075,7 @@ def test_ui_no_frontend_dir(
     from typer import Exit
 
     with pytest.raises(Exit):
-        ui()
+        ui(dev=True)
 
 
 def test_ui_no_runtime(
@@ -1170,7 +2093,65 @@ def test_ui_no_runtime(
     from typer import Exit
 
     with pytest.raises(Exit):
-        ui()
+        ui(dev=True)
+
+
+def test_ui_static_mode_delegates_to_static_helper(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_repo: Repo,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    monkeypatch.setattr("shortcake.commands.ui.git.open_repo", lambda: temp_repo)
+    monkeypatch.setattr("shortcake.commands.ui._resolve_ui_port", lambda *args: 9000)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._open_or_start_static_ui",
+        lambda *args, **kwargs: calls.append(kwargs),
+    )
+
+    ui(open_browser=False, build_ui=True, background=True)
+
+    assert calls == [
+        {
+            "host": "127.0.0.1",
+            "port": 9000,
+            "open_browser": False,
+            "build_ui": True,
+            "skip_install": False,
+            "background": True,
+        }
+    ]
+
+
+def test_ui_dev_mode_rejects_background(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_repo: Repo,
+) -> None:
+    monkeypatch.setattr("shortcake.commands.ui.git.open_repo", lambda: temp_repo)
+    monkeypatch.setattr("shortcake.commands.ui._resolve_ui_port", lambda *args: 9000)
+
+    with pytest.raises(typer.Exit):
+        ui(dev=True, background=True)
+
+
+def test_ui_dev_mode_reports_api_bind_error(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_repo: Repo,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr("shortcake.commands.ui.git.open_repo", lambda: temp_repo)
+    monkeypatch.setattr("shortcake.commands.ui._resolve_ui_port", lambda *args: 9000)
+    monkeypatch.setattr(
+        "shortcake.commands.ui._resolve_frontend_dir", lambda _: tmp_path
+    )
+    monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: "bun")
+    monkeypatch.setattr(
+        "shortcake.commands.ui._start_api_server_on_available_port",
+        lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("bind failed")),
+    )
+
+    with pytest.raises(typer.Exit):
+        ui(dev=True)
 
 
 def test_ui_success(
@@ -1187,12 +2168,13 @@ def test_ui_success(
     )
     monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: "bun")
     monkeypatch.setattr(
-        "shortcake.commands.ui._start_api_server", lambda *a: mock_server
+        "shortcake.commands.ui._start_api_server_on_available_port",
+        lambda *a, **kw: (mock_server, 8765),
     )
     monkeypatch.setattr("shortcake.commands.ui._run_install", lambda *a: "bun")
     monkeypatch.setattr("shortcake.commands.ui._run_dev_server", lambda *a: 0)
 
-    ui()
+    ui(dev=True)
 
     mock_server.shutdown.assert_called_once()
     mock_server.server_close.assert_called_once()
@@ -1212,7 +2194,8 @@ def test_ui_dev_server_error(
     )
     monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: "bun")
     monkeypatch.setattr(
-        "shortcake.commands.ui._start_api_server", lambda *a: mock_server
+        "shortcake.commands.ui._start_api_server_on_available_port",
+        lambda *a, **kw: (mock_server, 8765),
     )
     monkeypatch.setattr("shortcake.commands.ui._run_install", lambda *a: "bun")
     monkeypatch.setattr("shortcake.commands.ui._run_dev_server", lambda *a: 1)
@@ -1220,7 +2203,7 @@ def test_ui_dev_server_error(
     from typer import Exit
 
     with pytest.raises(Exit):
-        ui()
+        ui(dev=True)
 
     mock_server.shutdown.assert_called_once()
 
@@ -1239,7 +2222,8 @@ def test_ui_keyboard_interrupt(
     )
     monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: "bun")
     monkeypatch.setattr(
-        "shortcake.commands.ui._start_api_server", lambda *a: mock_server
+        "shortcake.commands.ui._start_api_server_on_available_port",
+        lambda *a, **kw: (mock_server, 8765),
     )
 
     def raise_interrupt(*a: object) -> None:
@@ -1247,7 +2231,7 @@ def test_ui_keyboard_interrupt(
 
     monkeypatch.setattr("shortcake.commands.ui._run_install", raise_interrupt)
 
-    ui()
+    ui(dev=True)
 
     mock_server.shutdown.assert_called_once()
 
@@ -1266,7 +2250,8 @@ def test_ui_value_error(
     )
     monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: "bun")
     monkeypatch.setattr(
-        "shortcake.commands.ui._start_api_server", lambda *a: mock_server
+        "shortcake.commands.ui._start_api_server_on_available_port",
+        lambda *a, **kw: (mock_server, 8765),
     )
 
     def raise_value_error(*a: object) -> None:
@@ -1277,7 +2262,7 @@ def test_ui_value_error(
     from typer import Exit
 
     with pytest.raises(Exit):
-        ui()
+        ui(dev=True)
 
     mock_server.shutdown.assert_called_once()
 
@@ -1303,12 +2288,13 @@ def test_ui_skip_install(
     )
     monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: "bun")
     monkeypatch.setattr(
-        "shortcake.commands.ui._start_api_server", lambda *a: mock_server
+        "shortcake.commands.ui._start_api_server_on_available_port",
+        lambda *a, **kw: (mock_server, 8765),
     )
     monkeypatch.setattr("shortcake.commands.ui._run_install", track_install)
     monkeypatch.setattr("shortcake.commands.ui._run_dev_server", lambda *a: 0)
 
-    ui(skip_install=True)
+    ui(skip_install=True, dev=True)
 
     assert not install_called
 
@@ -1338,12 +2324,13 @@ def test_ui_port_fallback_messages(
     monkeypatch.setattr("shortcake.commands.ui._resolve_js_runtime", lambda: "bun")
     monkeypatch.setattr("shortcake.commands.ui._find_open_port", fake_find_port)
     monkeypatch.setattr(
-        "shortcake.commands.ui._start_api_server", lambda *a: mock_server
+        "shortcake.commands.ui._start_api_server_on_available_port",
+        lambda *a, **kw: (mock_server, 8766),
     )
     monkeypatch.setattr("shortcake.commands.ui._run_install", lambda *a: "bun")
     monkeypatch.setattr("shortcake.commands.ui._run_dev_server", lambda *a: 0)
 
-    ui()
+    ui(dev=True)
 
     captured = capsys.readouterr()
     assert "is in use" in captured.out
