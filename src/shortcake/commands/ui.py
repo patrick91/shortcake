@@ -47,7 +47,6 @@ from shortcake.commands.move_lines import (
     _split_lines_batch,
 )
 
-
 UI_STATE_VERSION = 1
 UI_STATE_FILE = "ui-state.json"
 DIFF_STYLES = {"unified", "split"}
