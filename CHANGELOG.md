@@ -1,6 +1,18 @@
 CHANGELOG
 =========
 
+1.1.0 - 2026-06-21
+------------------
+
+This release adds persistent review state to `sc ui`.
+
+The review UI now remembers which files you marked as Viewed and whether you
+prefer the unified or split diff layout across reloads. Viewed files are matched
+to the current patch for each file, so Shortcake shows a file as unviewed again
+when its diff changes instead of hiding fresh changes behind an old Viewed mark.
+
+This release was contributed by [@patrick91](https://github.com/patrick91) in [#122](https://github.com/patrick91/shortcake/pull/122)
+
 1.0.3 - 2026-06-19
 ------------------
 
