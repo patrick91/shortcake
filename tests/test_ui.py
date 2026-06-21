@@ -23,13 +23,15 @@ from shortcake.commands.ui import (
     _git_working_diff,
     _git_working_diff_key,
     _load_persisted_ui_state,
+    _normalize_persisted_ui_state,
     _resolve_frontend_dir,
     _resolve_js_runtime,
     _run_dev_server,
     _run_install,
     _runtime_candidates,
-    _update_persisted_ui_state,
+    _save_persisted_ui_state,
     _start_api_server,
+    _update_persisted_ui_state,
     _write_json,
     ui,
 )
@@ -421,12 +423,72 @@ def test_persisted_ui_state_invalid_json_returns_defaults(
     }
 
 
+def test_persisted_ui_state_normalizes_invalid_fields() -> None:
+    """Malformed persisted fields are ignored rather than echoed back."""
+    assert _normalize_persisted_ui_state(None) == {
+        "version": 1,
+        "diffStyle": "unified",
+        "viewedFiles": {},
+    }
+
+    payload = _normalize_persisted_ui_state(
+        {
+            "version": 1,
+            "diffStyle": "sideways",
+            "viewedFiles": {
+                123: {"ignored.py": "ignored"},
+                "bad": ["not", "a", "mapping"],
+                "branch:branch_b": {
+                    "b.txt": "patch-key",
+                    "ignored.txt": None,
+                    456: "ignored",
+                },
+            },
+        }
+    )
+
+    assert payload == {
+        "version": 1,
+        "diffStyle": "unified",
+        "viewedFiles": {"branch:branch_b": {"b.txt": "patch-key"}},
+    }
+
+
+def test_save_persisted_ui_state_ignores_write_errors(
+    repo_with_stack: Repo,
+) -> None:
+    """Persistence failures should not interrupt the UI server."""
+    with patch("builtins.open", side_effect=OSError("read-only")):
+        _save_persisted_ui_state(
+            repo_with_stack,
+            {
+                "version": 1,
+                "diffStyle": "split",
+                "viewedFiles": {"branch:branch_b": {"b.txt": "patch-key"}},
+            },
+        )
+
+
 def test_update_persisted_ui_state_rejects_bad_diff_style(
     repo_with_stack: Repo,
 ) -> None:
     """Only supported diff layout values are persisted."""
     with pytest.raises(ValueError, match="diffStyle"):
         _update_persisted_ui_state(repo_with_stack, {"diffStyle": "sideways"})
+
+
+def test_update_persisted_ui_state_rejects_bad_body(
+    repo_with_stack: Repo,
+) -> None:
+    """Review state updates must be JSON objects with complete viewed fields."""
+    with pytest.raises(ValueError, match="object"):
+        _update_persisted_ui_state(repo_with_stack, ["not", "an", "object"])
+
+    with pytest.raises(ValueError, match="viewedScope"):
+        _update_persisted_ui_state(
+            repo_with_stack,
+            {"viewedScope": "branch:branch_b"},
+        )
 
 
 # --- HTTP request handler ---
@@ -555,6 +617,17 @@ def test_handler_review_state_get(repo_with_stack: Repo) -> None:
     assert data["viewedFiles"] == {}
 
 
+def test_handler_review_state_get_error(temp_repo: Repo) -> None:
+    """Review state GET returns 500 on unexpected errors."""
+    with patch(
+        "shortcake.commands.ui._load_persisted_ui_state",
+        side_effect=RuntimeError("review state failed"),
+    ):
+        fake = _make_handler(temp_repo, "/api/review-state")
+    assert fake._status == 500
+    assert "review state failed" in fake.response_json()["error"]
+
+
 def test_handler_working_diff_error(temp_repo: Repo) -> None:
     """Working diff endpoint returns 500 on error."""
     with patch(
@@ -633,6 +706,21 @@ def test_post_review_state_invalid_diff_style(temp_repo: Repo) -> None:
     )
     assert fake._status == 400
     assert "diffStyle" in fake.response_json()["error"]
+
+
+def test_post_review_state_unexpected_error(temp_repo: Repo) -> None:
+    """Review state POST returns 500 on unexpected write errors."""
+    with patch(
+        "shortcake.commands.ui._update_persisted_ui_state",
+        side_effect=RuntimeError("write failed"),
+    ):
+        fake = _make_post_handler(
+            temp_repo,
+            "/api/review-state",
+            {"diffStyle": "split"},
+        )
+    assert fake._status == 500
+    assert "write failed" in fake.response_json()["error"]
 
 
 def test_post_move_hunks_invalid_json(temp_repo: Repo) -> None:
