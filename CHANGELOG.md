@@ -1,6 +1,18 @@
 CHANGELOG
 =========
 
+1.2.2 - 2026-06-23
+------------------
+
+This release fixes the inline review comments in `sc ui` visual recaps showing a
+washed-out light background while the rest of the UI was in dark mode.
+
+The recap comment callouts now follow the active theme: a subtle rose-tinted
+panel in dark mode, and their original light styling in light mode. The comment
+title also gets a touch more contrast than its body so it reads as a heading.
+
+This release was contributed by [@patrick91](https://github.com/patrick91) in [#125](https://github.com/patrick91/shortcake/pull/125)
+
 1.2.1 - 2026-06-23
 ------------------
 
