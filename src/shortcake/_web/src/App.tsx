@@ -2957,7 +2957,7 @@ function StackList({
         id={diffItemId(branch.name)}
         role="option"
         aria-selected={active}
-        className={`relative appearance-none rounded-md py-[5px] px-[7px] text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${active ? 'bg-accent-bg' : isActive ? 'bg-surface-hover' : 'bg-transparent hover:bg-surface-hover'} ${isActive ? 'ring-1 ring-inset ring-accent/40' : ''}`}
+        className={`relative appearance-none rounded-md py-[7px] px-[9px] text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${active ? 'bg-accent-bg' : isActive ? 'bg-surface-hover' : 'bg-transparent hover:bg-surface-hover'}`}
         style={{
           ...(index === null ? {} : { anchorName: `--branch-${index}` }),
           marginInlineStart: `${branchPadding}px`,
@@ -2967,32 +2967,32 @@ function StackList({
         onMouseMove={() => { if (!isActive) onActivateKey(branch.name); }}
         type="button"
       >
-        <span className="relative z-[2] flex items-center gap-[7px] w-full min-w-0">
-                <span className="min-w-0 flex-1 flex flex-col gap-[1px]">
-                  <span className="flex items-center gap-[7px] min-w-0">
-                    <span className="text-[0.88rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
+        <span className="relative z-[2] flex items-start gap-[8px] w-full min-w-0">
+                <span className="min-w-0 flex-1 flex flex-col gap-[3px]">
+                  <span className="flex items-start gap-[6px] min-w-0">
+                    <span className="text-[0.86rem] font-semibold leading-5 break-words min-w-0">
                       {branch.name}
                     </span>
                     {branch.isCurrent && (
-                      <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-accent/10 border border-accent/18 ml-1.5 px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
+                      <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-accent/10 border border-accent/18 px-[5px] py-px rounded-full shrink-0 leading-[1.5] mt-[2px]">
                         current
                       </span>
                     )}
                   </span>
                   <span
-                    className="font-mono text-[0.62rem] text-text-muted whitespace-nowrap overflow-hidden text-ellipsis"
+                    className="font-mono text-[0.63rem] text-text-muted leading-4 break-words line-clamp-2"
                     title={`${branch.commitShort} ${branch.commitSubject}`}
                   >
                     {branch.commitShort} {branch.commitSubject}
                   </span>
                 </span>
                 {isGithubInfoLoading ? (
-                  <span className="ml-auto flex items-center gap-[5px] shrink-0">
+                  <span className="ml-auto flex items-center gap-[5px] shrink-0 mt-[2px]">
                     <span className="inline-block w-[32px] h-[14px] rounded-full bg-surface-hover animate-pulse" />
                     <span className="inline-block w-[10px] h-[10px] rounded-full bg-surface-hover animate-pulse" />
                   </span>
                 ) : (ghInfo?.prNumber != null || ghInfo?.checkStatus != null) ? (
-                  <span className="ml-auto flex items-center gap-[5px] shrink-0">
+                  <span className="ml-auto flex items-center gap-[5px] shrink-0 mt-[2px]">
                     {ghInfo?.prNumber != null && ghInfo.prUrl && (
                       <a
                         href={ghInfo.prUrl}
@@ -3026,7 +3026,7 @@ function StackList({
   return (
     <div
       id="sc-diff-listbox"
-      className="relative flex flex-col gap-0 p-1.5 overflow-y-auto overflow-x-clip flex-1 min-h-0"
+      className="relative flex flex-col gap-[2px] p-1.5 overflow-y-auto overflow-x-clip flex-1 min-h-0"
       role="listbox"
       aria-label="Tracked stack branches"
     >
@@ -3050,7 +3050,7 @@ function StackList({
           id={diffItemId(WORKING_KEY)}
           role="option"
           aria-selected={selection?.type === 'working'}
-          className={`relative appearance-none rounded-md py-[5px] px-[7px] mx-[8px] mb-1 text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${selection?.type === 'working' ? 'bg-accent-bg' : activeKey === WORKING_KEY ? 'bg-surface-hover' : 'bg-transparent hover:bg-surface-hover'} ${activeKey === WORKING_KEY ? 'ring-1 ring-inset ring-accent/40' : ''}`}
+          className={`relative appearance-none rounded-md py-[7px] px-[9px] mx-[8px] mb-1 text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${selection?.type === 'working' ? 'bg-accent-bg' : activeKey === WORKING_KEY ? 'bg-surface-hover' : 'bg-transparent hover:bg-surface-hover'}`}
           onClick={() => onSelect({ type: 'working' })}
           onMouseMove={() => { if (activeKey !== WORKING_KEY) onActivateKey(WORKING_KEY); }}
           type="button"
@@ -3231,7 +3231,7 @@ function DiffSwitcher({ diff, open, onOpenChange, ...stackProps }: DiffSwitcherP
         <Popover.Positioner side="bottom" align="start" sideOffset={10} className="z-50">
           <Popover.Popup
             initialFocus={inputRef}
-            className="w-[340px] max-h-[min(560px,70vh)] flex flex-col bg-surface border border-border rounded-lg shadow-lg overflow-hidden outline-none origin-[var(--transform-origin)] transition-[opacity,transform] duration-150 data-[starting-style]:opacity-0 data-[starting-style]:scale-[0.98] data-[ending-style]:opacity-0 data-[ending-style]:scale-[0.98]"
+            className="w-[440px] max-w-[calc(100vw-2rem)] max-h-[min(560px,70vh)] flex flex-col bg-surface border border-border rounded-lg shadow-lg overflow-hidden outline-none origin-[var(--transform-origin)] transition-[opacity,transform] duration-150 data-[starting-style]:opacity-0 data-[starting-style]:scale-[0.98] data-[ending-style]:opacity-0 data-[ending-style]:scale-[0.98]"
           >
             <div className="px-3.5 py-2.5 border-b border-border flex items-center justify-between shrink-0">
               <span className="font-mono text-[0.62rem] font-medium uppercase tracking-[0.13em] text-accent">

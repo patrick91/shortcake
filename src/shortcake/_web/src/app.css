@@ -95,10 +95,13 @@ body::before {
   background: rgba(255, 255, 255, 0.15);
 }
 
+/* Connectors align to the first line of the branch name (button top padding
+   7px + half the name's 20px line box = 17px), so they stay put when long
+   names wrap to multiple lines. */
 .stack-guide-vertical {
   position: absolute;
-  top: anchor(var(--from) center);
-  bottom: anchor(var(--to) center);
+  top: calc(anchor(var(--from) top) + 17px);
+  bottom: calc(anchor(var(--to) top) - 17px);
   width: 0;
   border-left: 1px solid var(--color-guide);
   pointer-events: none;
@@ -107,7 +110,7 @@ body::before {
 
 .stack-guide-horizontal {
   position: absolute;
-  top: anchor(var(--at) center);
+  top: calc(anchor(var(--at) top) + 17px);
   height: 0;
   border-top: 1px solid var(--color-guide);
   pointer-events: none;
