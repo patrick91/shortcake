@@ -2222,13 +2222,13 @@ function RecapDiffBlock({
     (annotation: DiffLineAnnotation<RecapAnnotationMeta>) => {
       return (
         <aside
-          className="w-full border-y border-rose-200/70 bg-rose-50/70 px-3 py-2.5 font-sans dark:border-rose-300/20 dark:bg-rose-300/[0.055]"
+          className="w-full border-y border-recap-comment-border bg-recap-comment-bg px-3 py-2.5 font-sans"
           aria-label={`Review comment for ${annotation.metadata.lineLabel}`}
           data-recap-inline-comment
           data-recap-inline-comment-line={annotation.metadata.lineLabel}
         >
           <div className="flex min-w-0 items-start gap-3">
-            <div className="inline-flex size-6 shrink-0 items-center justify-center rounded-[6px] border border-rose-300 bg-rose-100 dark:border-rose-300/40 dark:bg-rose-300/10">
+            <div className="inline-flex size-6 shrink-0 items-center justify-center rounded-[6px] border border-recap-comment-chip-border bg-recap-comment-chip-bg">
               <img
                 src="/favicon.svg"
                 alt=""
@@ -2237,9 +2237,9 @@ function RecapDiffBlock({
               />
             </div>
             <div className="min-w-0 flex-1">
-              <p className="m-0 whitespace-pre-wrap break-words text-[0.86rem] leading-6 text-text-primary">
+              <p className="m-0 whitespace-pre-wrap break-words text-[0.86rem] leading-6 text-text-secondary">
                 {annotation.metadata.title && (
-                  <strong className="font-semibold">{annotation.metadata.title}. </strong>
+                  <strong className="font-semibold text-text-primary">{annotation.metadata.title}. </strong>
                 )}
                 {annotation.metadata.text}
               </p>
