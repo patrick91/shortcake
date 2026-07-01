@@ -1,6 +1,7 @@
 """Checkout command - smart checkout for branches and PRs."""
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated
 
 import httpx
@@ -26,6 +27,17 @@ class CheckoutResult:
     branch: str
     from_remote: bool = False
     pr_number: int | None = None
+    worktree_paths: list[str] | None = None
+
+
+def _other_worktrees_for_branch(repo: Repo, branch: str) -> list[str]:
+    """Return display paths for non-current worktrees that have branch checked out."""
+    current_path = Path(repo.workdir).resolve()
+    return [
+        git.format_worktree_path(path)
+        for path in sorted(git.get_branch_worktrees(repo).get(branch, []), key=str)
+        if path.resolve() != current_path
+    ]
 
 
 def _fetch_branch(repo: Repo, branch: str) -> bool:
@@ -118,6 +130,13 @@ def _checkout(
 
     # Check if branch exists locally
     if git.branch_exists(repo, branch):
+        worktree_paths = _other_worktrees_for_branch(repo, branch)
+        if worktree_paths:
+            return CheckoutResult(
+                branch=branch,
+                pr_number=pr_number,
+                worktree_paths=worktree_paths,
+            )
         # Just switch to it
         git.switch_branch(repo, branch)
         return CheckoutResult(branch=branch, pr_number=pr_number)
@@ -142,7 +161,7 @@ def _checkout(
         raise CheckoutError(f"Failed to create local branch '{branch}' from remote.")
 
     # Switch to the new branch
-    git.switch_branch(repo, branch)
+    git.switch_branch(repo, branch, ignore_other_worktrees=True)
 
     return CheckoutResult(
         branch=branch,
@@ -167,9 +186,7 @@ def checkout(
     """
     repo = git.open_repo()
 
-    # Check for uncommitted changes
-    if git.has_uncommitted_changes(repo):
-        typer.echo("Warning: You have uncommitted changes.", err=True)
+    has_uncommitted = git.has_uncommitted_changes(repo)
 
     try:
         result = _checkout(repo, target)
@@ -177,13 +194,30 @@ def checkout(
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from None
 
+    if has_uncommitted and not result.worktree_paths:
+        typer.echo("Warning: You have uncommitted changes.", err=True)
+
     # Build output message
     if result.pr_number:
-        typer.echo(f"Checked out PR #{result.pr_number} ({result.branch})")
+        if result.worktree_paths:
+            typer.echo(
+                f"PR #{result.pr_number} ({result.branch}) is checked out in "
+                "another worktree:"
+            )
+        else:
+            typer.echo(f"Checked out PR #{result.pr_number} ({result.branch})")
+    elif result.worktree_paths:
+        typer.echo(f"Branch '{result.branch}' is checked out in another worktree:")
     elif result.from_remote:
         typer.echo(f"Checked out '{result.branch}' from remote")
     else:
         typer.echo(f"Switched to '{result.branch}'")
+
+    if result.worktree_paths:
+        for path in result.worktree_paths:
+            typer.echo(f"  {path}")
+        if len(result.worktree_paths) == 1:
+            typer.echo(f"cd {result.worktree_paths[0]}")
 
 
 # Alias

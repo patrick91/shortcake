@@ -65,6 +65,19 @@ def test_ls_current_highlighted(repo_with_feature: Repo) -> None:
   [dim]Initial commit[/]""")
 
 
+def test_ls_marks_other_worktree(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """Test ls shows when a branch is checked out in another worktree."""
+    _adopt(repo_with_feature)
+    switch_branch(repo_with_feature, "main")
+    worktree_path = tmp_path / "feature-worktree"
+    run_git(repo_with_feature, "worktree", "add", str(worktree_path), "feature")
+
+    result = _ls(repo_with_feature)
+
+    assert f"[dim]worktree: {worktree_path.resolve()}[/]" in result
+    assert result.count("worktree:") == 1
+
+
 def test_ls_multi_commit_branch(temp_repo: Repo, tmp_path: Path) -> None:
     """Test ls finds trailer in first commit of multi-commit branch."""
     # Create feature branch

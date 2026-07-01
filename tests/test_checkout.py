@@ -22,6 +22,7 @@ from tests._git_helpers import (
     Repo,
     add_paths,
     get_ref,
+    run_git,
     set_ref,
     set_remote,
     switch_branch,
@@ -43,6 +44,21 @@ def test_checkout_local_branch_exists(repo_with_feature: Repo) -> None:
 
     # Verify we're on feature branch (HEAD points to feature)
     assert repo_with_feature.head.shorthand == "feature"
+
+
+def test_checkout_branch_checked_out_in_other_worktree(
+    repo_with_feature: Repo, tmp_path: Path
+) -> None:
+    """Test checkout points at another worktree instead of switching."""
+    switch_branch(repo_with_feature, "main")
+    worktree_path = tmp_path / "feature-worktree"
+    run_git(repo_with_feature, "worktree", "add", str(worktree_path), "feature")
+
+    result = _checkout(repo_with_feature, "feature")
+
+    assert result.branch == "feature"
+    assert result.worktree_paths == [str(worktree_path.resolve())]
+    assert repo_with_feature.head.shorthand == "main"
 
 
 # Tests for _checkout with remote branches
@@ -318,6 +334,27 @@ def test_checkout_cli_local_branch(repo_with_feature: Repo, tmp_path: Path) -> N
 
     assert result.exit_code == 0
     assert "Switched to 'feature'" in result.output
+
+
+def test_checkout_cli_branch_checked_out_in_other_worktree(
+    repo_with_feature: Repo, tmp_path: Path
+) -> None:
+    """Test checkout CLI points at the existing worktree for that branch."""
+    import os
+
+    switch_branch(repo_with_feature, "main")
+    worktree_path = tmp_path / "feature-worktree"
+    run_git(repo_with_feature, "worktree", "add", str(worktree_path), "feature")
+
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["checkout", "feature"])
+
+    assert result.exit_code == 0
+    assert "Branch 'feature' is checked out in another worktree:" in result.output
+    assert f"  {worktree_path.resolve()}" in result.output
+    assert f"cd {worktree_path.resolve()}" in result.output
+    assert "Warning: You have uncommitted changes." not in result.output
+    assert repo_with_feature.head.shorthand == "main"
 
 
 def test_checkout_cli_error(temp_repo: Repo, tmp_path: Path) -> None:

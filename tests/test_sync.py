@@ -541,6 +541,45 @@ def test_sync_deletes_merged_branch(
     assert not git.branch_exists(repo_with_merged_branch, "feature")
 
 
+def test_sync_removes_clean_worktree_for_deleted_branch(
+    repo_with_merged_branch: Repo, tmp_path: Path
+) -> None:
+    """Test sync removes a clean worktree before deleting its branch."""
+    git.switch_branch(repo_with_merged_branch, "main")
+    worktree_path = tmp_path / "feature-worktree"
+    run_git(repo_with_merged_branch, "worktree", "add", str(worktree_path), "feature")
+
+    result = _sync(repo_with_merged_branch, force=True)
+
+    assert "feature" in result.deleted_branches
+    assert not git.branch_exists(repo_with_merged_branch, "feature")
+    assert not worktree_path.exists()
+    assert [(item.branch, item.path) for item in result.removed_worktrees] == [
+        ("feature", str(worktree_path.resolve()))
+    ]
+    assert result.skipped_worktrees == []
+
+
+def test_sync_skips_branch_delete_when_worktree_dirty(
+    repo_with_merged_branch: Repo, tmp_path: Path
+) -> None:
+    """Test sync leaves branch intact when its linked worktree is dirty."""
+    git.switch_branch(repo_with_merged_branch, "main")
+    worktree_path = tmp_path / "feature-worktree"
+    run_git(repo_with_merged_branch, "worktree", "add", str(worktree_path), "feature")
+    (worktree_path / "dirty.txt").write_text("dirty")
+
+    result = _sync(repo_with_merged_branch, force=True)
+
+    assert result.deleted_branches == []
+    assert git.branch_exists(repo_with_merged_branch, "feature")
+    assert worktree_path.exists()
+    assert result.removed_worktrees == []
+    assert len(result.skipped_worktrees) == 1
+    assert result.skipped_worktrees[0].branch == "feature"
+    assert result.skipped_worktrees[0].path == str(worktree_path.resolve())
+
+
 def test_sync_dry_run(repo_with_merged_branch: Repo, tmp_path: Path) -> None:
     """Test sync dry run doesn't delete."""
     result = _sync(repo_with_merged_branch, dry_run=True)
@@ -698,6 +737,23 @@ def test_cli_sync_dry_run(
 
     assert result.exit_code == 0
     assert "Would delete" in result.output
+
+
+def test_cli_sync_dry_run_shows_worktree_removal(
+    repo_with_merged_branch: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test sync --dry-run shows matching worktree cleanup."""
+    git.switch_branch(repo_with_merged_branch, "main")
+    worktree_path = tmp_path / "feature-worktree"
+    run_git(repo_with_merged_branch, "worktree", "add", str(worktree_path), "feature")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["sync", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert f"Would remove worktree '{worktree_path.resolve()}'" in result.output
+    assert git.branch_exists(repo_with_merged_branch, "feature")
+    assert worktree_path.exists()
 
 
 def test_cli_sync_force_deletes(

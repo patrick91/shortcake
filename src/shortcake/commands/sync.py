@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Annotated
 
 import httpx
@@ -20,6 +21,15 @@ class SyncError(ShortcakeError):
 
 
 @dataclass
+class WorktreeCleanup:
+    """Worktree cleanup result for a branch being deleted."""
+
+    branch: str
+    path: str
+    error: str | None = None
+
+
+@dataclass
 class SyncResult:
     """Result of sync operation."""
 
@@ -28,7 +38,17 @@ class SyncResult:
     deleted_branches: list[str] = field(default_factory=list)
     closed_branches: list[str] = field(default_factory=list)
     reparented_branches: dict[str, str] = field(default_factory=dict)
+    removed_worktrees: list[WorktreeCleanup] = field(default_factory=list)
+    skipped_worktrees: list[WorktreeCleanup] = field(default_factory=list)
     restack_result: RestackResult | None = None
+
+
+@dataclass(frozen=True)
+class _DeleteBranchResult:
+    """Result of attempting to delete a branch during sync."""
+
+    current_branch: str | None
+    deleted: bool
 
 
 def _topological_sort_for_deletion(repo: Repo, branches: list[str]) -> list[str]:
@@ -106,7 +126,50 @@ def _restore_current_branch(repo: Repo, current_branch: str | None) -> None:
     if current_branch is None:
         return
     if git.get_current_branch(repo) != current_branch:
-        git.switch_branch(repo, current_branch)
+        git.switch_branch(repo, current_branch, ignore_other_worktrees=True)
+
+
+def _other_worktrees_for_branch(repo: Repo, branch: str) -> list[Path]:
+    """Return non-current worktree paths for branch."""
+    current_path = Path(repo.workdir).resolve()
+    return sorted(
+        (
+            path
+            for path in git.get_branch_worktrees(repo).get(branch, [])
+            if path.resolve() != current_path
+        ),
+        key=str,
+    )
+
+
+def _show_dry_run_worktree_removals(repo: Repo, branch: str) -> None:
+    """Show worktrees that would be removed with a branch."""
+    for path in _other_worktrees_for_branch(repo, branch):
+        typer.echo(
+            f"Would remove worktree '{git.format_worktree_path(path)}' "
+            f"for branch '{branch}'"
+        )
+
+
+def _remove_branch_worktrees(repo: Repo, branch: str, result: SyncResult) -> bool:
+    """Remove all clean non-current worktrees for branch."""
+    all_removed = True
+    for path in _other_worktrees_for_branch(repo, branch):
+        display_path = git.format_worktree_path(path)
+        success, error = git.remove_worktree(repo, path)
+        if success:
+            result.removed_worktrees.append(WorktreeCleanup(branch, display_path))
+            typer.echo(f"Removed worktree {display_path}")
+            continue
+
+        all_removed = False
+        result.skipped_worktrees.append(WorktreeCleanup(branch, display_path, error))
+        typer.echo(
+            f"Warning: Could not remove worktree '{display_path}' for branch "
+            f"'{branch}': {error}. Branch was not deleted.",
+            err=True,
+        )
+    return all_removed
 
 
 def _delete_and_reparent(
@@ -116,10 +179,10 @@ def _delete_and_reparent(
     current_branch: str | None,
     skip_branches: set[str],
     result: SyncResult,
-) -> str | None:
+) -> _DeleteBranchResult:
     """Delete a branch and reparent its children.
 
-    Returns the (possibly updated) current branch name.
+    Returns whether deletion happened and the possibly updated current branch name.
     """
     children = git.get_branch_children(repo, branch)
     all_branches = set(git.get_all_local_branches(repo))
@@ -130,8 +193,11 @@ def _delete_and_reparent(
     if grandparent != trunk and not git.branch_exists(repo, grandparent):
         grandparent = trunk
 
+    if not _remove_branch_worktrees(repo, branch, result):
+        return _DeleteBranchResult(current_branch=current_branch, deleted=False)
+
     if branch == current_branch:
-        git.switch_branch(repo, trunk)
+        git.switch_branch(repo, trunk, ignore_other_worktrees=True)
         current_branch = trunk
 
     for child in children:
@@ -149,7 +215,7 @@ def _delete_and_reparent(
 
     _restore_current_branch(repo, current_branch)
     git.delete_branch(repo, branch)
-    return current_branch
+    return _DeleteBranchResult(current_branch=current_branch, deleted=True)
 
 
 @dataclass
@@ -324,6 +390,7 @@ def _sync(
         for branch in sorted_merged:
             if dry_run:
                 typer.echo(f"Would delete merged branch '{branch}'")
+                _show_dry_run_worktree_removals(repo, branch)
                 continue
 
             should_delete = force
@@ -337,11 +404,13 @@ def _sync(
                 should_delete = response.lower() in ("y", "yes")
 
             if should_delete:
-                current_branch = _delete_and_reparent(
+                delete_result = _delete_and_reparent(
                     repo, branch, trunk, current_branch, all_removing, result
                 )
-                result.deleted_branches.append(branch)
-                typer.echo(f"Deleted branch {branch}")
+                current_branch = delete_result.current_branch
+                if delete_result.deleted:
+                    result.deleted_branches.append(branch)
+                    typer.echo(f"Deleted branch {branch}")
 
     # 3b. Check GitHub API for merged/closed PRs that local git missed
     github_status = _detect_github_stale_branches(
@@ -356,6 +425,7 @@ def _sync(
         for branch in sorted_gh_merged:
             if dry_run:
                 typer.echo(f"Would delete merged branch '{branch}'")
+                _show_dry_run_worktree_removals(repo, branch)
                 continue
 
             should_delete = force
@@ -369,11 +439,13 @@ def _sync(
                 should_delete = response.lower() in ("y", "yes")
 
             if should_delete:
-                current_branch = _delete_and_reparent(
+                delete_result = _delete_and_reparent(
                     repo, branch, trunk, current_branch, all_removing, result
                 )
-                result.deleted_branches.append(branch)
-                typer.echo(f"Deleted branch {branch}")
+                current_branch = delete_result.current_branch
+                if delete_result.deleted:
+                    result.deleted_branches.append(branch)
+                    typer.echo(f"Deleted branch {branch}")
 
     # Handle closed (not merged) PR branches
     if github_status.closed:
@@ -381,6 +453,7 @@ def _sync(
         for branch in sorted_closed:
             if dry_run:
                 typer.echo(f"Would delete closed branch '{branch}'")
+                _show_dry_run_worktree_removals(repo, branch)
                 continue
 
             should_delete = force
@@ -394,11 +467,13 @@ def _sync(
                 should_delete = response.lower() in ("y", "yes")
 
             if should_delete:
-                current_branch = _delete_and_reparent(
+                delete_result = _delete_and_reparent(
                     repo, branch, trunk, current_branch, all_removing, result
                 )
-                result.closed_branches.append(branch)
-                typer.echo(f"Deleted branch {branch}")
+                current_branch = delete_result.current_branch
+                if delete_result.deleted:
+                    result.closed_branches.append(branch)
+                    typer.echo(f"Deleted branch {branch}")
 
     # 3c. Reparent branches whose parent was deleted (merged elsewhere)
     # Re-fetch tracked branches since some may have been deleted above
@@ -481,6 +556,8 @@ def sync(
         not result.deleted_branches
         and not result.closed_branches
         and not result.trunk_updated
+        and not result.removed_worktrees
+        and not result.skipped_worktrees
     )
     no_restacks = (
         not result.restack_result or not result.restack_result.restacked_branches
