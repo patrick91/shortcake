@@ -22,6 +22,7 @@ from tests._git_helpers import (
     Repo,
     add_paths,
     get_ref,
+    run_git,
     set_ref,
     set_remote,
     switch_branch,
@@ -43,6 +44,21 @@ def test_checkout_local_branch_exists(repo_with_feature: Repo) -> None:
 
     # Verify we're on feature branch (HEAD points to feature)
     assert repo_with_feature.head.shorthand == "feature"
+
+
+def test_checkout_branch_checked_out_in_other_worktree(
+    repo_with_feature: Repo, tmp_path: Path
+) -> None:
+    """Test checkout points at another worktree instead of switching."""
+    switch_branch(repo_with_feature, "main")
+    worktree_path = tmp_path / "feature-worktree"
+    run_git(repo_with_feature, "worktree", "add", str(worktree_path), "feature")
+
+    result = _checkout(repo_with_feature, "feature")
+
+    assert result.branch == "feature"
+    assert result.worktree_paths == [str(worktree_path.resolve())]
+    assert repo_with_feature.head.shorthand == "main"
 
 
 # Tests for _checkout with remote branches
@@ -320,6 +336,27 @@ def test_checkout_cli_local_branch(repo_with_feature: Repo, tmp_path: Path) -> N
     assert "Switched to 'feature'" in result.output
 
 
+def test_checkout_cli_branch_checked_out_in_other_worktree(
+    repo_with_feature: Repo, tmp_path: Path
+) -> None:
+    """Test checkout CLI points at the existing worktree for that branch."""
+    import os
+
+    switch_branch(repo_with_feature, "main")
+    worktree_path = tmp_path / "feature-worktree"
+    run_git(repo_with_feature, "worktree", "add", str(worktree_path), "feature")
+
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["checkout", "feature"])
+
+    assert result.exit_code == 0
+    assert "Branch 'feature' is checked out in another worktree:" in result.output
+    assert f"  {worktree_path.resolve()}" in result.output
+    assert f"cd {worktree_path.resolve()}" in result.output
+    assert "Warning: You have uncommitted changes." not in result.output
+    assert repo_with_feature.head.shorthand == "main"
+
+
 def test_checkout_cli_error(temp_repo: Repo, tmp_path: Path) -> None:
     """Test checkout CLI error handling."""
     import os
@@ -399,6 +436,46 @@ def test_checkout_cli_pr_output(
 
     assert result.exit_code == 0
     assert "Checked out PR #42 (pr-feature)" in result.output
+
+
+@respx.mock
+def test_checkout_cli_pr_output_with_existing_worktree(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test checkout CLI output for PR checkout already in another worktree."""
+    # Set up origin remote
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
+
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    # Create the branch locally
+    set_ref(temp_repo, "refs/heads/pr-feature", str(temp_repo.head.target).encode())
+    worktree_path = tmp_path / "pr-feature-worktree"
+    run_git(temp_repo, "worktree", "add", str(worktree_path), "pr-feature")
+
+    respx.get("https://api.github.com/repos/owner/repo/pulls/42").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "number": 42,
+                "html_url": "https://github.com/owner/repo/pull/42",
+                "base": {"ref": "main"},
+                "head": {"ref": "pr-feature"},
+                "title": "Test PR",
+                "body": "",
+                "state": "open",
+                "draft": False,
+            },
+        )
+    )
+
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["checkout", "42"])
+
+    assert result.exit_code == 0
+    assert "PR #42 (pr-feature) is checked out in another worktree:" in result.output
+    assert f"  {worktree_path.resolve()}" in result.output
+    assert f"cd {worktree_path.resolve()}" in result.output
 
 
 def test_checkout_cli_remote_output(temp_repo: Repo, tmp_path: Path) -> None:

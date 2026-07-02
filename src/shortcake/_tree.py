@@ -27,6 +27,7 @@ class BranchNode:
     pr_is_closed: bool = False
     pr_url: str | None = None
     latest_commit_subject: str | None = None
+    worktree_paths: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -194,12 +195,16 @@ class StackTree:
         ) -> None:
             """Append a node label and optional latest commit line."""
             result.append(f"{prefix}{get_node_label(node, connector)}")
+            detail_indent = " " * (len(connector) + 2)
+            if connects_below:
+                detail_indent = "│" + detail_indent[1:]
             if node.latest_commit_subject:
                 subject = escape(node.latest_commit_subject)
-                detail_indent = " " * (len(connector) + 2)
-                if connects_below:
-                    detail_indent = "│" + detail_indent[1:]
                 result.append(f"{prefix}{detail_indent}[dim]{subject}[/]")
+            for path in node.worktree_paths:
+                result.append(
+                    f"{prefix}{detail_indent}[dim]worktree: {escape(path)}[/]"
+                )
 
         def render_branch(
             node: BranchNode,

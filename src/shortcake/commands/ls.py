@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -41,11 +42,18 @@ def _build_tree(repo: Repo) -> tuple[StackTree, set[str]]:
             branches[branch] = parent
 
     tree = StackTree.build(branches, all_branches, current)
+    current_path = Path(repo.workdir).resolve()
+    branch_worktrees = git.get_branch_worktrees(repo)
     for node in _collect_nodes(tree):
         if node.name in all_branches:
             node.latest_commit_subject = git.get_branch_latest_commit(
                 repo, node.name
             ).subject
+            node.worktree_paths = [
+                git.format_worktree_path(path)
+                for path in branch_worktrees.get(node.name, [])
+                if path.resolve() != current_path
+            ]
     return tree, set(branches.keys())
 
 

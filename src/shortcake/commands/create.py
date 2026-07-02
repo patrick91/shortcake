@@ -205,7 +205,8 @@ def _create_insert_before(repo: Repo, message: str, branch_name: str) -> CreateR
     trailers = Trailers(parent_branch=parent)
     full_message = trailers.apply_to(message)
 
-    if temp_sha:
+    if temp_sha is not None:
+        assert original_head is not None
         # Reset current branch to drop the temp commit
         git.update_branch(repo, current_branch, original_head.decode())
 
@@ -348,6 +349,7 @@ def _create_insert_after(repo: Repo, message: str, branch_name: str) -> CreateRe
         raise InsertError(f"Branch '{child}' has no merge base. Cannot rebase it.")
 
     _, child_merge_base = child_parent_info
+    assert child_merge_base is not None
 
     # Save original refs for rollback
     original_refs = {

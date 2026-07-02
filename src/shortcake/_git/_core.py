@@ -20,6 +20,16 @@ class CommitSummary:
     subject: str
 
 
+@dataclass(frozen=True)
+class WorktreeInfo:
+    """A linked worktree entry reported by git."""
+
+    path: Path
+    branch: str | None
+    head: str | None = None
+    detached: bool = False
+
+
 # Error tuples — kept for backward compatibility with command-level handlers.
 # These previously listed ~20 dulwich exception types; now they cover the
 # pygit2 + stdlib equivalents that callers catch.
@@ -164,6 +174,89 @@ def get_all_local_branches(repo: Repo) -> list[str]:
     return [ref[len(prefix) :] for ref in repo.references if ref.startswith(prefix)]
 
 
+def get_worktrees(repo: Repo) -> list[WorktreeInfo]:
+    """Return worktrees from `git worktree list --porcelain`."""
+    result = subprocess.run(
+        ["git", "worktree", "list", "--porcelain"],
+        cwd=_repo_workdir(repo),
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return []
+
+    worktrees: list[WorktreeInfo] = []
+    entry: dict[str, str | bool] = {}
+
+    def flush() -> None:
+        if "path" not in entry:
+            return
+        branch_ref = entry.get("branch")
+        branch = None
+        if isinstance(branch_ref, str) and branch_ref.startswith("refs/heads/"):
+            branch = branch_ref.removeprefix("refs/heads/")
+        head = entry.get("head")
+        worktrees.append(
+            WorktreeInfo(
+                path=Path(str(entry["path"])),
+                branch=branch,
+                head=str(head) if isinstance(head, str) else None,
+                detached=bool(entry.get("detached")),
+            )
+        )
+
+    for line in result.stdout.splitlines():
+        if not line:
+            flush()
+            entry = {}
+            continue
+        if line.startswith("worktree "):
+            flush()
+            entry = {"path": line.removeprefix("worktree ")}
+        elif line.startswith("HEAD "):
+            entry["head"] = line.removeprefix("HEAD ")
+        elif line.startswith("branch "):
+            entry["branch"] = line.removeprefix("branch ")
+        elif line == "detached":
+            entry["detached"] = True
+
+    flush()
+    return worktrees
+
+
+def get_branch_worktrees(repo: Repo) -> dict[str, list[Path]]:
+    """Return branch names mapped to worktree paths where they are checked out."""
+    branch_worktrees: dict[str, list[Path]] = {}
+    for worktree in get_worktrees(repo):
+        if worktree.branch is None:
+            continue
+        branch_worktrees.setdefault(worktree.branch, []).append(worktree.path)
+    return branch_worktrees
+
+
+def format_worktree_path(path: Path) -> str:
+    """Format a worktree path for display."""
+    home = Path.home()
+    try:
+        return f"~/{path.resolve().relative_to(home.resolve())}"
+    except ValueError:
+        return str(path)
+
+
+def remove_worktree(repo: Repo, path: Path) -> tuple[bool, str | None]:
+    """Remove a clean worktree. Returns (success, error)."""
+    result = subprocess.run(
+        ["git", "worktree", "remove", str(path)],
+        cwd=_repo_workdir(repo),
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return True, None
+    error = (result.stderr or result.stdout).strip()
+    return False, error or "git worktree remove failed"
+
+
 def create_branch(repo: Repo, name: str, sha: bytes) -> None:
     """Create a new branch pointing at sha."""
     oid = pygit2.Oid(hex=_oid(sha))
@@ -189,11 +282,18 @@ def set_head_to_branch(repo: Repo, branch: str) -> None:
     repo.set_head(f"refs/heads/{branch}")
 
 
-def switch_branch(repo: Repo, branch: str, force: bool = False) -> None:
+def switch_branch(
+    repo: Repo,
+    branch: str,
+    force: bool = False,
+    ignore_other_worktrees: bool = False,
+) -> None:
     """Switch to branch, updating working directory and index."""
     cmd = ["git", "switch", branch]
     if force:
         cmd.append("--force")
+    if ignore_other_worktrees:
+        cmd.append("--ignore-other-worktrees")
     result = subprocess.run(
         cmd, cwd=_repo_workdir(repo), capture_output=True, text=True
     )
