@@ -132,14 +132,12 @@ def _restore_current_branch(repo: Repo, current_branch: str | None) -> None:
 def _other_worktrees_for_branch(repo: Repo, branch: str) -> list[Path]:
     """Return non-current worktree paths for branch."""
     current_path = Path(repo.workdir).resolve()
-    return sorted(
-        (
-            path
-            for path in git.get_branch_worktrees(repo).get(branch, [])
-            if path.resolve() != current_path
-        ),
-        key=str,
-    )
+    paths: list[Path] = []
+    for path in git.get_branch_worktrees(repo).get(branch, []):
+        worktree_path = Path(str(path))
+        if worktree_path.resolve() != current_path:
+            paths.append(worktree_path)
+    return sorted(paths, key=str)  # type: ignore[invalid-return-type]
 
 
 def _show_dry_run_worktree_removals(repo: Repo, branch: str) -> None:

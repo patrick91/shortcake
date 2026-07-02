@@ -438,6 +438,46 @@ def test_checkout_cli_pr_output(
     assert "Checked out PR #42 (pr-feature)" in result.output
 
 
+@respx.mock
+def test_checkout_cli_pr_output_with_existing_worktree(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test checkout CLI output for PR checkout already in another worktree."""
+    # Set up origin remote
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
+
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    # Create the branch locally
+    set_ref(temp_repo, "refs/heads/pr-feature", str(temp_repo.head.target).encode())
+    worktree_path = tmp_path / "pr-feature-worktree"
+    run_git(temp_repo, "worktree", "add", str(worktree_path), "pr-feature")
+
+    respx.get("https://api.github.com/repos/owner/repo/pulls/42").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "number": 42,
+                "html_url": "https://github.com/owner/repo/pull/42",
+                "base": {"ref": "main"},
+                "head": {"ref": "pr-feature"},
+                "title": "Test PR",
+                "body": "",
+                "state": "open",
+                "draft": False,
+            },
+        )
+    )
+
+    os.chdir(tmp_path)
+    result = runner.invoke(app, ["checkout", "42"])
+
+    assert result.exit_code == 0
+    assert "PR #42 (pr-feature) is checked out in another worktree:" in result.output
+    assert f"  {worktree_path.resolve()}" in result.output
+    assert f"cd {worktree_path.resolve()}" in result.output
+
+
 def test_checkout_cli_remote_output(temp_repo: Repo, tmp_path: Path) -> None:
     """Test checkout CLI output for remote checkout."""
     import os
