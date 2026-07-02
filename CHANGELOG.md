@@ -1,6 +1,17 @@
 CHANGELOG
 =========
 
+1.2.3 - 2026-07-02
+------------------
+
+- Add worktree-aware `sc checkout` and `sc sync` behavior, including directing
+  checkout to existing branch worktrees and cleaning up removable worktrees during
+  sync.
+
+This release was contributed by [@patrick91](https://github.com/patrick91) in [#126](https://github.com/patrick91/shortcake/pull/126)
+
+Additional contributors: [@Copilot](https://github.com/Copilot)
+
 1.2.2 - 2026-06-23
 ------------------
 
