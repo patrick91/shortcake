@@ -33,11 +33,12 @@ class CheckoutResult:
 def _other_worktrees_for_branch(repo: Repo, branch: str) -> list[str]:
     """Return display paths for non-current worktrees that have branch checked out."""
     current_path = Path(repo.workdir).resolve()
-    return [
-        git.format_worktree_path(path)
-        for path in sorted(git.get_branch_worktrees(repo).get(branch, []), key=str)
-        if path.resolve() != current_path
-    ]
+    paths: list[str] = []
+    for path in sorted(git.get_branch_worktrees(repo).get(branch, []), key=str):
+        worktree_path = Path(str(path))
+        if worktree_path.resolve() != current_path:
+            paths.append(git.format_worktree_path(worktree_path))
+    return paths
 
 
 def _fetch_branch(repo: Repo, branch: str) -> bool:

@@ -55,8 +55,6 @@ invalid-argument-type = "ignore"
 invalid-assignment = "ignore"
 unresolved-attribute = "ignore"
 unsupported-operator = "ignore"
-possibly-missing-attribute = "ignore"
-unused-ignore-comment = "ignore"
 
 [tool.pytest.ini_options]
 markers = ["e2e: end-to-end browser tests (requires playwright)"]

@@ -64,7 +64,7 @@ from shortcake.commands.move_lines import (
 try:
     import fcntl
 except ImportError:  # pragma: no cover
-    fcntl = None  # type: ignore[assignment]
+    fcntl = None
 
 DEFAULT_UI_PORT = 8765
 DEFAULT_DEV_WEB_PORT = 6173

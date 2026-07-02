@@ -322,7 +322,7 @@ def _submit(
             try:
                 if plan.action == PRAction.UPDATED:
                     # Update existing PR - use info from planning
-                    pr_numbers[plan.branch] = plan.existing_pr_number  # type: ignore
+                    pr_numbers[plan.branch] = plan.existing_pr_number
                     branch_result.pr_number = plan.existing_pr_number
                     branch_result.pr_url = plan.existing_pr_url
 
@@ -332,7 +332,7 @@ def _submit(
                             f"  Updating PR #{plan.existing_pr_number} base: "
                             f"{plan.existing_pr_base} -> {plan.parent}"
                         )
-                        gh.update_pr(plan.existing_pr_number, base=plan.parent)  # type: ignore
+                        gh.update_pr(plan.existing_pr_number, base=plan.parent)
                     branch_result.action = PRAction.UPDATED
 
                     # Update cache with existing PR info
