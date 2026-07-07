@@ -222,6 +222,7 @@ def _delete_and_reparent(
         git.switch_branch(repo, trunk, ignore_other_worktrees=True)
         current_branch = trunk
 
+    failed_children: list[str] = []
     for child in children:
         if child not in skip_branches:
             success = _reparent_branch(repo, child, grandparent)
@@ -229,11 +230,22 @@ def _delete_and_reparent(
                 result.reparented_branches[child] = grandparent
                 typer.echo(f"Reparented {child} to {grandparent}")
             else:
-                typer.echo(
-                    f"Warning: Could not reparent '{child}' to '{grandparent}' "
-                    f"due to conflicts. Run 'sc restack' manually after resolving.",
-                    err=True,
-                )
+                failed_children.append(child)
+
+    if failed_children:
+        # Deleting the branch anyway would orphan the children (their
+        # trailers would point at a branch that no longer exists), so keep
+        # it and let the user resolve the rebase themselves.
+        names = ", ".join(f"'{c}'" for c in failed_children)
+        typer.echo(
+            f"Warning: Keeping '{branch}': could not reparent {names} onto "
+            f"'{grandparent}' due to conflicts. "
+            f"Run 'sc move <child> -p {grandparent}', resolve the conflicts, "
+            f"then re-run 'sc sync'.",
+            err=True,
+        )
+        _restore_current_branch(repo, current_branch)
+        return _DeleteBranchResult(current_branch=current_branch, deleted=False)
 
     _restore_current_branch(repo, current_branch)
     git.delete_branch(repo, branch)

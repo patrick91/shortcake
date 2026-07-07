@@ -313,3 +313,110 @@ def test_adopt_cli_force_reparent(repo_with_feature: Repo, tmp_path: Path) -> No
 
     assert result.exit_code == 0
     assert "Re-parented 'feature' to 'develop'" in result.output
+
+
+def _history_length(repo: Repo, branch: str) -> int:
+    """Count all commits reachable from a branch."""
+    import pygit2
+
+    head = get_branch_head(repo, branch)
+    return sum(1 for _ in repo.walk(pygit2.Oid(hex=head.decode())))
+
+
+def test_adopt_force_parent_not_ancestor_rewrites_only_own_commits(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Re-parenting onto an advanced trunk must not rewrite shared history.
+
+    Regression test for a real incident: after `sc sync` deleted a merged
+    parent and fast-forwarded main, `sc adopt -f -p main` walked to main's
+    head — which was no longer an ancestor — collected the branch's ENTIRE
+    history (thousands of commits) and rewrote it from the root, diverging
+    the branch from origin by its full length.
+    """
+    main_sha = get_branch_head(temp_repo, "main")
+
+    # Old parent, later deleted (as sc sync does after a merge)
+    create_branch(temp_repo, "old-parent", main_sha, checkout=True)
+    commit_files(
+        temp_repo,
+        {tmp_path / "p.txt": "p"},
+        Trailers(parent_branch="main").apply_to("feat: old parent"),
+    )
+    old_parent_sha = get_branch_head(temp_repo, "old-parent")
+
+    # Tracked feature on top of the old parent
+    create_branch(temp_repo, "feature", old_parent_sha, checkout=True)
+    commit_files(
+        temp_repo,
+        {tmp_path / "f1.txt": "f1"},
+        Trailers(parent_branch="old-parent").apply_to("feat: feature"),
+    )
+    commit_files(temp_repo, {tmp_path / "f2.txt": "f2"}, "chore: follow-up")
+
+    # Delete the old parent and advance main past the fork point
+    temp_repo.references.delete("refs/heads/old-parent")
+    switch_branch(temp_repo, "main")
+    commit_files(temp_repo, {tmp_path / "m.txt": "m"}, "main moved on")
+    switch_branch(temp_repo, "feature")
+
+    length_before = _history_length(temp_repo, "feature")
+
+    result = _adopt(temp_repo, parent="main", force=True)
+
+    assert result.parent == "main"
+    # Same history length — only the branch's own commits were rewritten
+    assert _history_length(temp_repo, "feature") == length_before
+    # The old parent's commit below the trailer commit is untouched
+    import pygit2
+
+    head = get_branch_head(temp_repo, "feature")
+    walk = list(temp_repo.walk(pygit2.Oid(hex=head.decode())))
+    assert str(walk[2].id).encode() == old_parent_sha
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    assert git.get_branch_parent(temp_repo, "feature", all_branches) == "main"
+
+
+def test_adopt_orphan_without_force_errors(temp_repo: Repo, tmp_path: Path) -> None:
+    """Adopting a tracked-but-orphaned branch without --force must refuse.
+
+    In the incident, plain `sc adopt --parent main` on an orphaned branch
+    slipped past the already-tracked check (the trailer wasn't on the oldest
+    commit of the mis-computed range) and mangled history.
+    """
+    main_sha = get_branch_head(temp_repo, "main")
+
+    create_branch(temp_repo, "old-parent", main_sha, checkout=True)
+    commit_files(
+        temp_repo,
+        {tmp_path / "p.txt": "p"},
+        Trailers(parent_branch="main").apply_to("feat: old parent"),
+    )
+    create_branch(
+        temp_repo, "feature", get_branch_head(temp_repo, "old-parent"), checkout=True
+    )
+    commit_files(
+        temp_repo,
+        {tmp_path / "f.txt": "f"},
+        Trailers(parent_branch="old-parent").apply_to("feat: feature"),
+    )
+    temp_repo.references.delete("refs/heads/old-parent")
+    switch_branch(temp_repo, "main")
+    commit_files(temp_repo, {tmp_path / "m.txt": "m"}, "main moved on")
+    switch_branch(temp_repo, "feature")
+
+    with pytest.raises(AdoptError, match="already tracked by 'old-parent'"):
+        _adopt(temp_repo, parent="main")
+
+
+def test_adopt_no_shared_history(temp_repo: Repo) -> None:
+    """Adopting a branch with no common ancestor fails cleanly."""
+    import pygit2
+
+    tree = temp_repo.TreeBuilder().write()
+    sig = pygit2.Signature("Test", "test@example.com")
+    temp_repo.create_commit("refs/heads/orphan-root", sig, sig, "orphan", tree, [])
+    switch_branch(temp_repo, "orphan-root")
+
+    with pytest.raises(AdoptError, match="shares no history with 'main'"):
+        _adopt(temp_repo, parent="main")
