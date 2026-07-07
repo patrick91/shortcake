@@ -1,6 +1,23 @@
 CHANGELOG
 =========
 
+1.3.1 - 2026-07-07
+------------------
+
+This relase fix sc adopt and sc sync issues.
+
+- Fix `sc adopt` rewriting a branch's entire history (thousands of commits)
+  when the new parent's head is not an ancestor of the branch — the walk now
+  stops at the merge base, and a tracked branch is always detected as tracked
+  regardless of where its trailer sits in the range.
+- `sc sync` no longer deletes a merged branch when its children cannot be
+  reparented (which orphaned the stack); it keeps the branch and explains how
+  to resolve.
+- `sc restack` on a branch whose parent was deleted now says so and suggests
+  `sc adopt -f -p <new-parent>` instead of reporting "Everything up to date."
+
+This release was contributed by [@patrick91](https://github.com/patrick91) in [#129](https://github.com/patrick91/shortcake/pull/129)
+
 1.3.0 - 2026-07-07
 ------------------
 
