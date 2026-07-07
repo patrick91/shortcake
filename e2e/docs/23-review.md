@@ -4,25 +4,22 @@ The `sc review` command reviews a branch's changes using AI models (Claude, Code
 
 ## Setup
 
-```console
-$ git init -b main test-review && cd test-review
-Initialized empty Git repository in ...
-$ git commit --allow-empty -m "Initial commit"
-[main (root-commit) ...] Initial commit
-$ git checkout -b feature
-Switched to a new branch 'feature'
-$ echo "def hello(): pass" > hello.py && git add hello.py
-$ git commit -m "feat: add hello
+Create a tracked branch with a change to review:
 
-Shortcake-Parent: main"
-[feature ...] feat: add hello
+```console
+$ echo "def hello(): pass" > hello.py && git add hello.py
+$ sc create -m "Add hello function"
+Created branch 'add-hello-function' from 'main'
 ```
 
 ## No models available
 
-When no AI CLI tools are installed, the command reports an error.
+When no AI CLI tools are installed, the command reports an error. To make this
+reproducible we run `sc review` with a `PATH` that only contains `sc` and `git`,
+so `claude`/`codex` are never found:
 
 ```console
-$ sc review
+$ mkdir -p .no-ai-bin && ln -sf "$(command -v sc)" .no-ai-bin/sc && ln -sf "$(command -v git)" .no-ai-bin/git
+$ env PATH="$PWD/.no-ai-bin" sc review
 Error: No AI review tools found. Install 'claude' or 'codex' CLI.
 ```

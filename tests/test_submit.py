@@ -462,6 +462,32 @@ def test_submit_dry_run_shows_skip_merged(
     assert "feature" in captured.out
 
 
+def test_submit_stealth_dry_run_shows_push_only_plan(
+    repo_with_tracked_feature: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Test stealth dry run does not need GitHub and shows push-only work."""
+    setup_origin_remote(repo_with_tracked_feature, "git@gitlab.com:owner/repo.git")
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    with (
+        patch("shortcake.commands.submit.get_github_token") as token_mock,
+        patch("shortcake.commands.submit.GitHubClient") as client_mock,
+    ):
+        result = _submit(repo_with_tracked_feature, dry_run=True, stealth=True)
+
+    assert result.stack_branches == ["feature"]
+    assert len(result.branch_results) == 0
+    token_mock.assert_not_called()
+    client_mock.assert_not_called()
+
+    captured = capsys.readouterr()
+    assert "Would push 1 branch(es) without creating PRs" in captured.out
+    assert "feature (push only)" in captured.out
+
+
 def test_submit_creates_pr(
     repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -496,6 +522,62 @@ def test_submit_creates_pr(
     assert len(result.branch_results) == 1
     assert result.branch_results[0].action == PRAction.CREATED
     assert result.branch_results[0].pr_number == 123
+
+
+def test_submit_stealth_pushes_without_github_api(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test stealth pushes branches without token lookup or PR API calls."""
+    setup_origin_remote(repo_with_tracked_feature, "git@gitlab.com:owner/repo.git")
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    with (
+        patch("shortcake.commands.submit.get_github_token") as token_mock,
+        patch("shortcake.commands.submit.GitHubClient") as client_mock,
+        patch(
+            "shortcake.commands.submit.push_branch", return_value=(True, None)
+        ) as push_mock,
+    ):
+        result = _submit(repo_with_tracked_feature, stealth=True)
+
+    token_mock.assert_not_called()
+    client_mock.assert_not_called()
+    push_mock.assert_called_once_with(
+        repo_with_tracked_feature, "feature", force_with_lease=True
+    )
+
+    assert len(result.branch_results) == 1
+    assert result.branch_results[0].action == PRAction.PUSHED
+    assert result.branch_results[0].pr_number is None
+
+
+def test_submit_stealth_respects_force_flag(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test stealth forwards --force to push_branch."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    with patch(
+        "shortcake.commands.submit.push_branch", return_value=(True, None)
+    ) as push_mock:
+        _submit(repo_with_tracked_feature, stealth=True, force=True)
+
+    push_mock.assert_called_once_with(
+        repo_with_tracked_feature, "feature", force_with_lease=False
+    )
+
+
+def test_submit_stealth_rejects_draft(
+    repo_with_tracked_feature: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test stealth rejects draft mode because it does not create PRs."""
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    with pytest.raises(SubmitError, match="--draft cannot be used with --stealth"):
+        _submit(repo_with_tracked_feature, draft=True, stealth=True)
 
 
 def test_submit_push_failure(
@@ -993,10 +1075,15 @@ def test_submit_stack_body_update_error_non_fatal(
 
 def test_cli_submit_help() -> None:
     """Test submit command help."""
+    import re
+
     result = runner.invoke(app, ["submit", "--help"])
 
     assert result.exit_code == 0
-    assert "Push branches and create/update GitHub PRs" in result.output
+    # Strip ANSI codes: CI terminals force color, which splits flag names
+    output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "Push branches and create/update GitHub PRs" in output
+    assert "--stealth" in output
 
 
 def test_cli_submit_error(
@@ -1065,6 +1152,29 @@ def test_cli_submit_success(
 
     assert result.exit_code == 0
     assert "Created" in result.output
+
+
+def test_cli_submit_stealth_success(
+    repo_with_tracked_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test CLI submit --stealth only pushes branches."""
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_tracked_feature, "git@gitlab.com:owner/repo.git")
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.get_github_token") as token_mock,
+        patch("shortcake.commands.submit.GitHubClient") as client_mock,
+    ):
+        result = runner.invoke(app, ["submit", "--stealth"])
+
+    assert result.exit_code == 0
+    assert "Pushed 1 branch(es)" in result.output
+    assert "Created" not in result.output
+    token_mock.assert_not_called()
+    client_mock.assert_not_called()
 
 
 def test_cli_submit_with_errors(
@@ -1836,7 +1946,8 @@ def test_submit_calls_restack(
     ):
         result = _submit(repo_with_tracked_feature)
 
-    restack_mock.assert_called_once_with(repo_with_tracked_feature)
+    restack_mock.assert_called_once()
+    assert restack_mock.call_args.args == (repo_with_tracked_feature,)
     assert len(result.branch_results) == 1
 
 
@@ -2242,3 +2353,132 @@ def test_submit_updates_moved_away_branch_prs(
     assert "branch_b" not in new_body_a, (
         f"branch_a's PR body still references branch_b after move: {new_body_a}"
     )
+
+
+# --- submit --json ---
+
+
+def test_cli_submit_json_creates_pr(
+    repo_with_tracked_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit --json emits the result envelope with PR info."""
+    import json
+
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_pr = PRInfo(
+        number=123,
+        url="https://github.com/owner/repo/pull/123",
+        base="main",
+        title="feat: add feature",
+        body="",
+        state="open",
+        is_draft=False,
+    )
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.side_effect = [None, mock_pr]
+    mock_client.has_merged_pr.return_value = False
+    mock_client.create_pr.return_value = mock_pr
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = runner.invoke(app, ["submit", "--json"])
+
+    assert result.exit_code == 0
+    document = json.loads(result.output)
+    assert document["data"]["stack"] == ["feature"]
+    branch = document["data"]["branches"][0]
+    assert branch["action"] == "created"
+    assert branch["pr"] == 123
+    assert branch["url"] == "https://github.com/owner/repo/pull/123"
+    assert branch["error"] is None
+
+
+def test_cli_submit_json_dry_run_planned(
+    repo_with_tracked_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit --json --dry-run reports the plan without acting."""
+    import json
+
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_tracked_feature)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("shortcake.commands.submit.GitHubClient", return_value=mock_client):
+        result = runner.invoke(app, ["submit", "--dry-run", "--json"])
+
+    assert result.exit_code == 0
+    document = json.loads(result.output)
+    assert document["data"]["planned"] == [
+        {"branch": "feature", "action": "created", "pr": None}
+    ]
+    assert document["data"]["branches"] == []
+
+
+def test_cli_submit_json_error_envelope(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test submit --json failures use the error envelope."""
+    import json
+
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["submit", "--json"])
+
+    assert result.exit_code == 1
+    document = json.loads(result.output)
+    assert document["error"]["code"] == "submit_failed"
+    assert "No origin remote" in document["error"]["message"]
+
+
+def test_cli_submit_json_stealth_push_failure(
+    repo_with_tracked_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test stealth push failures land in the envelope and exit 1."""
+    import json
+
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_tracked_feature)
+
+    with patch(
+        "shortcake.commands.submit.push_branch",
+        return_value=(False, "remote has diverged"),
+    ):
+        result = runner.invoke(app, ["submit", "--stealth", "--json"])
+
+    assert result.exit_code == 1
+    document = json.loads(result.output)
+    branch = document["data"]["branches"][0]
+    assert branch["action"] == "skipped"
+    assert branch["error"] == "remote has diverged"
+
+
+def test_cli_submit_json_stealth_dry_run(
+    repo_with_tracked_feature: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test stealth dry-run --json reports push-only plan."""
+    import json
+
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_tracked_feature)
+
+    result = runner.invoke(app, ["submit", "--stealth", "--dry-run", "--json"])
+
+    assert result.exit_code == 0
+    document = json.loads(result.output)
+    assert document["data"]["planned"] == [
+        {"branch": "feature", "action": "pushed", "pr": None}
+    ]

@@ -10,7 +10,7 @@ import httpx
 import yaml
 
 from shortcake._git._core import Repo
-from shortcake._git._pygit2 import get_remote_url
+from shortcake._git._pygit2 import get_remote_raw_url, get_remote_url
 
 
 @dataclass
@@ -83,20 +83,8 @@ def get_github_token() -> str | None:
     return None
 
 
-def get_repo_info(repo: Repo) -> tuple[str, str] | None:
-    """Extract owner and repo name from origin remote URL.
-
-    Returns (owner, repo_name) or None if cannot be determined.
-    Supports:
-    - git@github.com:owner/repo.git
-    - ssh://git@github.com/owner/repo.git
-    - https://github.com/owner/repo.git
-    - https://github.com/owner/repo
-    """
-    url = get_remote_url(repo, "origin")
-    if url is None:
-        return None
-
+def _parse_github_url(url: str) -> tuple[str, str] | None:
+    """Extract (owner, repo_name) from a GitHub remote URL, or None."""
     # SSH format: git@github.com:owner/repo.git
     ssh_match = re.match(r"git@github\.com:([^/]+)/([^/]+?)(?:\.git)?$", url)
     if ssh_match:
@@ -111,6 +99,31 @@ def get_repo_info(repo: Repo) -> tuple[str, str] | None:
     https_match = re.match(r"https://github\.com/([^/]+)/([^/]+?)(?:\.git)?$", url)
     if https_match:
         return https_match.group(1), https_match.group(2)
+
+    return None
+
+
+def get_repo_info(repo: Repo) -> tuple[str, str] | None:
+    """Extract owner and repo name from origin remote URL.
+
+    Returns (owner, repo_name) or None if cannot be determined.
+    Supports:
+    - git@github.com:owner/repo.git
+    - ssh://git@github.com/owner/repo.git
+    - https://github.com/owner/repo.git
+    - https://github.com/owner/repo
+
+    Tries the effective URL first (with url.<base>.insteadOf applied), then
+    the raw configured URL — the repo identity stays GitHub even when a
+    rewrite points the transport somewhere else (e.g. a local mirror).
+    """
+    url = get_remote_url(repo, "origin")
+    if url is not None and (info := _parse_github_url(url)):
+        return info
+
+    raw_url = get_remote_raw_url(repo, "origin")
+    if raw_url is not None and raw_url != url:
+        return _parse_github_url(raw_url)
 
     return None
 

@@ -789,6 +789,7 @@ def test_cli_sync_user_declines(
 ) -> None:
     """Test CLI sync when user declines deletion."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: True)
     git.switch_branch(repo_with_merged_branch, "main")
 
     result = runner.invoke(app, ["sync"], input="n\n")
@@ -803,6 +804,7 @@ def test_cli_sync_user_accepts(
 ) -> None:
     """Test CLI sync when user accepts deletion."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: True)
     git.switch_branch(repo_with_merged_branch, "main")
 
     result = runner.invoke(app, ["sync"], input="y\n")
@@ -1113,7 +1115,7 @@ def test_reparent_branch_restores_trailer_when_lost(temp_repo: Repo) -> None:
             return_value=git.RebaseResult(success=True),
         ),
         patch("shortcake.commands.reorder._update_branch_trailer"),
-        patch("shortcake.commands.sync.git.get_branch_parent", return_value=None),
+        patch("shortcake.commands.sync._trailer_lost", return_value=True),
         patch("shortcake.commands.sync._restore_trailer") as mock_restore,
     ):
         result = _reparent_branch(temp_repo, "feature", "main")
@@ -1435,6 +1437,7 @@ def test_cli_sync_github_merged_user_accepts(
 ) -> None:
     """Test CLI sync prompts user for GitHub-detected merged branches."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: True)
     git.switch_branch(repo_with_stack, "main")
 
     github_status = _GitHubBranchStatus(merged=["branch_a"], closed=[])
@@ -1453,6 +1456,7 @@ def test_cli_sync_github_closed_user_accepts(
 ) -> None:
     """Test CLI sync prompts user for GitHub-detected closed branches."""
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: True)
     git.switch_branch(repo_with_stack, "main")
 
     github_status = _GitHubBranchStatus(merged=[], closed=["branch_a"])
@@ -1894,3 +1898,52 @@ def test_delete_and_reparent_warns_on_child_reparent_conflict(temp_repo: Repo) -
         and call.kwargs.get("err") is True
         for call in mock_echo.call_args_list
     )
+
+
+# Non-interactive prompt behavior
+
+
+def test_cli_sync_non_interactive_keeps_branch(
+    repo_with_merged_branch: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test sync without a TTY keeps merged branches and hints at --yes."""
+    monkeypatch.chdir(tmp_path)
+    git.switch_branch(repo_with_merged_branch, "main")
+
+    # CliRunner stdin is not a TTY, so no explicit patching needed — but be
+    # explicit so the test doesn't depend on runner internals.
+    monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: False)
+
+    result = runner.invoke(app, ["sync"])
+
+    assert result.exit_code == 0
+    assert "Keeping 'feature' (non-interactive; use --yes to delete)" in result.output
+    assert git.branch_exists(repo_with_merged_branch, "feature")
+
+
+def test_cli_sync_non_interactive_yes_still_deletes(
+    repo_with_merged_branch: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test --yes deletes merged branches without any prompt, TTY or not."""
+    monkeypatch.chdir(tmp_path)
+    git.switch_branch(repo_with_merged_branch, "main")
+
+    monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: False)
+
+    result = runner.invoke(app, ["sync", "--yes"])
+
+    assert result.exit_code == 0
+    assert "Deleted branch feature" in result.output
+
+
+def test_stdin_is_interactive_reads_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test the interactivity check delegates to sys.stdin.isatty()."""
+    from shortcake.commands.sync import _stdin_is_interactive
+
+    class FakeStdin:
+        def isatty(self) -> bool:
+            return True
+
+    monkeypatch.setattr("shortcake.commands.sync.sys.stdin", FakeStdin())
+
+    assert _stdin_is_interactive() is True

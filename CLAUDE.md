@@ -26,11 +26,11 @@ src/shortcake/
 ├── _editor.py _gitmoji.py _cache.py _constants.py _exceptions.py   # internal helpers
 ├── _web/                   # React 19 + Vite + Tailwind v4 web UI, served by `sc ui`
 └── commands/               # one module per command (+ a few `_helper.py` modules)
-    ├── create.py adopt.py modify.py fold.py reorder.py move.py
+    ├── create.py adopt.py modify.py fold.py reorder.py move.py split.py
     ├── restack.py continue_.py abort.py
     ├── up.py down.py top.py bottom.py checkout.py ls.py log.py
-    ├── submit.py sync.py pull.py review.py ui.py
-    └── _review.py _suggest.py move_lines.py   # helpers (split/move-lines logic; not registered)
+    ├── submit.py sync.py pull.py review.py skill.py recap.py ui.py
+    └── _review.py _suggest.py move_lines.py   # helpers (hunk-level split/move-lines engine; not registered directly)
 
 tests/
 ├── conftest.py             # fixtures (temp repos)
@@ -52,7 +52,8 @@ Registered in `cli.py`. `sc` and `shortcake` are both entry points.
 
 - **Build the stack** — `create` (new tracked branch; `--before`/`--after` to insert),
   `adopt` (track an existing branch)
-- **Edit the stack** — `modify`, `fold`, `reorder`, `move`
+- **Edit the stack** — `modify`, `fold`, `reorder`, `move`, `split` (move files
+  into a new stacked branch)
 - **Restack** — `restack` (rebase children when a parent changes), `continue`, `abort`
   (resume/abandon after a conflict)
 - **Navigate / inspect** — `up`, `down`, `top`, `bottom`, `checkout` (alias `co`), `ls`, `log`

@@ -1,5 +1,6 @@
 from dataclasses import dataclass, field
 from enum import Enum, auto
+from typing import Any
 
 from rich.markup import escape
 
@@ -9,6 +10,12 @@ class BranchWarning(Enum):
 
     ORPHAN = auto()  # Parent branch was deleted
     CYCLE = auto()  # Branch is part of a circular reference
+
+
+_WARNING_LABELS = {
+    BranchWarning.ORPHAN: "parent_missing",
+    BranchWarning.CYCLE: "circular_ref",
+}
 
 
 @dataclass
@@ -28,6 +35,29 @@ class BranchNode:
     pr_url: str | None = None
     latest_commit_subject: str | None = None
     worktree_paths: list[str] = field(default_factory=list)
+    needs_restack: bool = False
+
+    def to_data(self) -> dict[str, Any]:
+        """Serialize the node as a JSON-friendly dict (children excluded)."""
+        pr: dict[str, Any] | None = None
+        if self.pr_number:
+            pr = {
+                "number": self.pr_number,
+                "url": self.pr_url,
+                "draft": self.pr_is_draft,
+                "merged": self.pr_is_merged,
+                "closed": self.pr_is_closed,
+            }
+        return {
+            "name": self.name,
+            "parent": self.parent_name,
+            "current": self.is_current,
+            "pr": pr,
+            "commit_subject": self.latest_commit_subject,
+            "worktrees": self.worktree_paths,
+            "warning": _WARNING_LABELS[self.warning] if self.warning else None,
+            "needs_restack": self.needs_restack,
+        }
 
 
 @dataclass
@@ -147,6 +177,19 @@ class StackTree:
 
         return cls(roots=roots)
 
+    def to_data(self) -> list[dict[str, Any]]:
+        """Serialize all branches as JSON-friendly dicts, parents before children."""
+        branches: list[dict[str, Any]] = []
+
+        def visit(node: BranchNode) -> None:
+            branches.append(node.to_data())
+            for child in node.children:
+                visit(child)
+
+        for root in self.roots:
+            visit(root)
+        return branches
+
     def render(self) -> str:
         """
         Render the tree as a string with box-drawing characters.
@@ -183,6 +226,8 @@ class StackTree:
                 suffix += " (parent missing)"
             elif node.warning == BranchWarning.CYCLE:
                 suffix += " (circular ref)"
+            if node.needs_restack:
+                suffix += " [yellow]⟳ needs restack[/]"
 
             return f"{marker}{connector} {node.name}{pr_suffix}{suffix}"
 

@@ -29,12 +29,16 @@ Verify the stack:
 ```console
 $ sc ls
 ◉ add-feature-c (current)
+│ Add feature C
 │
 ◯ add-feature-b
+│ Add feature B
 │
 ◯ add-base-app
+│ Add base app
 │
 ◯ main
+  Initial commit
 ```
 
 ## Fold Staged Changes into Another Branch

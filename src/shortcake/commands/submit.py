@@ -13,6 +13,7 @@ from shortcake._cache import update_pr_cache
 from shortcake._exceptions import ShortcakeError
 from shortcake._git._core import Repo
 from shortcake._github import GitHubClient, get_github_token, get_repo_info, push_branch
+from shortcake._output import ShortcakeRichToolkit, get_rich_toolkit
 from shortcake._pr_stack import (
     _parse_all_prs_from_body,
     _parse_merged_prs_from_body,
@@ -61,6 +62,7 @@ class SubmitResult:
 
     branch_results: list[BranchSubmitResult] = field(default_factory=list)
     stack_branches: list[str] = field(default_factory=list)
+    planned: list[BranchPlan] = field(default_factory=list)
 
 
 class SubmitError(ShortcakeError):
@@ -82,6 +84,8 @@ def _submit(
     dry_run: bool = False,
     draft: bool = False,
     force: bool = False,
+    stealth: bool = False,
+    toolkit: ShortcakeRichToolkit | None = None,
 ) -> SubmitResult:
     """Submit current stack to GitHub.
 
@@ -92,6 +96,7 @@ def _submit(
         dry_run: If True, preview without making changes.
         draft: If True, create draft PRs.
         force: If True, force push without lease check.
+        stealth: If True, push branches without creating or updating PRs.
 
     Returns:
         SubmitResult with per-branch results.
@@ -99,6 +104,7 @@ def _submit(
     Raises:
         SubmitError: On precondition failures.
     """
+    toolkit = toolkit or get_rich_toolkit()
     result = SubmitResult()
 
     # Check preconditions
@@ -111,6 +117,62 @@ def _submit(
 
     if not git.has_remote(repo, "origin"):
         raise SubmitError("No origin remote configured")
+
+    if stealth and draft:
+        raise SubmitError("--draft cannot be used with --stealth")
+
+    # Restack before pushing (ensures branches are up-to-date with parents)
+    if not dry_run:
+        try:
+            restack_result = _restack(repo, toolkit=toolkit)
+            if restack_result.conflict_branch:
+                raise SubmitError(
+                    f"Conflict while restacking '{restack_result.conflict_branch}'. "
+                    "Resolve conflicts and run 'sc continue', then re-run 'sc submit'."
+                )
+            if restack_result.restacked_branches:
+                for branch in restack_result.restacked_branches:
+                    toolkit.echo(f"Restacked {branch}.")
+        except RestackError as e:
+            raise SubmitError(str(e)) from None
+
+    # Get stack in order (bottom to top)
+    stack_branches = _get_stack_in_order(repo, current_branch)
+    if not stack_branches:
+        # Current branch is untracked
+        raise SubmitError(
+            f"Branch '{current_branch}' is not tracked by shortcake. "
+            "Use 'sc adopt' to track it first."
+        )
+    result.stack_branches = stack_branches
+
+    if stealth:
+        if dry_run:
+            toolkit.echo(
+                f"Would push {len(stack_branches)} branch(es) without creating PRs:"
+            )
+            for branch in stack_branches:
+                toolkit.echo(f"  {branch} (push only)")
+            result.planned = [
+                BranchPlan(branch=branch, action=PRAction.PUSHED)
+                for branch in stack_branches
+            ]
+            return result
+
+        for branch in stack_branches:
+            branch_result = BranchSubmitResult(branch=branch, action=PRAction.SKIPPED)
+
+            toolkit.echo(f"Pushing '{branch}'...")
+            success, error = push_branch(repo, branch, force_with_lease=not force)
+            if not success:
+                branch_result.error = error or "Failed to push"
+            else:
+                branch_result.action = PRAction.PUSHED
+            result.branch_results.append(branch_result)
+
+        return result
+
+    all_branches = set(git.get_all_local_branches(repo))
 
     # Get GitHub token
     token = get_github_token()
@@ -128,32 +190,6 @@ def _submit(
             "Expected format: git@github.com:owner/repo.git or https://github.com/owner/repo.git"
         )
     owner, repo_name = repo_info
-
-    # Restack before pushing (ensures branches are up-to-date with parents)
-    if not dry_run:
-        try:
-            restack_result = _restack(repo)
-            if restack_result.conflict_branch:
-                raise SubmitError(
-                    f"Conflict while restacking '{restack_result.conflict_branch}'. "
-                    "Resolve conflicts and run 'sc continue', then re-run 'sc submit'."
-                )
-            if restack_result.restacked_branches:
-                for branch in restack_result.restacked_branches:
-                    typer.echo(f"Restacked {branch}.")
-        except RestackError as e:
-            raise SubmitError(str(e)) from None
-
-    # Get stack in order (bottom to top)
-    stack_branches = _get_stack_in_order(repo, current_branch)
-    if not stack_branches:
-        # Current branch is untracked
-        raise SubmitError(
-            f"Branch '{current_branch}' is not tracked by shortcake. "
-            "Use 'sc adopt' to track it first."
-        )
-    result.stack_branches = stack_branches
-    all_branches = set(git.get_all_local_branches(repo))
 
     # Phase 1: Build plan - check GitHub for existing PRs
     plans: list[BranchPlan] = []
@@ -175,7 +211,7 @@ def _submit(
                 try:
                     merged_base = gh.get_merged_pr_base(parent)
                     if merged_base:
-                        typer.echo(
+                        toolkit.echo(
                             f"Parent '{parent}' was merged into "
                             f"'{merged_base}', using as base."
                         )
@@ -288,16 +324,17 @@ def _submit(
 
         # Dry run: show plan and return
         if dry_run:
-            typer.echo(f"Would submit {len(stack_branches)} branch(es):")
+            toolkit.echo(f"Would submit {len(stack_branches)} branch(es):")
             for plan in plans:
                 if plan.action == PRAction.UPDATED:
-                    typer.echo(
+                    toolkit.echo(
                         f"  {plan.branch} (update PR #{plan.existing_pr_number})"
                     )
                 elif plan.action == PRAction.SKIPPED:
-                    typer.echo(f"  {plan.branch} (skip - already merged)")
+                    toolkit.echo(f"  {plan.branch} (skip - already merged)")
                 else:
-                    typer.echo(f"  {plan.branch} (create new PR)")
+                    toolkit.echo(f"  {plan.branch} (create new PR)")
+            result.planned = plans
             return result
 
         # Phase 2: Execute plan - push and create/update PRs
@@ -307,7 +344,7 @@ def _submit(
             )
 
             # Push branch
-            typer.echo(f"Pushing '{plan.branch}'...")
+            toolkit.echo(f"Pushing '{plan.branch}'...")
             success, error = push_branch(repo, plan.branch, force_with_lease=not force)
             if not success:
                 branch_result.error = error or "Failed to push"
@@ -328,7 +365,7 @@ def _submit(
 
                     # Update PR base if changed
                     if plan.existing_pr_base != plan.parent:
-                        typer.echo(
+                        toolkit.echo(
                             f"  Updating PR #{plan.existing_pr_number} base: "
                             f"{plan.existing_pr_base} -> {plan.parent}"
                         )
@@ -347,7 +384,7 @@ def _submit(
                         )
 
                 elif plan.action == PRAction.SKIPPED:
-                    typer.echo(
+                    toolkit.echo(
                         f"  Skipping '{plan.branch}' - already has a merged PR. "
                         f"Run 'sc sync' to clean up merged branches."
                     )
@@ -358,7 +395,7 @@ def _submit(
                 else:  # PRAction.CREATED
                     # Create new PR
                     title = _get_commit_title(repo, plan.branch)
-                    typer.echo(f"  Creating PR for '{plan.branch}'...")
+                    toolkit.echo(f"  Creating PR for '{plan.branch}'...")
                     pr = gh.create_pr(
                         head=plan.branch,
                         base=plan.parent,
@@ -370,7 +407,7 @@ def _submit(
                     branch_result.pr_number = pr.number
                     branch_result.pr_url = pr.url
                     branch_result.action = PRAction.CREATED
-                    typer.echo(f"  Created PR #{pr.number}: {pr.url}")
+                    toolkit.echo(f"  Created PR #{pr.number}: {pr.url}")
 
                     # Update cache with new PR
                     update_pr_cache(
@@ -457,15 +494,65 @@ def submit(
         bool,
         typer.Option("--force", "-f", help="Force push, ignoring remote changes"),
     ] = False,
+    stealth: Annotated[
+        bool,
+        typer.Option(
+            "--stealth", help="Push branches without creating or updating PRs"
+        ),
+    ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output the result as JSON")
+    ] = False,
 ) -> None:
     """Push branches and create/update GitHub PRs for the current stack."""
     repo = git.open_repo()
+    toolkit = get_rich_toolkit(json_output=json_output)
 
     try:
-        result = _submit(repo, dry_run=dry_run, draft=draft, force=force)
+        result = _submit(
+            repo,
+            dry_run=dry_run,
+            draft=draft,
+            force=force,
+            stealth=stealth,
+            toolkit=toolkit,
+        )
     except SubmitError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1) from None
+        toolkit.fail("submit_failed", str(e))
+
+    if json_output:
+        action_names = {
+            PRAction.CREATED: "created",
+            PRAction.UPDATED: "updated",
+            PRAction.PUSHED: "pushed",
+            PRAction.SKIPPED: "skipped",
+        }
+        toolkit.success(
+            {
+                "stack": result.stack_branches,
+                "branches": [
+                    {
+                        "branch": r.branch,
+                        "action": action_names[r.action],
+                        "pr": r.pr_number,
+                        "url": r.pr_url,
+                        "error": r.error,
+                    }
+                    for r in result.branch_results
+                ],
+                "planned": [
+                    {
+                        "branch": plan.branch,
+                        "action": action_names[plan.action],
+                        "pr": plan.existing_pr_number,
+                    }
+                    for plan in result.planned
+                ],
+            }
+        )
+        if any(r.error for r in result.branch_results):
+            raise typer.Exit(1)
+        return
 
     if dry_run:
         return
@@ -473,14 +560,17 @@ def submit(
     # Summary
     created = sum(1 for r in result.branch_results if r.action == PRAction.CREATED)
     updated = sum(1 for r in result.branch_results if r.action == PRAction.UPDATED)
+    pushed = sum(1 for r in result.branch_results if r.action == PRAction.PUSHED)
     errors = sum(1 for r in result.branch_results if r.error)
 
-    if created or updated:
+    if created or updated or pushed:
         typer.echo()
         if created:
             typer.echo(f"Created {created} PR(s)")
         if updated:
             typer.echo(f"Updated {updated} PR(s)")
+        if pushed:
+            typer.echo(f"Pushed {pushed} branch(es)")
 
     if errors:
         typer.echo(f"{errors} error(s) occurred", err=True)

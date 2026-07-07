@@ -15,10 +15,13 @@ $ sc create -m "Add repository layer"
 Created branch 'add-repository-layer' from 'add-database-schema'
 $ sc ls
 ◉ add-repository-layer (current)
+│ Add repository layer
 │
 ◯ add-database-schema
+│ Add database schema
 │
 ◯ main
+  Initial commit
 ```
 
 ## Making Changes to Parent
@@ -30,7 +33,7 @@ $ git checkout add-database-schema
 $ echo "CREATE TABLE posts;" >> schema.sql
 $ git add schema.sql
 $ git commit -m "Add posts table to schema"
-[add-database-schema 81bf7c8] Add posts table to schema
+[add-database-schema a275262] Add posts table to schema
  1 file changed, 1 insertion(+)
 ```
 
@@ -88,7 +91,7 @@ Untracked branches cannot be restacked:
 ```console
 $ git checkout main
 $ sc restack
-Current branch is not tracked (no Shortcake-Parent trailer). Nothing to restack.
+Current branch is not tracked (no Shortcake-Parent trailer). Nothing to restack. Use 'sc adopt --parent <parent>' to track it.
 $ git checkout add-repository-layer
 ```
 

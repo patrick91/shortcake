@@ -29,12 +29,16 @@ Verify the stack:
 ```console
 $ sc ls
 ◉ add-feature-c (current)
+│ Add feature C
 │
 ◯ add-feature-b
+│ Add feature B
 │
 ◯ add-base-app
+│ Add base app
 │
 ◯ main
+  Initial commit
 ```
 
 ## Basic Fold into Parent
@@ -75,10 +79,13 @@ Feature C is re-parented to add-base-app:
 ```console
 $ sc ls
 ◯ add-feature-c
+│ Add feature C
 │
 ◉ add-base-app (current)
+│ Add base app
 │
 ◯ main
+  Initial commit
 ```
 
 ## Setup: Create Another Stack for --into
@@ -97,12 +104,16 @@ Created branch 'add-feature-d' from 'add-feature-c'
 ```console
 $ sc ls
 ◉ add-feature-d (current)
+│ Add feature D
 │
 ◯ add-feature-c
+│ Add feature C
 │
 ◯ add-base-app
+│ Add base app
 │
 ◯ main
+  Initial commit
 ```
 
 ## Fold with --into
@@ -130,10 +141,13 @@ feature d
 ```console
 $ sc ls
 ◯ add-feature-c
+│ Add feature C
 │
 ◉ add-base-app (current)
+│ Add base app
 │
 ◯ main
+  Initial commit
 ```
 
 ## Error Cases

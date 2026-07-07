@@ -29,12 +29,16 @@ Verify the stack:
 ```console
 $ sc ls
 ◉ add-feature-c (current)
+│ Add feature C
 │
 ◯ add-feature-b
+│ Add feature B
 │
 ◯ add-feature-a
+│ Add feature A
 │
 ◯ main
+  Initial commit
 ```
 
 ## Insert Before
@@ -57,15 +61,20 @@ Verify the new stack order:
 
 ```console
 $ sc ls
-◯ add-feature-c
+◯ add-feature-c ⟳ needs restack
+│ Add feature C
 │
 ◯ add-feature-b
+│ Add feature B
 │
 ◉ add-fix-before-b (current)
+│ Add fix before B
 │
 ◯ add-feature-a
+│ Add feature A
 │
 ◯ main
+  Initial commit
 ```
 
 Verify trailers are correct:
@@ -100,17 +109,23 @@ Verify the new stack order:
 
 ```console
 $ sc ls
-◯ add-feature-c
+◯ add-feature-c ⟳ needs restack
+│ Add feature C
 │
-◯ add-feature-b
+◯ add-feature-b ⟳ needs restack
+│ Add feature B
 │
 ◯ add-fix-before-b
+│ Add fix before B
 │
 ◉ add-fix-after-a (current)
+│ Add fix after A
 │
 ◯ add-feature-a
+│ Add feature A
 │
 ◯ main
+  Initial commit
 ```
 
 ## Insert Before with Staged Changes
@@ -135,18 +150,25 @@ Verify the hotfix branch is in the stack:
 ```console
 $ sc ls
 ◯ add-feature-c
+│ Add feature C
 │
 ◉ add-hotfix-before-c (current)
+│ Add hotfix before C
 │
-◯ add-feature-b
+◯ add-feature-b ⟳ needs restack
+│ Add feature B
 │
 ◯ add-fix-before-b
+│ Add fix before B
 │
 ◯ add-fix-after-a
+│ Add fix after A
 │
 ◯ add-feature-a
+│ Add feature A
 │
 ◯ main
+  Initial commit
 ```
 
 ## Insert After Leaf (No Rebase)
@@ -166,20 +188,28 @@ Created branch 'add-feature-d' from 'add-feature-c'
 ```console
 $ sc ls
 ◉ add-feature-d (current)
+│ Add feature D
 │
 ◯ add-feature-c
+│ Add feature C
 │
 ◯ add-hotfix-before-c
+│ Add hotfix before C
 │
-◯ add-feature-b
+◯ add-feature-b ⟳ needs restack
+│ Add feature B
 │
 ◯ add-fix-before-b
+│ Add fix before B
 │
 ◯ add-fix-after-a
+│ Add fix after A
 │
 ◯ add-feature-a
+│ Add feature A
 │
 ◯ main
+  Initial commit
 ```
 
 ## Insert After with Multiple Children

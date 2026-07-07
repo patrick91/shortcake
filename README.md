@@ -90,8 +90,8 @@ $ sc ls
 ```
 
 **4. Submit the stack** to GitHub. `sc submit` pushes every branch and opens (or updates) a PR
-for each, with bases that match the stack. Add `--draft`/`-d` for drafts, or `--dry-run`/`-n`
-to preview first.
+for each, with bases that match the stack. Add `--draft`/`-d` for drafts, `--dry-run`/`-n`
+to preview first, or `--stealth` to push without creating or updating PRs.
 
 ```console
 $ sc submit
@@ -117,8 +117,9 @@ $ sc ls
 ◯ main
 ```
 
-> `sc submit` needs a GitHub token (from `gh auth login`, or `GH_TOKEN`/`GITHUB_TOKEN`) and an
-> `origin` remote pointing at GitHub. It restacks branches before pushing and uses
+> `sc submit` normally needs a GitHub token (from `gh auth login`, or `GH_TOKEN`/`GITHUB_TOKEN`)
+> and an `origin` remote pointing at GitHub. `sc submit --stealth` only pushes branches, so it
+> does not need the GitHub API token. Submit restacks branches before pushing and uses
 > `--force-with-lease` so it won't clobber others' work.
 
 That's the core loop: **`create` → `ls` → `submit`**. The rest of the CLI is there when you
@@ -139,7 +140,7 @@ instead of recreating it.
 | | |
 | --- | --- |
 | **Build the stack** | `create` (new tracked branch; `--before`/`--after` to insert) · `adopt` (track an existing branch) |
-| **Edit the stack** | `modify` · `fold` · `reorder` · `move` |
+| **Edit the stack** | `modify` · `fold` · `reorder` · `move` · `split` (move files into a new stacked branch) |
 | **Restack** | `restack` (rebase children when a parent changes) · `continue` · `abort` (resume/abandon after a conflict) |
 | **Navigate & inspect** | `up` · `down` · `top` · `bottom` · `checkout` (alias `co`) · `ls` · `log` |
 | **GitHub & remote** | `submit` (open/update stacked PRs) · `sync` · `pull` · `review` |
@@ -158,6 +159,31 @@ review — reading straight from your repo. Nothing leaves your machine.
 
 You can also review a branch from the terminal with `sc review`, which runs the change through
 an installed AI CLI (`claude` or `codex`).
+
+## Working with coding agents
+
+Shortcake is built to be driven by agents as well as humans: every core command takes
+`--json` (exactly one JSON document on stdout — `{"data": ...}` or
+`{"error": {"code", "message", "hint"}}`), `sc sync` never blocks on prompts in
+non-interactive shells, and pre-commit formatter failures self-heal.
+
+Shortcake ships a workflow skill that teaches an agent the stacked-PR model. Install it for
+Claude Code with:
+
+```bash
+mkdir -p .claude/skills/shortcake-stacked-prs
+sc skill --print shortcake-stacked-prs > .claude/skills/shortcake-stacked-prs/SKILL.md
+```
+
+Or paste this into your project's `CLAUDE.md` / agent instructions:
+
+```markdown
+This repo uses shortcake (`sc`) for stacked PRs. Read the workflow first:
+run `sc skill --print shortcake-stacked-prs`. Key points: use `sc ls --json`
+to read the stack, `sc create -m` / `sc modify` / `sc split` to shape it,
+`sc restack` + `sc continue` for rebases, and `sc submit` for PRs. Pass
+`--json` to any of these for machine-readable output.
+```
 
 ## Development
 

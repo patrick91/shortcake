@@ -1,5 +1,6 @@
 """Core git operations: repo, branches, commits, staging."""
 
+import hashlib
 import subprocess
 import time
 from dataclasses import dataclass
@@ -328,33 +329,82 @@ def has_precommit_hook(repo: Repo) -> bool:
     return hook_path.exists() and hook_path.is_file()
 
 
-def run_precommit_hook(repo: Repo) -> tuple[bool, str | None]:
-    """Run pre-commit hook with real-time output. Returns (success, error_message)."""
+def _snapshot_files(workdir: str, files: list[str]) -> dict[str, bytes | None]:
+    """Hash the working-tree content of files (None for unreadable/missing)."""
+    snapshot: dict[str, bytes | None] = {}
+    for name in files:
+        path = Path(workdir) / name
+        try:
+            snapshot[name] = hashlib.sha256(path.read_bytes()).digest()
+        except OSError:
+            snapshot[name] = None
+    return snapshot
+
+
+def run_precommit_hook(repo: Repo, capture: bool = False) -> tuple[bool, str | None]:
+    """Run pre-commit hook with real-time output. Returns (success, error_message).
+
+    Hook frameworks like pre-commit exit non-zero when a formatter rewrites
+    files even though the rewrite succeeded. When that happens the modified
+    files are re-staged and the hook re-runs once, so formatter-only
+    failures self-heal instead of forcing the caller to run twice.
+
+    With capture=True, hook output is captured instead of streaming to the
+    terminal (used by --json commands to keep stdout a single JSON document)
+    and included in the error message on failure.
+    """
     hook_path = _git_dir(repo) / "hooks" / "pre-commit"
     if not hook_path.exists():
         return True, None
 
+    workdir = _repo_workdir(repo)
     staged_files = get_staged_files(repo)
+    captured_output: list[str] = []
 
-    try:
-        # Don't capture stdout - let it flow directly to terminal
-        # This preserves ANSI escape sequences and carriage returns
-        process = subprocess.Popen(
-            [str(hook_path)],
-            cwd=_repo_workdir(repo),
-        )
-        process.wait()
+    def run_once() -> int:
+        if capture:
+            completed = subprocess.run(
+                [str(hook_path)],
+                cwd=workdir,
+                capture_output=True,
+                text=True,
+            )
+            captured_output.append(completed.stdout + completed.stderr)
+            returncode = completed.returncode
+        else:
+            # Don't capture stdout - let it flow directly to terminal
+            # This preserves ANSI escape sequences and carriage returns
+            process = subprocess.Popen(
+                [str(hook_path)],
+                cwd=workdir,
+            )
+            process.wait()
+            returncode = process.returncode
 
         # Re-stage files modified by hooks (e.g., formatters)
         if staged_files:
             subprocess.run(
                 ["git", "add", *staged_files],
-                cwd=_repo_workdir(repo),
+                cwd=workdir,
                 capture_output=True,
             )
 
-        if process.returncode != 0:
-            return False, "Pre-commit hook failed"
+        return returncode
+
+    try:
+        before = _snapshot_files(workdir, staged_files)
+        returncode = run_once()
+
+        if returncode != 0 and _snapshot_files(workdir, staged_files) != before:
+            if not capture:
+                print("Pre-commit hooks modified staged files; re-running hooks...")
+            returncode = run_once()
+
+        if returncode != 0:
+            error = "Pre-commit hook failed"
+            if capture and captured_output[-1].strip():
+                error = f"{error}:\n{captured_output[-1].strip()}"
+            return False, error
         return True, None
     except DULWICH_HOOK_ERRORS as e:
         return False, str(e)

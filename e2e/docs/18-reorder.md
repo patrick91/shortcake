@@ -29,12 +29,16 @@ Verify the stack:
 ```console
 $ sc ls
 ◉ add-feature-c (current)
+│ Add feature C
 │
 ◯ add-feature-b
+│ Add feature B
 │
 ◯ add-feature-a
+│ Add feature A
 │
 ◯ main
+  Initial commit
 ```
 
 ## Basic Reorder
@@ -54,12 +58,16 @@ Verify the new stack order:
 ```console
 $ sc ls
 ◯ add-feature-b
+│ Add feature B
 │
 ◯ add-feature-a
+│ Add feature A
 │
 ◉ add-feature-c (current)
+│ Add feature C
 │
 ◯ main
+  Initial commit
 ```
 
 ## Verify File Contents

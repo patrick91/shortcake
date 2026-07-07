@@ -93,8 +93,13 @@ def get_branch_parent_info(
     else:
         branch_head = get_branch_head(repo, branch)
 
-    # Get heads of other branches to know where to stop
-    # Use precomputed heads if provided (O(n) -> O(1) per call)
+    # Get heads of other branches to know where to stop.
+    # Use precomputed heads if provided (O(n) -> O(1) per call).
+    # NOTE: a branch parked at the exact same commit as another ref is
+    # genuinely ambiguous (the shared history can't say which ref owns it),
+    # so the walk deliberately stops there and reports untracked. Restack
+    # flows never leave sc-managed branches in that state — an emptied
+    # branch immediately gets its trailer restored (see _trailer_lost).
     if branch_heads is not None:
         other_branch_heads = {sha for b, sha in branch_heads.items() if b != branch}
     else:

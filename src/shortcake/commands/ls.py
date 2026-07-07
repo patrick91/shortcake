@@ -1,3 +1,4 @@
+from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated
 
@@ -9,6 +10,7 @@ from shortcake import _git as git
 from shortcake._cache import load_pr_cache, update_pr_cache
 from shortcake._git._core import Repo
 from shortcake._github import GitHubClient, get_github_token, get_repo_info
+from shortcake._output import get_rich_toolkit
 from shortcake._tree import BranchNode, StackTree
 
 console = Console(highlight=False)
@@ -54,6 +56,16 @@ def _build_tree(repo: Repo) -> tuple[StackTree, set[str]]:
                 for path in branch_worktrees.get(node.name, [])
                 if path.resolve() != current_path
             ]
+        # A branch is stale when its parent has commits it doesn't contain
+        # (e.g. the parent was amended or advanced) — surface it instead of
+        # letting the user ship from an out-of-date base.
+        parent = branches.get(node.name)
+        if parent in branch_heads and node.name in branch_heads:
+            parent_head = branch_heads[parent]
+            node.needs_restack = (
+                git.get_merge_base(repo, branch_heads[node.name], parent_head)
+                != parent_head
+            )
     return tree, set(branches.keys())
 
 
@@ -82,29 +94,37 @@ def _ls(repo: Repo) -> str:
     return tree.render()
 
 
-def _fetch_pr_info(repo: Repo, tree: StackTree, tracked_branches: set[str]) -> None:
+def _fetch_pr_info(
+    repo: Repo,
+    tree: StackTree,
+    tracked_branches: set[str],
+    *,
+    quiet: bool = False,
+) -> str | None:
     """Fetch PR info from GitHub and update cache.
 
     Args:
         repo: The repository.
         tree: The stack tree.
         tracked_branches: Set of tracked branch names.
+        quiet: Skip all console rendering (used for JSON output).
+
+    Returns:
+        A warning message if PR info could not be fetched, None otherwise.
     """
     token = get_github_token()
     repo_info = get_repo_info(repo)
 
     if not token or not repo_info:
-        console.print(
-            "Cannot fetch PR info: no GitHub token or not a GitHub repo",
-            style="bold red",
-        )
-        return
+        warning = "Cannot fetch PR info: no GitHub token or not a GitHub repo"
+        if not quiet:
+            console.print(warning, style="bold red")
+        return warning
 
     owner, repo_name = repo_info
     branch_nodes = _collect_nodes(tree)
 
-    with Live(console=console, refresh_per_second=4) as live:
-        live.update(tree.render())
+    def fetch(on_update: Callable[[], None]) -> None:
         try:
             with GitHubClient(token, owner, repo_name) as gh:
                 for node in branch_nodes:
@@ -139,11 +159,34 @@ def _fetch_pr_info(repo: Repo, tree: StackTree, tracked_branches: set[str]) -> N
                                     is_closed=not is_merged,
                                     url=pr_url,
                                 )
-                        live.update(tree.render())
+                        on_update()
                     except Exception:
                         continue
         except Exception:
             pass
+
+    if quiet:
+        fetch(lambda: None)
+    else:
+        with Live(console=console, refresh_per_second=4) as live:
+            live.update(tree.render())
+            fetch(lambda: live.update(tree.render()))
+    return None
+
+
+def _apply_cached_pr_info(
+    repo: Repo, tree: StackTree, tracked_branches: set[str]
+) -> None:
+    """Populate tree nodes with PR info from the cache."""
+    pr_cache = load_pr_cache(repo)
+    for node in _collect_nodes(tree):
+        if node.name in tracked_branches and node.name in pr_cache:
+            cached = pr_cache[node.name]
+            node.pr_number = cached.number
+            node.pr_is_draft = cached.is_draft
+            node.pr_is_merged = cached.is_merged
+            node.pr_is_closed = cached.is_closed
+            node.pr_url = cached.url
 
 
 def ls(
@@ -151,31 +194,42 @@ def ls(
         bool,
         typer.Option("--refresh", "-r", help="Refresh PR info from GitHub"),
     ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output the stack as JSON"),
+    ] = False,
 ) -> None:
     """List all tracked branches as a tree."""
     repo = git.open_repo()
 
     # Build tree
     tree, tracked_branches = _build_tree(repo)
+
+    if json_output:
+        warnings: list[str] = []
+        if refresh:
+            warning = _fetch_pr_info(repo, tree, tracked_branches, quiet=True)
+            if warning:
+                warnings.append(warning)
+        else:
+            _apply_cached_pr_info(repo, tree, tracked_branches)
+        get_rich_toolkit(json_output=True).success(
+            {
+                "branches": tree.to_data(),
+                "current": git.get_current_branch(repo),
+            },
+            warnings=warnings or None,
+        )
+        return
+
     if not tree.roots:
         console.print("No tracked branches found.")
         return
-
-    branch_nodes = _collect_nodes(tree)
 
     if refresh:
         # Fetch from GitHub and update cache
         _fetch_pr_info(repo, tree, tracked_branches)
     else:
         # Load PR info from cache
-        pr_cache = load_pr_cache(repo)
-        for node in branch_nodes:
-            if node.name in tracked_branches and node.name in pr_cache:
-                cached = pr_cache[node.name]
-                node.pr_number = cached.number
-                node.pr_is_draft = cached.is_draft
-                node.pr_is_merged = cached.is_merged
-                node.pr_is_closed = cached.is_closed
-                node.pr_url = cached.url
-
+        _apply_cached_pr_info(repo, tree, tracked_branches)
         console.print(tree.render())

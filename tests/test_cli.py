@@ -1723,3 +1723,74 @@ def test_cli_help_includes_log(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     result = runner.invoke(app, ["--help"])
 
     assert "log" in result.output
+
+
+def test_cli_log_json(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test log --json emits commits in a JSON envelope."""
+    import json
+
+    monkeypatch.chdir(tmp_path)
+
+    # Create feature branch with one commit and adopt it
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
+
+    file1 = tmp_path / "file1.txt"
+    file1.write_text("content")
+    add_paths(temp_repo, file1)
+    commit(temp_repo, b"Feature commit")
+
+    runner.invoke(app, ["adopt"])
+
+    result = runner.invoke(app, ["log", "--json"])
+
+    assert result.exit_code == 0
+    document = json.loads(result.output)
+    assert document["data"]["branch"] == "feature"
+    assert document["data"]["parent"] == "main"
+    commits = document["data"]["commits"]
+    assert len(commits) == 1
+    assert commits[0]["subject"] == "Feature commit"
+    assert len(commits[0]["sha"]) == 7
+
+
+def test_cli_log_json_detached_head(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test log --json in detached HEAD state emits a JSON error envelope."""
+    import json
+
+    monkeypatch.chdir(tmp_path)
+
+    # Detach HEAD
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", main_sha)
+
+    result = runner.invoke(app, ["log", "--json"])
+
+    assert result.exit_code == 1
+    document = json.loads(result.output)
+    assert document["error"]["code"] == "detached_head"
+    assert document["error"]["message"] == "Cannot log in detached HEAD state"
+
+
+def test_cli_create_positional_name(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Test create accepts a positional branch name overriding the slug."""
+    from datetime import date
+
+    monkeypatch.chdir(tmp_path)
+
+    file1 = tmp_path / "file1.txt"
+    file1.write_text("content")
+    add_paths(temp_repo, file1)
+
+    result = runner.invoke(app, ["create", "my-custom-name", "-m", "Add feature"])
+
+    assert result.exit_code == 0
+    today = date.today().isoformat()
+    assert f"Created branch '{today}-my-custom-name' from 'main'" in result.output

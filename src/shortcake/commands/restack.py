@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Annotated
 
@@ -7,6 +7,7 @@ import typer
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
 from shortcake._git._core import Repo
+from shortcake._output import ShortcakeRichToolkit, get_rich_toolkit
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 from shortcake._trailers import Trailers
 
@@ -23,6 +24,7 @@ class RestackResult:
 
     restacked_branches: list[str]
     conflict_branch: str | None = None
+    planned: list[tuple[str, str]] = field(default_factory=list)
     current_branch_untracked: bool = False
     skipped_empty_commits: bool = False
 
@@ -147,6 +149,23 @@ def _rebase_branch(
     return git.rebase_branch(repo, branch, onto, merge_base)
 
 
+def _trailer_lost(repo: Repo, branch: str, onto: str) -> bool:
+    """Whether a rebase left the branch without its Shortcake-Parent trailer.
+
+    Two shapes: the trailer commit was dropped but other commits remain (no
+    trailer found walking the branch), or every commit was dropped and the
+    branch is parked exactly at its parent's head — the trailer walk can't
+    tell that apart from the parent's own history, so check head equality
+    explicitly.
+    """
+    if git.branch_exists(repo, onto) and git.get_branch_head(
+        repo, branch
+    ) == git.get_branch_head(repo, onto):
+        return True
+    all_branches = set(git.get_all_local_branches(repo))
+    return git.get_branch_parent(repo, branch, all_branches) is None
+
+
 def _restore_trailer(repo: Repo, branch: str, parent: str) -> None:
     """Restore Shortcake-Parent trailer if it was lost during rebase.
 
@@ -217,40 +236,57 @@ def _get_conflict_files(repo: Repo | str) -> list[str]:
         return []
 
 
-def _show_conflict_message(branch: str, onto: str, conflict_files: list[str]) -> None:
+def _show_conflict_message(
+    branch: str,
+    onto: str,
+    conflict_files: list[str],
+    toolkit: ShortcakeRichToolkit | None = None,
+) -> None:
     """Display conflict resolution instructions."""
-    typer.echo(f"\nConflict while rebasing '{branch}' onto '{onto}'.\n")
+    toolkit = toolkit or get_rich_toolkit()
+    toolkit.echo(f"\nConflict while rebasing '{branch}' onto '{onto}'.\n")
 
     if conflict_files:
-        typer.echo("Fix conflicts in the following files:")
+        toolkit.echo("Fix conflicts in the following files:")
         for f in conflict_files:
-            typer.echo(f"  {f}")
-        typer.echo()
+            toolkit.echo(f"  {f}")
+        toolkit.echo()
 
-    typer.echo("Then:")
-    typer.echo("  1. Stage your changes:     git add <files>")
-    typer.echo("  2. Continue the restack:   sc continue")
-    typer.echo()
-    typer.echo("Or abort with: sc abort")
+    toolkit.echo("Then:")
+    toolkit.echo("  1. Stage your changes:     git add <files>")
+    toolkit.echo("  2. Continue the restack:   sc continue")
+    toolkit.echo()
+    toolkit.echo("Or abort with: sc abort")
 
 
-def _show_rebase_error(branch: str, onto: str, error_output: str) -> None:
+def _show_rebase_error(
+    branch: str,
+    onto: str,
+    error_output: str,
+    toolkit: ShortcakeRichToolkit | None = None,
+) -> None:
     """Display rebase error message (non-conflict failure)."""
-    typer.echo(f"\nFailed to rebase '{branch}' onto '{onto}'.\n", err=True)
+    toolkit = toolkit or get_rich_toolkit()
+    toolkit.echo(f"\nFailed to rebase '{branch}' onto '{onto}'.\n", err=True)
     if error_output:
-        typer.echo("Git error:", err=True)
+        toolkit.echo("Git error:", err=True)
         for line in error_output.strip().split("\n"):
-            typer.echo(f"  {line}", err=True)
-        typer.echo()
-    typer.echo("Abort with: sc abort", err=True)
+            toolkit.echo(f"  {line}", err=True)
+        toolkit.echo()
+    toolkit.echo("Abort with: sc abort", err=True)
 
 
-def _restack(repo: Repo, dry_run: bool = False) -> RestackResult:
+def _restack(
+    repo: Repo,
+    dry_run: bool = False,
+    toolkit: ShortcakeRichToolkit | None = None,
+) -> RestackResult:
     """
     Restack current branch's stack.
 
     Raises RestackError on failure, returns RestackResult on success.
     """
+    toolkit = toolkit or get_rich_toolkit()
     # Check preconditions
     current_branch = git.get_current_branch(repo)
     if current_branch is None:
@@ -285,10 +321,13 @@ def _restack(repo: Repo, dry_run: bool = False) -> RestackResult:
 
     # Dry run - just show plan
     if dry_run:
-        typer.echo(f"Would restack {len(plan)} branch(es):")
+        toolkit.echo(f"Would restack {len(plan)} branch(es):")
         for step in plan:
-            typer.echo(f"  {step.branch} onto {step.onto}")
-        return RestackResult(restacked_branches=[])
+            toolkit.echo(f"  {step.branch} onto {step.onto}")
+        return RestackResult(
+            restacked_branches=[],
+            planned=[(step.branch, step.onto) for step in plan],
+        )
 
     # Save original refs for rollback
     original_refs = {}
@@ -313,27 +352,26 @@ def _restack(repo: Repo, dry_run: bool = False) -> RestackResult:
         state.current_index = i
         state.save(repo)
 
-        typer.echo(f"Rebasing '{step.branch}' onto '{step.onto}'...")
+        toolkit.echo(f"Rebasing '{step.branch}' onto '{step.onto}'...")
         result = _rebase_branch(repo, step.branch, step.onto, step.merge_base)
 
         if not result.success:
             # Check if this is a conflict or other error
             if git.is_rebase_in_progress(repo):
                 conflict_files = _get_conflict_files(repo)
-                _show_conflict_message(step.branch, step.onto, conflict_files)
+                _show_conflict_message(step.branch, step.onto, conflict_files, toolkit)
             else:
-                _show_rebase_error(step.branch, step.onto, result.error_output)
+                _show_rebase_error(step.branch, step.onto, result.error_output, toolkit)
             return RestackResult(
                 restacked_branches=restacked, conflict_branch=step.branch
             )
 
         if result.skipped_empty:
-            typer.echo(f"  Skipped empty commit (changes already in '{step.onto}')")
+            toolkit.echo(f"  Skipped empty commit (changes already in '{step.onto}')")
             any_skipped_empty = True
 
         # Check if trailer survived the rebase (--empty=drop may have dropped it)
-        all_branches = set(git.get_all_local_branches(repo))
-        if git.get_branch_parent(repo, step.branch, all_branches) is None:
+        if _trailer_lost(repo, step.branch, step.onto):
             _restore_trailer(repo, step.branch, step.onto)
 
         restacked.append(step.branch)
@@ -356,15 +394,41 @@ def restack(
     dry_run: Annotated[
         bool, typer.Option("--dry-run", "-n", help="Preview what would happen")
     ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output the result as JSON")
+    ] = False,
 ) -> None:
     """Restack current branch's stack."""
     repo = git.open_repo()
+    toolkit = get_rich_toolkit(json_output=json_output)
 
     try:
-        result = _restack(repo, dry_run=dry_run)
+        result = _restack(repo, dry_run=dry_run, toolkit=toolkit)
     except RestackError as e:
-        typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1) from None
+        toolkit.fail("restack_failed", str(e))
+
+    if json_output:
+        conflict = None
+        if result.conflict_branch:
+            conflict = {
+                "branch": result.conflict_branch,
+                "files": _get_conflict_files(repo),
+                "resolve": "Stage the fixed files with 'git add', then run "
+                "'sc continue' (or 'sc abort' to roll back)",
+            }
+        toolkit.success(
+            {
+                "restacked": result.restacked_branches,
+                "planned": [
+                    {"branch": branch, "onto": onto} for branch, onto in result.planned
+                ],
+                "current_branch_untracked": result.current_branch_untracked,
+                "conflict": conflict,
+            }
+        )
+        if result.conflict_branch:
+            raise typer.Exit(1)
+        return
 
     if result.conflict_branch:
         raise typer.Exit(1)
@@ -374,7 +438,8 @@ def restack(
             if result.current_branch_untracked:
                 typer.echo(
                     "Current branch is not tracked (no Shortcake-Parent trailer). "
-                    "Nothing to restack."
+                    "Nothing to restack. "
+                    "Use 'sc adopt --parent <parent>' to track it."
                 )
             else:
                 typer.echo("Everything up to date.")

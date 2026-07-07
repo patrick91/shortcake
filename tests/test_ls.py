@@ -1029,3 +1029,221 @@ def test_fetch_pr_info_client_exception(
 
     # Should not raise - outer exception handler catches this
     _fetch_pr_info(repo_with_feature, tree, tracked)
+
+
+# Tests for ls --json
+
+
+def test_ls_cli_json_with_cache(repo_with_feature: Repo, tmp_path: Path) -> None:
+    """Test ls --json emits the stack as a JSON envelope."""
+    import json
+    import os
+
+    from typer.testing import CliRunner
+
+    from shortcake._cache import update_pr_cache
+    from shortcake.cli import app
+
+    _adopt(repo_with_feature)
+    update_pr_cache(
+        repo_with_feature,
+        "feature",
+        123,
+        is_draft=True,
+        url="https://github.com/owner/repo/pull/123",
+    )
+
+    os.chdir(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(app, ["ls", "--json"])
+
+    assert result.exit_code == 0
+    document = json.loads(result.output)
+    assert document["data"]["current"] == "feature"
+    branches = {branch["name"]: branch for branch in document["data"]["branches"]}
+    assert branches["main"]["parent"] is None
+    assert branches["feature"]["parent"] == "main"
+    assert branches["feature"]["current"] is True
+    assert branches["feature"]["pr"] == {
+        "number": 123,
+        "url": "https://github.com/owner/repo/pull/123",
+        "draft": True,
+        "merged": False,
+        "closed": False,
+    }
+    assert "warnings" not in document
+
+
+def test_ls_cli_json_no_tracked_branches(temp_repo: Repo, tmp_path: Path) -> None:
+    """Test ls --json with no tracked branches emits an empty list, not an error."""
+    import json
+    import os
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    os.chdir(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(app, ["ls", "--json"])
+
+    assert result.exit_code == 0
+    document = json.loads(result.output)
+    assert document["data"]["branches"] == []
+
+
+@respx.mock
+def test_ls_cli_json_refresh_fetches_pr(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Test ls --json --refresh fetches PR info without console rendering."""
+    import json
+    import os
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    _adopt(repo_with_feature)
+    monkeypatch.setenv("GH_TOKEN", "fake-token")
+    set_remote(repo_with_feature, "origin", "git@github.com:owner/repo.git")
+
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 456,
+                    "head": {"ref": "feature"},
+                    "base": {"ref": "main"},
+                    "draft": False,
+                    "html_url": "https://github.com/owner/repo/pull/456",
+                    "title": "Test PR",
+                    "body": "Test body",
+                    "state": "open",
+                }
+            ],
+        )
+    )
+
+    os.chdir(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(app, ["ls", "--json", "--refresh"])
+
+    assert result.exit_code == 0
+    document = json.loads(result.output)
+    branches = {branch["name"]: branch for branch in document["data"]["branches"]}
+    assert branches["feature"]["pr"]["number"] == 456
+    assert "warnings" not in document
+
+
+@respx.mock
+def test_ls_cli_json_refresh_no_token_warns(
+    repo_with_feature: Repo, tmp_path: Path, monkeypatch: Any
+) -> None:
+    """Test ls --json --refresh without a token reports a warning in the envelope."""
+    import json
+    import os
+
+    from typer.testing import CliRunner
+
+    from shortcake.cli import app
+
+    _adopt(repo_with_feature)
+
+    monkeypatch.delenv("GH_TOKEN", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    monkeypatch.setattr(
+        "shortcake._github.subprocess.run",
+        lambda *args, **kwargs: type(
+            "Result", (), {"returncode": 1, "stdout": "", "stderr": ""}
+        )(),
+    )
+    monkeypatch.setattr("shortcake._github.Path.exists", lambda self: False)
+
+    os.chdir(tmp_path)
+    runner = CliRunner()
+    result = runner.invoke(app, ["ls", "--json", "--refresh"])
+
+    assert result.exit_code == 0
+    document = json.loads(result.output)
+    assert document["warnings"] == [
+        "Cannot fetch PR info: no GitHub token or not a GitHub repo"
+    ]
+    branches = {branch["name"]: branch for branch in document["data"]["branches"]}
+    assert branches["feature"]["pr"] is None
+
+
+# Trailer detection with branches parked at shared heads
+
+
+def test_get_branch_parent_branch_at_trunk_head_untracked(
+    repo_with_feature: Repo,
+) -> None:
+    """A branch parked exactly at trunk's head is never tracked."""
+    _adopt(repo_with_feature)
+
+    main_sha = get_ref(repo_with_feature, "refs/heads/main")
+    set_ref(repo_with_feature, "refs/heads/fresh-branch", main_sha)
+
+    all_branches = set(git.get_all_local_branches(repo_with_feature))
+    assert (
+        git.get_branch_parent(repo_with_feature, "fresh-branch", all_branches) is None
+    )
+
+
+def test_get_branch_parent_branch_parked_at_tracked_head_untracked(
+    repo_with_feature: Repo,
+) -> None:
+    """A ref parked at a tracked branch's head is reported untracked.
+
+    Two refs on one commit are genuinely ambiguous — the walk deliberately
+    stops at the shared head so commands like fold refuse to mutate a branch
+    they can't attribute history to.
+    """
+    _adopt(repo_with_feature)
+
+    feature_sha = get_ref(repo_with_feature, "refs/heads/feature")
+    set_ref(repo_with_feature, "refs/heads/backup-ref", feature_sha)
+
+    all_branches = set(git.get_all_local_branches(repo_with_feature))
+    assert git.get_branch_parent(repo_with_feature, "backup-ref", all_branches) is None
+
+
+# Staleness markers
+
+
+def test_ls_marks_branch_needing_restack(temp_repo: Repo, tmp_path: Path) -> None:
+    """A branch whose parent advanced is marked as needing restack."""
+    # Tracked feature branch off main
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/feature", main_sha)
+    temp_repo.set_head("refs/heads/feature")
+    (tmp_path / "f.txt").write_text("feature")
+    add_paths(temp_repo, tmp_path / "f.txt")
+    commit(temp_repo, b"Add feature")
+    _adopt(temp_repo)
+
+    # Advance main so feature's base goes stale
+    switch_branch(temp_repo, "main")
+    (tmp_path / "m.txt").write_text("main moved")
+    add_paths(temp_repo, tmp_path / "m.txt")
+    commit(temp_repo, b"Advance main")
+    switch_branch(temp_repo, "feature")
+
+    result = _ls(temp_repo)
+    assert "⟳ needs restack" in result
+
+    tree, _ = _build_tree(temp_repo)
+    feature = next(n for n in _collect_nodes(tree) if n.name == "feature")
+    assert feature.needs_restack is True
+    assert feature.to_data()["needs_restack"] is True
+
+
+def test_ls_no_restack_marker_when_up_to_date(repo_with_feature: Repo) -> None:
+    """An up-to-date stack shows no restack marker."""
+    _adopt(repo_with_feature)
+
+    result = _ls(repo_with_feature)
+
+    assert "needs restack" not in result
