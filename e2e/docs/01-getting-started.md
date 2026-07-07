@@ -41,8 +41,10 @@ Use `sc ls` to see all tracked branches:
 ```console
 $ sc ls
 ◉ add-user-authentication (current)
+│ Add user authentication
 │
 ◯ main
+  Initial commit
 ```
 
 The `*` indicates your current branch.

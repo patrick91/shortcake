@@ -12,15 +12,15 @@ The `sc submit` command pushes branches and creates/updates GitHub Pull Requests
 ## Prerequisites
 
 Before using `sc submit`, you need:
-- A GitHub token (via `gh auth login` or `GH_TOKEN` environment variable)
-- An origin remote pointing to GitHub
+- A GitHub token (via `gh auth login` or `GH_TOKEN` environment variable), unless using `--stealth`
+- An origin remote
 
 ## Dry Run
 
 Use `--dry-run` to preview what would be submitted:
 
 ```console
-$ git remote add origin git@github.com:test/repo.git
+$ # github: setup-mock-with-remote
 $ echo "feature code" > feature.py && git add feature.py
 $ sc create -m "Add feature"
 Created branch 'add-feature' from 'main'
@@ -40,7 +40,7 @@ Created branch 'add-feature' from 'main'
 $ sc submit
 Pushing 'add-feature'...
   Creating PR for 'add-feature'...
-  Created PR #1: https://github.com/<OWNER>/<REPO>/pull/1
+  Created PR #1: https://github.com/test/repo/pull/1
 
 Created 1 PR(s)
 ```
@@ -56,7 +56,7 @@ Created branch 'draft-feature' from 'main'
 $ sc submit --draft
 Pushing 'draft-feature'...
   Creating PR for 'draft-feature'...
-  Created PR #1: https://github.com/<OWNER>/<REPO>/pull/1
+  Created PR #1: https://github.com/test/repo/pull/1
 
 Created 1 PR(s)
 ```
@@ -94,10 +94,10 @@ Created branch 'feature-b' from 'feature-a'
 $ sc submit
 Pushing 'feature-a'...
   Creating PR for 'feature-a'...
-  Created PR #1: https://github.com/<OWNER>/<REPO>/pull/1
+  Created PR #1: https://github.com/test/repo/pull/1
 Pushing 'feature-b'...
   Creating PR for 'feature-b'...
-  Created PR #2: https://github.com/<OWNER>/<REPO>/pull/2
+  Created PR #2: https://github.com/test/repo/pull/2
 
 Created 2 PR(s)
 ```
@@ -122,7 +122,7 @@ Pushing 'feature-a'...
   Skipping 'feature-a' - already has a merged PR. Run 'sc sync' to clean up merged branches.
 Pushing 'feature-b'...
   Creating PR for 'feature-b'...
-  Created PR #11: https://github.com/<OWNER>/<REPO>/pull/11
+  Created PR #11: https://github.com/test/repo/pull/11
 
 Created 1 PR(s)
 ```
@@ -140,13 +140,15 @@ Created branch 'add-feature' from 'main'
 $ sc submit
 Pushing 'add-feature'...
   Creating PR for 'add-feature'...
-  Created PR #1: https://github.com/<OWNER>/<REPO>/pull/1
+  Created PR #1: https://github.com/test/repo/pull/1
 
 Created 1 PR(s)
 $ sc ls
 ◉ add-feature #1 (current)
+│ Add feature
 │
 ◯ main
+  Initial commit
 ```
 
 For draft PRs, the draft status is shown:
@@ -160,13 +162,15 @@ Created branch 'draft-feature' from 'main'
 $ sc submit --draft
 Pushing 'draft-feature'...
   Creating PR for 'draft-feature'...
-  Created PR #1: https://github.com/<OWNER>/<REPO>/pull/1
+  Created PR #1: https://github.com/test/repo/pull/1
 
 Created 1 PR(s)
 $ sc ls
 ◉ draft-feature #1 draft (current)
+│ Draft feature
 │
 ◯ main
+  Initial commit
 ```
 
 For stacked PRs, all PR numbers are shown:
@@ -183,18 +187,21 @@ Created branch 'feature-b' from 'feature-a'
 $ sc submit
 Pushing 'feature-a'...
   Creating PR for 'feature-a'...
-  Created PR #1: https://github.com/<OWNER>/<REPO>/pull/1
+  Created PR #1: https://github.com/test/repo/pull/1
 Pushing 'feature-b'...
   Creating PR for 'feature-b'...
-  Created PR #2: https://github.com/<OWNER>/<REPO>/pull/2
+  Created PR #2: https://github.com/test/repo/pull/2
 
 Created 2 PR(s)
 $ sc ls
 ◉ feature-b #2 (current)
+│ Feature B
 │
 ◯ feature-a #1
+│ Feature A
 │
 ◯ main
+  Initial commit
 ```
 
 ## Stack Visualization
@@ -241,10 +248,10 @@ Rebasing 'feature-b' onto 'feature-a'...
 Restacked feature-b.
 Pushing 'feature-a'...
   Creating PR for 'feature-a'...
-  Created PR #1: https://github.com/<OWNER>/<REPO>/pull/1
+  Created PR #1: https://github.com/test/repo/pull/1
 Pushing 'feature-b'...
   Creating PR for 'feature-b'...
-  Created PR #2: https://github.com/<OWNER>/<REPO>/pull/2
+  Created PR #2: https://github.com/test/repo/pull/2
 
 Created 2 PR(s)
 ```
@@ -263,7 +270,7 @@ Created branch 'force-feature' from 'main'
 $ sc submit --force
 Pushing 'force-feature'...
   Creating PR for 'force-feature'...
-  Created PR #1: https://github.com/<OWNER>/<REPO>/pull/1
+  Created PR #1: https://github.com/test/repo/pull/1
 
 Created 1 PR(s)
 ```
@@ -337,10 +344,12 @@ Error: Branch 'main' is not tracked by shortcake. Use 'sc adopt' to track it fir
 
 - `--draft` / `-d`: Create draft PRs
 - `--dry-run` / `-n`: Preview without making changes
+- `--force` / `-f`: Force push, ignoring remote changes
+- `--stealth`: Push branches without creating or updating PRs
 
 ## Token Resolution
 
-`sc submit` looks for a GitHub token in this order:
+Unless `--stealth` is set, `sc submit` looks for a GitHub token in this order:
 
 1. `GH_TOKEN` environment variable
 2. `GITHUB_TOKEN` environment variable
@@ -351,5 +360,6 @@ Error: Branch 'main' is not tracked by shortcake. Use 'sc adopt' to track it fir
 
 - PRs are created with the first line of the branch's HEAD commit as the title
 - When a PR already exists, only the base and description are updated
+- `--stealth` skips all PR creation, PR updates, and stack-description sync
 - Stack visualization is preserved - your original PR description is kept
 - Uses `--force-with-lease` to safely update branches (prevents overwriting others' work)

@@ -31,10 +31,13 @@ Verify the stack:
 ```console
 $ sc ls
 ◉ add-b-py (current)
+│ Add b.py
 │
 ◯ add-a-py
+│ Add a.py
 │
 ◯ main
+  Initial commit
 ```
 
 ## Modify the Parent Branch
@@ -91,6 +94,8 @@ The stack is clean:
 ```console
 $ sc ls
 ◉ add-a-py (current)
+│ Add a.py
 │
 ◯ main
+  Initial commit
 ```

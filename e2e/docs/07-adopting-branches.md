@@ -10,7 +10,7 @@ Create a branch using regular git (not `sc create`):
 $ git checkout -b feature-login
 $ echo "login code" > login.py && git add login.py
 $ git commit -m "Add login functionality"
-[feature-login 3be0939] Add login functionality
+[feature-login 41e5ba4] Add login functionality
  1 file changed, 1 insertion(+)
  create mode 100644 login.py
 ```
@@ -43,8 +43,10 @@ The branch appears in `sc ls`:
 ```console
 $ sc ls
 ◉ feature-login (current)
+│ Add login functionality
 │
 ◯ main
+  Initial commit
 ```
 
 ## Adopting with a Specific Parent
@@ -56,17 +58,20 @@ $ git checkout main
 $ git checkout -b feature-api
 $ echo "api code" > api.py && git add api.py
 $ git commit -m "Add API layer"
-[feature-api d915f16] Add API layer
+[feature-api 2117e10] Add API layer
  1 file changed, 1 insertion(+)
  create mode 100644 api.py
 $ sc adopt --parent feature-login
 Adopted 'feature-api' with parent 'feature-login'
 $ sc ls
-◉ feature-api (current)
+◉ feature-api (current) ⟳ needs restack
+│ Add API layer
 │
 ◯ feature-login
+│ Add login functionality
 │
 ◯ main
+  Initial commit
 ```
 
 ## Adopting a Different Branch
@@ -78,7 +83,7 @@ $ git checkout main
 $ git checkout -b feature-utils
 $ echo "utils" > utils.py && git add utils.py
 $ git commit -m "Add utilities"
-[feature-utils 339d8ab] Add utilities
+[feature-utils ff78693] Add utilities
  1 file changed, 1 insertion(+)
  create mode 100644 utils.py
 $ git checkout main
@@ -97,13 +102,17 @@ Re-parented 'feature-login' to 'feature-utils'
 $ git log -1 --format=%B | grep Shortcake-Parent
 Shortcake-Parent: feature-utils
 $ sc ls
-◯ feature-api
+◯ feature-api ⟳ needs restack
+│ Add API layer
 │
-◉ feature-login (current)
+◉ feature-login (current) ⟳ needs restack
+│ Add login functionality
 │
 ◯ feature-utils
+│ Add utilities
 │
 ◯ main
+  Initial commit
 ```
 
 ## Error Cases

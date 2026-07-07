@@ -16,12 +16,16 @@ $ sc create -m "Add top layer"
 Created branch 'add-top-layer' from 'add-middle-layer'
 $ sc ls
 ◉ add-top-layer (current)
+│ Add top layer
 │
 ◯ add-middle-layer
+│ Add middle layer
 │
 ◯ add-base-module
+│ Add base module
 │
 ◯ main
+  Initial commit
 ```
 
 ## Moving Down the Stack

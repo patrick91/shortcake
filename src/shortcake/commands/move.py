@@ -19,6 +19,7 @@ from shortcake.commands.restack import (
     _restore_trailer,
     _show_conflict_message,
     _show_rebase_error,
+    _trailer_lost,
 )
 
 
@@ -116,7 +117,10 @@ def _move(
     all_branches = set(git.get_all_local_branches(repo))
     parent_info = git.get_branch_parent_info(repo, branch, all_branches)
     if parent_info is None:
-        raise MoveError(f"Branch '{branch}' is not tracked by Shortcake")
+        raise MoveError(
+            f"Branch '{branch}' is not tracked by Shortcake. "
+            f"Run 'sc adopt {branch} -p {parent}' to track it with that parent"
+        )
 
     old_parent, merge_base = parent_info
 
@@ -147,9 +151,6 @@ def _move(
             f"Cannot move '{branch}': no common history with parent '{old_parent}'"
         )
 
-    # Get children of branch (before modifications)
-    children = git.get_branch_children(repo, branch)
-
     # Build plan
     plan: list[RestackStep] = []
 
@@ -163,22 +164,28 @@ def _move(
         )
     )
 
-    # Steps 2+: rebase each child onto branch (their parent ref doesn't change,
-    # but they need rebasing because the branch they sit on has moved)
-    for child in children:
-        child_info = git.get_branch_parent_info(repo, child, all_branches)
-        if child_info is None:
-            continue  # pragma: no cover
-        _, child_merge_base = child_info
-        if child_merge_base is None:
-            continue  # pragma: no cover
-        plan.append(
-            RestackStep(
-                branch=child,
-                onto=branch,
-                merge_base=child_merge_base.decode(),
+    # Steps 2+: rebase the entire subtree under branch, parents before
+    # children. Their parent refs don't change, but every descendant needs
+    # rebasing because the branch the subtree sits on has moved — stopping
+    # at direct children would leave grandchildren on stale bases.
+    subtree = [branch]
+    while subtree:
+        node = subtree.pop(0)
+        for child in git.get_branch_children(repo, node):
+            child_info = git.get_branch_parent_info(repo, child, all_branches)
+            if child_info is None:
+                continue  # pragma: no cover
+            _, child_merge_base = child_info
+            if child_merge_base is None:
+                continue  # pragma: no cover
+            plan.append(
+                RestackStep(
+                    branch=child,
+                    onto=node,
+                    merge_base=child_merge_base.decode(),
+                )
             )
-        )
+            subtree.append(child)
 
     # Save original refs for rollback
     original_refs: dict[str, str] = {}
@@ -223,10 +230,7 @@ def _move(
             _update_branch_trailer(repo, step.branch, step.new_parent_trailer)
 
         # Check if trailer survived the rebase (--empty=drop may have dropped it)
-        all_branches = set(git.get_all_local_branches(repo))
-        if (
-            git.get_branch_parent(repo, step.branch, all_branches) is None
-        ):  # pragma: no cover
+        if _trailer_lost(repo, step.branch, step.onto):  # pragma: no cover
             _restore_trailer(repo, step.branch, step.onto)
 
         if i > 0:

@@ -14,7 +14,7 @@ from shortcake._github import (
     get_repo_info,
     push_branch,
 )
-from tests._git_helpers import Repo, set_ref, set_remote
+from tests._git_helpers import Repo, run_git, set_ref, set_remote
 
 # Save reference to real method before conftest autouse fixture patches it out
 _real_resolve_repo_identity = GitHubClient._resolve_repo_identity
@@ -262,6 +262,47 @@ def test_get_repo_info_ssh_url_format_no_extension(temp_repo: Repo) -> None:
     result = get_repo_info(temp_repo)
 
     assert result == ("owner", "repo")
+
+
+def test_get_repo_info_insteadof_rewrite_falls_back_to_raw_url(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test repo identity survives an insteadOf rewrite to a non-GitHub URL.
+
+    pygit2 resolves url.<base>.insteadOf, so the effective URL can point at a
+    local mirror while the configured URL is still the GitHub identity (this
+    is how the e2e docs' mock remote works).
+    """
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
+    mirror = tmp_path / "mirror"
+    run_git(
+        temp_repo,
+        "config",
+        f"url.{mirror}.insteadOf",
+        "git@github.com:owner/repo.git",
+    )
+
+    result = get_repo_info(temp_repo)
+
+    assert result == ("owner", "repo")
+
+
+def test_get_repo_info_insteadof_rewrite_non_github_raw_url(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test returns None when raw and rewritten URLs are both non-GitHub."""
+    set_remote(temp_repo, "origin", "git@gitlab.com:owner/repo.git")
+    mirror = tmp_path / "mirror"
+    run_git(
+        temp_repo,
+        "config",
+        f"url.{mirror}.insteadOf",
+        "git@gitlab.com:owner/repo.git",
+    )
+
+    result = get_repo_info(temp_repo)
+
+    assert result is None
 
 
 # Tests for GitHubClient

@@ -71,6 +71,13 @@ def recap_context(
         bool,
         typer.Option("--json", help="Print machine-readable context JSON."),
     ] = False,
+    no_patch: Annotated[
+        bool,
+        typer.Option(
+            "--no-patch",
+            help="Omit the raw patch from --json output (much smaller).",
+        ),
+    ] = False,
 ) -> None:
     """Build source context and an MDX template for a local visual recap."""
     repo = git.open_repo()
@@ -81,6 +88,8 @@ def recap_context(
         raise typer.Exit(1) from None
 
     if json_output:
+        if no_patch:
+            payload = {k: v for k, v in payload.items() if k != "patch"}
         _echo_json(payload)
     else:
         typer.echo(payload["template"])
@@ -95,6 +104,13 @@ def recap_create(
             help="MDX content, path, or @path to validate and store.",
         ),
     ],
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            help="Print the full stored document instead of just id and title.",
+        ),
+    ] = False,
 ) -> None:
     """Validate and store a local recap MDX document."""
     repo = git.open_repo()
@@ -105,7 +121,12 @@ def recap_create(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from None
 
-    _echo_json(stored_recap_payload(stored))
+    payload = stored_recap_payload(stored)
+    if not verbose:
+        # The full document (mdx + patch) can be tens of KB — agents only
+        # need the id to open the recap.
+        payload = {"id": payload["id"], "title": payload["title"]}
+    _echo_json(payload)
 
 
 @recap.command("validate")
@@ -117,6 +138,13 @@ def recap_validate(
             help="MDX content, path, or @path to validate without storing.",
         ),
     ],
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            help="Print the full validation payload including files and source.",
+        ),
+    ] = False,
 ) -> None:
     """Validate a local recap MDX document without storing it."""
     repo = git.open_repo()
@@ -127,7 +155,16 @@ def recap_validate(
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(1) from None
 
-    _echo_json(validated_recap_payload(validated))
+    payload = validated_recap_payload(validated)
+    if not verbose:
+        # Echoing the full files/source context back drowns the pass/fail
+        # signal — agents just need a clean verdict.
+        payload = {
+            "valid": payload["valid"],
+            "title": payload["title"],
+            "patchHash": payload["patchHash"],
+        }
+    _echo_json(payload)
 
 
 @recap.command("show")

@@ -26,10 +26,13 @@ Verify the stack:
 ```console
 $ sc ls
 ◉ extend-shared-file (current)
+│ Extend shared file
 │
 ◯ add-shared-file
+│ Add shared file
 │
 ◯ main
+  Initial commit
 ```
 
 ## Fold a Change into an Ancestor When Context Differs

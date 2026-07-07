@@ -127,8 +127,10 @@ After reparenting, the stack shows feature-b directly above main:
 ```console
 $ sc ls
 ◉ feature-b (current)
+│ Feature B
 │
 ◯ main
+  After merge
 ```
 
 ### Sync Never Deletes Trunk

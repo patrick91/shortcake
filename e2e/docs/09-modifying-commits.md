@@ -51,8 +51,10 @@ After modifications, the stack structure is preserved:
 ```console
 $ sc ls
 ◉ add-application (current)
+│ Add new feature
 │
 ◯ main
+  Initial commit
 ```
 
 ## Modifying with Multiple Commits
@@ -66,11 +68,11 @@ Created commit on 'add-application'
 $ sc log
 ◉ add-application
 │
-● c54ff86 Add helper functions
+● 0848a55 Add helper functions
 │
-● e7aa221 Add new feature
+● 20517b9 Add new feature
 │
-● ef69aac Add application
+● fde0168 Add application
 │
 ◯ main
 ```

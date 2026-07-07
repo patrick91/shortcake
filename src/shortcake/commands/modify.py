@@ -9,6 +9,7 @@ from shortcake import _git as git
 from shortcake._editor import open_editor
 from shortcake._exceptions import ShortcakeError
 from shortcake._git._core import Repo
+from shortcake._output import get_rich_toolkit
 from shortcake._trailers import Trailers, strip_trailers
 from shortcake.commands.move_lines import (
     _get_tracked_branches_in_order,
@@ -222,6 +223,9 @@ def modify(
             "--target", "-t", help="Fold staged changes into this branch's commit."
         ),
     ] = None,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output the result as JSON")
+    ] = False,
 ) -> None:
     """Modify the current commit or create a new one.
 
@@ -231,25 +235,29 @@ def modify(
     Use -t/--target to fold staged changes into another branch's commit.
     """
     repo = git.open_repo()
+    toolkit = get_rich_toolkit(json_output=json_output)
 
     # Check we're on a branch
     current = git.get_current_branch(repo)
     if current is None:
-        typer.echo("Error: Cannot modify in detached HEAD state", err=True)
-        raise typer.Exit(1)
+        toolkit.fail("detached_head", "Cannot modify in detached HEAD state")
 
     # Validate options
     if message and edit:
-        typer.echo("Error: Cannot use both -m and -e", err=True)
-        raise typer.Exit(1)
+        toolkit.fail("invalid_options", "Cannot use both -m and -e")
 
     if target and message:
-        typer.echo("Error: Cannot use both -t and -m", err=True)
-        raise typer.Exit(1)
+        toolkit.fail("invalid_options", "Cannot use both -t and -m")
 
     if target and edit:
-        typer.echo("Error: Cannot use both -t and -e", err=True)
-        raise typer.Exit(1)
+        toolkit.fail("invalid_options", "Cannot use both -t and -e")
+
+    if edit and json_output:
+        toolkit.fail(
+            "invalid_options",
+            "Cannot use --edit with --json",
+            hint="Pass -m 'message' to change the message non-interactively",
+        )
 
     # Handle --target mode
     if target:
@@ -258,17 +266,26 @@ def modify(
         if (  # pragma: no cover
             not no_verify and has_staged and git.has_precommit_hook(repo)
         ):
-            typer.echo("Running pre-commit hooks...")
-            success, error = git.run_precommit_hook(repo)
+            toolkit.echo("Running pre-commit hooks...")
+            success, error = git.run_precommit_hook(repo, capture=json_output)
             if not success:
-                typer.echo(f"Error: Pre-commit hook failed:\n{error}", err=True)
-                raise typer.Exit(1)
+                toolkit.fail("hook_failed", f"Pre-commit hook failed:\n{error}")
 
         try:
             result = _modify_target(repo, target, no_verify=True)
         except ModifyError as e:
-            typer.echo(f"Error: {e}", err=True)
-            raise typer.Exit(1) from None
+            toolkit.fail("modify_failed", str(e))
+
+        if json_output:
+            toolkit.success(
+                {
+                    "branch": current,
+                    "action": "folded",
+                    "target": target,
+                    "restacked": result.restacked_branches,
+                }
+            )
+            return
 
         typer.echo(f"Folded staged changes into '{target}'")
         if result.restacked_branches:
@@ -279,11 +296,10 @@ def modify(
     has_staged = git.has_staged_changes(repo)
     hooks_already_ran = False
     if not no_verify and has_staged and git.has_precommit_hook(repo):
-        typer.echo("Running pre-commit hooks...")
-        success, error = git.run_precommit_hook(repo)
+        toolkit.echo("Running pre-commit hooks...")
+        success, error = git.run_precommit_hook(repo, capture=json_output)
         if not success:
-            typer.echo(f"Error: Pre-commit hook failed:\n{error}", err=True)
-            raise typer.Exit(1)
+            toolkit.fail("hook_failed", f"Pre-commit hook failed:\n{error}")
         hooks_already_ran = True
 
     # Skip hooks in commit if we already ran them manually (to avoid duplicate output)
@@ -305,16 +321,17 @@ def modify(
     elif message:
         # New commit with -m message
         if not has_staged:
-            typer.echo("Error: No staged changes to commit", err=True)
-            raise typer.Exit(1)
+            toolkit.fail("no_staged_changes", "No staged changes to commit")
 
         _modify_with_new_commit(repo, message, no_verify=skip_hooks)
+        if json_output:
+            toolkit.success({"branch": current, "action": "committed"})
+            return
         typer.echo(f"Created commit on '{current}'")
     else:
         # Amend with staged changes, keep existing message
         if not has_staged:
-            typer.echo("Error: No staged changes to amend", err=True)
-            raise typer.Exit(1)
+            toolkit.fail("no_staged_changes", "No staged changes to amend")
 
         old_sha = str(repo.head.target).encode()
         old_message = git.get_commit_message(repo, old_sha)
@@ -322,4 +339,7 @@ def modify(
         clean_message = strip_trailers(old_message)
 
         _modify_amend(repo, clean_message, no_verify=skip_hooks)
+        if json_output:
+            toolkit.success({"branch": current, "action": "amended"})
+            return
         typer.echo(f"Amended commit on '{current}'")

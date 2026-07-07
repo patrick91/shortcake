@@ -9,9 +9,24 @@ type Repo = Any
 
 
 def get_remote_url(repo: Repo, remote_name: str = "origin") -> str | None:
-    """Return a configured remote URL, or None when the remote is missing."""
+    """Return a configured remote URL, or None when the remote is missing.
+
+    pygit2 resolves url.<base>.insteadOf rewrites, so this is the effective
+    transport URL, not necessarily the URL written in the config.
+    """
     try:
         return repo.remotes[remote_name].url
+    except KeyError:
+        return None
+
+
+def get_remote_raw_url(repo: Repo, remote_name: str = "origin") -> str | None:
+    """Return the remote URL exactly as written in the git config.
+
+    Unlike get_remote_url, url.<base>.insteadOf rewrites are not applied.
+    """
+    try:
+        return repo.config[f"remote.{remote_name}.url"]
     except KeyError:
         return None
 

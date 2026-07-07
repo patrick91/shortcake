@@ -1,3 +1,4 @@
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,13 +12,37 @@ from shortcake._cache import update_pr_cache
 from shortcake._exceptions import ShortcakeError
 from shortcake._git._core import Repo
 from shortcake._github import GitHubClient, get_github_token, get_repo_info
-from shortcake.commands.restack import RestackResult, _restack, _restore_trailer
+from shortcake.commands.restack import (
+    RestackResult,
+    _restack,
+    _restore_trailer,
+    _trailer_lost,
+)
 
 
 class SyncError(ShortcakeError):
     """Error during sync operation."""
 
     pass
+
+
+def _stdin_is_interactive() -> bool:
+    """Whether stdin can answer prompts (a real terminal)."""
+    return sys.stdin.isatty()
+
+
+def _confirm_delete(branch: str, question: str) -> bool:
+    """Ask before deleting a branch; never block when stdin isn't a terminal.
+
+    In non-interactive runs (scripts, agents, CI) the branch is kept and a
+    hint points at --yes, instead of a prompt that would hang or abort.
+    """
+    if not _stdin_is_interactive():
+        typer.echo(f"Keeping '{branch}' (non-interactive; use --yes to delete)")
+        return False
+
+    response = typer.prompt(question, default="n")
+    return response.lower() in ("y", "yes")
 
 
 @dataclass
@@ -114,8 +139,7 @@ def _reparent_branch(repo: Repo, child: str, new_parent: str) -> bool:
     _update_branch_trailer(repo, child, new_parent)
 
     # If trailer was lost during rebase (--empty=drop), restore it
-    all_branches = set(git.get_all_local_branches(repo))
-    if git.get_branch_parent(repo, child, all_branches) is None:
+    if _trailer_lost(repo, child, new_parent):
         _restore_trailer(repo, child, new_parent)
 
     return True
@@ -395,11 +419,9 @@ def _sync(
             if not force and prompt_fn:
                 should_delete = prompt_fn(branch, trunk)
             elif not force:
-                response = typer.prompt(
-                    f"'{branch}' is merged into {trunk}. Delete it? [y/n]",
-                    default="n",
+                should_delete = _confirm_delete(
+                    branch, f"'{branch}' is merged into {trunk}. Delete it? [y/n]"
                 )
-                should_delete = response.lower() in ("y", "yes")
 
             if should_delete:
                 delete_result = _delete_and_reparent(
@@ -430,11 +452,9 @@ def _sync(
             if not force and prompt_fn:
                 should_delete = prompt_fn(branch, trunk)
             elif not force:
-                response = typer.prompt(
-                    f"'{branch}' is merged into {trunk}. Delete it? [y/n]",
-                    default="n",
+                should_delete = _confirm_delete(
+                    branch, f"'{branch}' is merged into {trunk}. Delete it? [y/n]"
                 )
-                should_delete = response.lower() in ("y", "yes")
 
             if should_delete:
                 delete_result = _delete_and_reparent(
@@ -458,11 +478,9 @@ def _sync(
             if not force and prompt_fn:
                 should_delete = prompt_fn(branch, "closed")
             elif not force:
-                response = typer.prompt(
-                    f"'{branch}' has a closed PR. Delete it? [y/n]",
-                    default="n",
+                should_delete = _confirm_delete(
+                    branch, f"'{branch}' has a closed PR. Delete it? [y/n]"
                 )
-                should_delete = response.lower() in ("y", "yes")
 
             if should_delete:
                 delete_result = _delete_and_reparent(

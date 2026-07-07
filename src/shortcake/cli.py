@@ -18,6 +18,7 @@ from shortcake.commands.reorder import reorder
 from shortcake.commands.restack import restack
 from shortcake.commands.review import review
 from shortcake.commands.skill import skill
+from shortcake.commands.split import split
 from shortcake.commands.submit import submit
 from shortcake.commands.sync import sync
 from shortcake.commands.top import top
@@ -52,6 +53,7 @@ app.command()(reorder)
 app.command()(restack)
 app.command()(review)
 app.command()(skill)
+app.command()(split)
 app.command()(submit)
 app.command()(sync)
 app.command()(top)

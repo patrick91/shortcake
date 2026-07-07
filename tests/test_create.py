@@ -92,6 +92,15 @@ def test_slugify_branch_name_keeps_existing_date_prefix() -> None:
     )
 
 
+def test_slugify_branch_name_env_disables_date_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test SHORTCAKE_NO_DATE_PREFIX disables the date prefix."""
+    monkeypatch.setenv("SHORTCAKE_NO_DATE_PREFIX", "1")
+
+    assert _slugify_branch_name("Add user model") == "add-user-model"
+
+
 def test_resolve_available_branch_name_returns_base(temp_repo: Repo) -> None:
     """Test available branch names are returned unchanged."""
     with patch("shortcake.commands.create._branch_has_merged_pr", return_value=False):
@@ -360,6 +369,92 @@ def test_precommit_hook_fails(temp_repo: Repo, tmp_path: Path) -> None:
     success, error = git.run_precommit_hook(temp_repo)
     assert success is False
     assert error is not None
+
+
+def test_precommit_hook_formatter_failure_self_heals(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test a formatter-style hook (rewrite files, exit 1) succeeds via re-run.
+
+    Hook frameworks like pre-commit exit non-zero when a formatter modifies
+    files even though the fix succeeded; a second run then passes. The hook
+    runner must absorb that pattern instead of reporting failure.
+    """
+    hooks_dir = Path(temp_repo.path.rstrip("/")) / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_path = hooks_dir / "pre-commit"
+    runs_file = tmp_path / "hook-runs"
+    # Rewrites test.txt and exits 1 on first run; passes on second run.
+    hook_path.write_text(
+        "#!/bin/sh\n"
+        f"echo run >> {runs_file}\n"
+        "if grep -q unformatted test.txt; then\n"
+        "  echo formatted > test.txt\n"
+        "  exit 1\n"
+        "fi\n"
+        "exit 0\n"
+    )
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
+
+    new_file = tmp_path / "test.txt"
+    new_file.write_text("unformatted")
+    add_paths(temp_repo, new_file)
+
+    success, error = git.run_precommit_hook(temp_repo)
+
+    assert success is True
+    assert error is None
+    assert runs_file.read_text().count("run") == 2
+    # The reformatted content must be what's staged
+    assert git.get_staged_files(temp_repo) == ["test.txt"]
+    assert new_file.read_text() == "formatted\n"
+
+
+def test_precommit_hook_real_failure_does_not_retry(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test a failing hook that modifies nothing runs only once."""
+    hooks_dir = Path(temp_repo.path.rstrip("/")) / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_path = hooks_dir / "pre-commit"
+    runs_file = tmp_path / "hook-runs"
+    hook_path.write_text(f"#!/bin/sh\necho run >> {runs_file}\nexit 1\n")
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
+
+    new_file = tmp_path / "test.txt"
+    new_file.write_text("content")
+    add_paths(temp_repo, new_file)
+
+    success, error = git.run_precommit_hook(temp_repo)
+
+    assert success is False
+    assert error == "Pre-commit hook failed"
+    assert runs_file.read_text().count("run") == 1
+
+
+def test_precommit_hook_formatter_failure_twice_fails(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Test a hook that keeps modifying and failing is retried only once."""
+    hooks_dir = Path(temp_repo.path.rstrip("/")) / "hooks"
+    hooks_dir.mkdir(exist_ok=True)
+    hook_path = hooks_dir / "pre-commit"
+    runs_file = tmp_path / "hook-runs"
+    # Appends to the staged file and fails on every run
+    hook_path.write_text(
+        f"#!/bin/sh\necho run >> {runs_file}\necho change >> test.txt\nexit 1\n"
+    )
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR)
+
+    new_file = tmp_path / "test.txt"
+    new_file.write_text("content\n")
+    add_paths(temp_repo, new_file)
+
+    success, error = git.run_precommit_hook(temp_repo)
+
+    assert success is False
+    assert error == "Pre-commit hook failed"
+    assert runs_file.read_text().count("run") == 2
 
 
 def test_has_precommit_hook_exists(temp_repo: Repo) -> None:
@@ -668,3 +763,15 @@ def test_create_insert_after_conflict(repo_with_stack: Repo, tmp_path: Path) -> 
     assert result.branch == "fix-conflict"
     assert result.conflict_branch == "branch_b"
     assert result.inserted_after == "branch_a"
+
+
+def test_snapshot_files_missing_file(tmp_path: Path) -> None:
+    """Test snapshotting tolerates files a hook deleted or made unreadable."""
+    from shortcake._git._core import _snapshot_files
+
+    (tmp_path / "present.txt").write_text("content")
+
+    snapshot = _snapshot_files(str(tmp_path), ["present.txt", "missing.txt"])
+
+    assert snapshot["missing.txt"] is None
+    assert snapshot["present.txt"] is not None

@@ -1024,3 +1024,45 @@ def test_recap_cli_open_static_and_dev_paths(
     )
     assert install_error_result.exit_code == 1
     assert "install failed" in install_error_result.output
+
+
+def test_recap_cli_slim_outputs_and_no_patch(
+    repo_with_stack: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Create/validate print compact JSON by default; --verbose/--no-patch opt out."""
+    monkeypatch.chdir(tmp_path)
+    switch_branch(repo_with_stack, "branch_b")
+    context = build_recap_context(repo_with_stack, branch="branch_b")
+    mdx_path = tmp_path / "recap.mdx"
+    mdx_path.write_text(_mdx_from_context(context))
+
+    validate_result = runner.invoke(app, ["recap", "validate", "--mdx", f"@{mdx_path}"])
+    assert validate_result.exit_code == 0
+    validated = json.loads(validate_result.output)
+    assert set(validated) == {"valid", "title", "patchHash"}
+    assert validated["valid"] is True
+
+    verbose_validate = runner.invoke(
+        app, ["recap", "validate", "--mdx", f"@{mdx_path}", "--verbose"]
+    )
+    assert verbose_validate.exit_code == 0
+    assert "files" in json.loads(verbose_validate.output)
+
+    create_result = runner.invoke(app, ["recap", "create", "--mdx", f"@{mdx_path}"])
+    assert create_result.exit_code == 0
+    created = json.loads(create_result.output)
+    assert set(created) == {"id", "title"}
+
+    verbose_create = runner.invoke(
+        app, ["recap", "create", "--mdx", f"@{mdx_path}", "--verbose"]
+    )
+    assert verbose_create.exit_code == 0
+    assert "mdx" in json.loads(verbose_create.output)
+
+    context_result = runner.invoke(
+        app, ["recap", "context", "branch_b", "--json", "--no-patch"]
+    )
+    assert context_result.exit_code == 0
+    context_payload = json.loads(context_result.output)
+    assert "patch" not in context_payload
+    assert "files" in context_payload

@@ -818,3 +818,85 @@ def test_render_parent_with_multiple_children_pr_merged() -> None:
     assert "#100" in output
     assert "[dim]merged[/]" in output
     assert "[link=" not in output
+
+
+def test_node_to_data_minimal() -> None:
+    """Test to_data for a node without PR info or warnings."""
+    node = BranchNode(name="feature", parent_name="main", is_current=True)
+
+    assert node.to_data() == snapshot(
+        {
+            "name": "feature",
+            "parent": "main",
+            "current": True,
+            "pr": None,
+            "commit_subject": None,
+            "worktrees": [],
+            "warning": None,
+            "needs_restack": False,
+        }
+    )
+
+
+def test_node_to_data_with_pr_and_details() -> None:
+    """Test to_data includes PR info, commit subject and worktrees."""
+    node = BranchNode(
+        name="feature",
+        parent_name="main",
+        pr_number=123,
+        pr_is_draft=True,
+        pr_url="https://github.com/owner/repo/pull/123",
+        latest_commit_subject="Add feature",
+        worktree_paths=["~/worktrees/feature"],
+    )
+
+    assert node.to_data() == snapshot(
+        {
+            "name": "feature",
+            "parent": "main",
+            "current": False,
+            "pr": {
+                "number": 123,
+                "url": "https://github.com/owner/repo/pull/123",
+                "draft": True,
+                "merged": False,
+                "closed": False,
+            },
+            "commit_subject": "Add feature",
+            "worktrees": ["~/worktrees/feature"],
+            "warning": None,
+            "needs_restack": False,
+        }
+    )
+
+
+def test_node_to_data_warnings() -> None:
+    """Test to_data maps warnings to stable labels."""
+    orphan = BranchNode(name="a", parent_name="gone", warning=BranchWarning.ORPHAN)
+    cycle = BranchNode(name="b", parent_name="c", warning=BranchWarning.CYCLE)
+
+    assert orphan.to_data()["warning"] == "parent_missing"
+    assert cycle.to_data()["warning"] == "circular_ref"
+
+
+def test_tree_to_data_parents_before_children() -> None:
+    """Test to_data lists every branch, parents before children."""
+    branches = {
+        "feature-a": "main",
+        "feature-b": "feature-a",
+        "feature-c": "main",
+    }
+    all_branches = {"main", "feature-a", "feature-b", "feature-c"}
+
+    tree = StackTree.build(branches, all_branches, "feature-b")
+    data = tree.to_data()
+
+    names = [branch["name"] for branch in data]
+    assert names == ["main", "feature-a", "feature-b", "feature-c"]
+    assert data[0]["parent"] is None
+    assert data[2]["current"] is True
+
+
+def test_tree_to_data_empty() -> None:
+    """Test to_data on an empty tree."""
+    assert StackTree(roots=[]).to_data() == []

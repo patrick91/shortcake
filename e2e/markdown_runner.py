@@ -501,8 +501,15 @@ def run_command(cmd: str, env: TestEnv) -> str:
         )
         return ""
 
-    # Build environment with mock GitHub settings if active
-    run_env = {**os.environ, "NO_COLOR": "1", "TERM": "dumb"}
+    # Build environment with mock GitHub settings if active.
+    # SHORTCAKE_NO_DATE_PREFIX keeps created branch names date-independent so
+    # the documented output stays stable across days.
+    run_env = {
+        **os.environ,
+        "NO_COLOR": "1",
+        "TERM": "dumb",
+        "SHORTCAKE_NO_DATE_PREFIX": "1",
+    }
     if env.github_mock:
         run_env["GH_TOKEN"] = "mock-token-for-testing"
         run_env["GITHUB_API_URL"] = env.github_mock.base_url

@@ -1,3 +1,4 @@
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -13,6 +14,7 @@ from shortcake._exceptions import ShortcakeError
 from shortcake._git._core import Repo
 from shortcake._github import GitHubClient, get_github_token, get_repo_info
 from shortcake._gitmoji import pick_gitmoji
+from shortcake._output import ShortcakeRichToolkit, get_rich_toolkit
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
 from shortcake._trailers import Trailers
 
@@ -71,8 +73,14 @@ def _slugify(message: str) -> str:
 
 
 def _with_date_prefix(slug: str) -> str:
-    """Prefix a slug with today's date unless it already has a date prefix."""
+    """Prefix a slug with today's date unless it already has a date prefix.
+
+    Set SHORTCAKE_NO_DATE_PREFIX to disable the prefix (used by the e2e docs,
+    which need date-independent branch names).
+    """
     if not slug or _DATE_PREFIX_RE.match(slug):
+        return slug
+    if os.environ.get("SHORTCAKE_NO_DATE_PREFIX"):
         return slug
     return f"{date.today().isoformat()}-{slug}"
 
@@ -149,7 +157,12 @@ def _create(repo: Repo, message: str, branch_name: str) -> CreateResult:
     return CreateResult(branch=branch_name, parent=parent, message=message)
 
 
-def _create_insert_before(repo: Repo, message: str, branch_name: str) -> CreateResult:
+def _create_insert_before(
+    repo: Repo,
+    message: str,
+    branch_name: str,
+    toolkit: ShortcakeRichToolkit | None = None,
+) -> CreateResult:
     """Insert a new branch before the current branch.
 
     Given stack main → A → B → C, on B: inserts NEW between A and B.
@@ -257,15 +270,18 @@ def _create_insert_before(repo: Repo, message: str, branch_name: str) -> CreateR
     state.save(repo)
 
     # Execute rebase
-    typer.echo(f"Rebasing '{current_branch}' onto '{branch_name}'...")
+    toolkit = toolkit or get_rich_toolkit()
+    toolkit.echo(f"Rebasing '{current_branch}' onto '{branch_name}'...")
     result = _rebase_branch(repo, current_branch, branch_name, merge_base.decode())
 
     if not result.success:
         if git.is_rebase_in_progress(repo):
             conflict_files = _get_conflict_files(repo)
-            _show_conflict_message(current_branch, branch_name, conflict_files)
+            _show_conflict_message(current_branch, branch_name, conflict_files, toolkit)
         else:  # pragma: no cover
-            _show_rebase_error(current_branch, branch_name, result.error_output)
+            _show_rebase_error(
+                current_branch, branch_name, result.error_output, toolkit
+            )
         return CreateResult(
             branch=branch_name,
             parent=parent,
@@ -292,7 +308,12 @@ def _create_insert_before(repo: Repo, message: str, branch_name: str) -> CreateR
     )
 
 
-def _create_insert_after(repo: Repo, message: str, branch_name: str) -> CreateResult:
+def _create_insert_after(
+    repo: Repo,
+    message: str,
+    branch_name: str,
+    toolkit: ShortcakeRichToolkit | None = None,
+) -> CreateResult:
     """Insert a new branch after the current branch.
 
     Given stack main → A → B → C, on B: inserts NEW between B and C.
@@ -377,15 +398,16 @@ def _create_insert_after(repo: Repo, message: str, branch_name: str) -> CreateRe
     state.save(repo)
 
     # Execute rebase
-    typer.echo(f"Rebasing '{child}' onto '{branch_name}'...")
+    toolkit = toolkit or get_rich_toolkit()
+    toolkit.echo(f"Rebasing '{child}' onto '{branch_name}'...")
     result = _rebase_branch(repo, child, branch_name, child_merge_base.decode())
 
     if not result.success:
         if git.is_rebase_in_progress(repo):
             conflict_files = _get_conflict_files(repo)
-            _show_conflict_message(child, branch_name, conflict_files)
+            _show_conflict_message(child, branch_name, conflict_files, toolkit)
         else:  # pragma: no cover
-            _show_rebase_error(child, branch_name, result.error_output)
+            _show_rebase_error(child, branch_name, result.error_output, toolkit)
         return CreateResult(
             branch=branch_name,
             parent=current_branch,
@@ -413,6 +435,10 @@ def _create_insert_after(repo: Repo, message: str, branch_name: str) -> CreateRe
 
 
 def create(
+    name: Annotated[
+        str | None,
+        typer.Argument(help="Branch name (default: derived from the commit message)."),
+    ] = None,
     message: Annotated[str | None, typer.Option("--message", "-m")] = None,
     gitmoji: Annotated[bool, typer.Option("--gitmoji", "--gm")] = False,
     no_verify: Annotated[bool, typer.Option("--no-verify", "-n")] = False,
@@ -431,58 +457,63 @@ def create(
             help="Insert new branch after the current branch in the stack.",
         ),
     ] = False,
+    json_output: Annotated[
+        bool, typer.Option("--json", help="Output the result as JSON")
+    ] = False,
 ) -> None:
     """Create new tracked branch with commit."""
     repo = git.open_repo()
+    toolkit = get_rich_toolkit(json_output=json_output)
 
     # Validate mutual exclusion of --before and --after
     if before and after:
-        typer.echo("Error: Cannot use both --before and --after.", err=True)
-        raise typer.Exit(1)
+        toolkit.fail("invalid_options", "Cannot use both --before and --after.")
 
     insert_mode = before or after
 
     # Check we're on a branch
     parent = git.get_current_branch(repo)
     if parent is None:
-        typer.echo("Error: Cannot create in detached HEAD state", err=True)
-        raise typer.Exit(1)
+        toolkit.fail("detached_head", "Cannot create in detached HEAD state")
 
     # For insert mode, check additional preconditions
     if insert_mode:
         if git.is_rebase_in_progress(repo):
-            typer.echo(
-                "Error: Git rebase in progress. Complete or abort it first.",
-                err=True,
+            toolkit.fail(
+                "rebase_in_progress",
+                "Git rebase in progress. Complete or abort it first.",
             )
-            raise typer.Exit(1)
 
         if RestackState.exists(repo):
-            typer.echo(
-                "Error: Restack already in progress. Use 'sc continue' or 'sc abort'.",
-                err=True,
+            toolkit.fail(
+                "restack_in_progress",
+                "Restack already in progress. Use 'sc continue' or 'sc abort'.",
             )
-            raise typer.Exit(1)
 
     # Check for staged changes
     has_staged = git.has_staged_changes(repo)
     if not has_staged and not allow_empty:
-        typer.echo(
-            "Error: No staged changes. Use --allow-empty to create anyway.", err=True
+        toolkit.fail(
+            "no_staged_changes",
+            "No staged changes. Use --allow-empty to create anyway.",
         )
-        raise typer.Exit(1)
 
     # Run pre-commit hooks FIRST (before user writes message)
     # We handle hooks ourselves, pygit2 always skips them
     if not no_verify and has_staged and git.has_precommit_hook(repo):
-        typer.echo("Running pre-commit hooks...")
-        success, error = git.run_precommit_hook(repo)
+        toolkit.echo("Running pre-commit hooks...")
+        success, error = git.run_precommit_hook(repo, capture=json_output)
         if not success:
-            typer.echo(f"Error: Pre-commit hook failed:\n{error}", err=True)
-            raise typer.Exit(1)
+            toolkit.fail("hook_failed", f"Pre-commit hook failed:\n{error}")
 
     # Get message (interactive or from -m)
     if message is None:
+        if json_output:
+            toolkit.fail(
+                "message_required",
+                "A commit message is required with --json",
+                hint="Pass -m 'message'",
+            )
         prefix = ""
         if gitmoji:
             selected = pick_gitmoji()
@@ -497,12 +528,18 @@ def create(
             raise typer.Exit(1)
 
     # Get valid branch name (prompt only when the message cannot produce a slug)
-    branch_name = _slugify_branch_name(message)
+    branch_name = _slugify_branch_name(name if name is not None else message)
     while True:
         try:
             branch_name = _resolve_available_branch_name(repo, branch_name)
             break
         except EmptyBranchNameError:
+            if json_output:
+                toolkit.fail(
+                    "invalid_branch_name",
+                    "Could not generate a branch name from the message",
+                    hint="Pass a branch name as the positional argument",
+                )
             user_input = typer.prompt("Could not generate branch name. Enter a name")
             branch_name = _slugify_branch_name(user_input)
             if not branch_name:
@@ -512,18 +549,31 @@ def create(
     # Dispatch to the right create function
     if before:
         try:
-            result = _create_insert_before(repo, message, branch_name)
+            result = _create_insert_before(repo, message, branch_name, toolkit)
         except InsertError as e:
-            typer.echo(f"Error: {e}", err=True)
-            raise typer.Exit(1) from None
+            toolkit.fail("insert_failed", str(e))
     elif after:
         try:
-            result = _create_insert_after(repo, message, branch_name)
+            result = _create_insert_after(repo, message, branch_name, toolkit)
         except InsertError as e:
-            typer.echo(f"Error: {e}", err=True)
-            raise typer.Exit(1) from None
+            toolkit.fail("insert_failed", str(e))
     else:
         result = _create(repo, message, branch_name)
+
+    if json_output:
+        toolkit.success(
+            {
+                "branch": result.branch,
+                "parent": result.parent,
+                "inserted_before": result.inserted_before,
+                "inserted_after": result.inserted_after,
+                "rebased": result.rebased_branches,
+                "conflict": result.conflict_branch,
+            }
+        )
+        if result.conflict_branch:
+            raise typer.Exit(1)
+        return
 
     # Display output
     typer.echo(f"Created branch '{result.branch}' from '{result.parent}'")

@@ -27,10 +27,13 @@ Check the stack structure:
 ```console
 $ sc ls
 ◉ add-user-api (current)
+│ Add user API
 │
 ◯ add-user-model
+│ Add user model
 │
 ◯ main
+  Initial commit
 ```
 
 ## Adding Another Branch to the Stack
@@ -44,12 +47,16 @@ $ sc create -m "Add validation"
 Created branch 'add-validation' from 'add-user-api'
 $ sc ls
 ◉ add-validation (current)
+│ Add validation
 │
 ◯ add-user-api
+│ Add user API
 │
 ◯ add-user-model
+│ Add user model
 │
 ◯ main
+  Initial commit
 ```
 
 ## Verifying Parent Relationships

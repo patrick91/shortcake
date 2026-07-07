@@ -1,9 +1,11 @@
 from dataclasses import dataclass
+from typing import Annotated
 
 import typer
 
 from shortcake import _git as git
 from shortcake._git._core import Repo
+from shortcake._output import get_rich_toolkit
 
 
 @dataclass
@@ -68,16 +70,34 @@ def _render_log(result: LogResult) -> str:
     return "\n".join(lines)
 
 
-def log() -> None:
+def log(
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help="Output the log as JSON"),
+    ] = False,
+) -> None:
     """Show commits on current branch."""
     repo = git.open_repo()
 
     current = git.get_current_branch(repo)
     if current is None:
-        typer.echo("Error: Cannot log in detached HEAD state", err=True)
-        raise typer.Exit(1)
+        get_rich_toolkit(json_output=json_output).fail(
+            "detached_head", "Cannot log in detached HEAD state"
+        )
 
     result = _log(repo)
+
+    if json_output:
+        get_rich_toolkit(json_output=True).success(
+            {
+                "branch": result.branch,
+                "parent": result.parent,
+                "commits": [
+                    {"sha": sha, "subject": subject} for sha, subject in result.commits
+                ],
+            }
+        )
+        return
 
     if not result.commits:
         typer.echo("No commits on this branch.")

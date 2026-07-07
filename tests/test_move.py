@@ -587,3 +587,55 @@ def test_move_cli_conflict_exit_code(
     switch_branch(temp_repo, "branch_b")
     result = runner.invoke(app, ["move", "-p", "new_target"])
     assert result.exit_code == 1
+
+
+def test_move_restacks_grandchildren(temp_repo: Repo, tmp_path: Path) -> None:
+    """Move rebases the whole subtree, not just direct children.
+
+    Regression test: stopping at direct children left grandchildren based
+    on the pre-move commits, so the upper stack silently went stale.
+    """
+    _create_stack_3(temp_repo, tmp_path)
+
+    # New parent branch off main with its own file
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/new_parent", main_sha)
+    switch_branch(temp_repo, "new_parent")
+    (tmp_path / "np.txt").write_text("new parent content")
+    add_paths(temp_repo, tmp_path / "np.txt")
+    commit(temp_repo, Trailers(parent_branch="main").apply_to("feat: new parent"))
+
+    switch_branch(temp_repo, "branch_a")
+
+    result = _move(temp_repo, parent="new_parent")
+
+    assert result.conflict_branch is None
+    # Both the child AND the grandchild must be restacked
+    assert result.restacked_children == ["branch_b", "branch_c"]
+
+    # The grandchild's history must now contain the new parent's commit
+    new_parent_head = get_ref(temp_repo, "refs/heads/new_parent")
+    branch_c_head = get_ref(temp_repo, "refs/heads/branch_c")
+    assert git.is_ancestor(temp_repo, new_parent_head, branch_c_head)
+
+    # And its working tree must carry the new parent's file
+    switch_branch(temp_repo, "branch_c")
+    assert (tmp_path / "np.txt").read_text() == "new parent content"
+    assert (tmp_path / "c.txt").read_text() == "branch c content"
+
+
+def test_move_untracked_branch_error_suggests_adopt(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """The not-tracked error teaches the sc adopt escape hatch."""
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/loose", main_sha)
+    switch_branch(temp_repo, "loose")
+    (tmp_path / "loose.txt").write_text("loose")
+    add_paths(temp_repo, tmp_path / "loose.txt")
+    commit(temp_repo, b"loose commit")
+
+    set_ref(temp_repo, "refs/heads/target", main_sha)
+
+    with pytest.raises(MoveError, match="sc adopt loose -p target"):
+        _move(temp_repo, branch="loose", parent="target")
