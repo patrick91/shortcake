@@ -668,3 +668,46 @@ def test_integration_restack_abort_with_real_conflict(
 
     # Verify branch_a was restored to original SHA
     assert get_ref(temp_repo, "refs/heads/branch_a") == original_branch_a_sha
+
+
+def test_cli_restack_orphaned_parent_message(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A trailer pointing at a deleted branch gets recovery guidance.
+
+    Regression test: restack reported "Everything up to date." for an
+    orphaned branch, right after sync told the user to run restack.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/gone-parent", main_sha)
+    temp_repo.set_head("refs/heads/gone-parent")
+    (tmp_path / "p.txt").write_text("p")
+    add_paths(temp_repo, tmp_path / "p.txt")
+    commit(temp_repo, Trailers(parent_branch="main").apply_to("feat: parent"))
+
+    set_ref(
+        temp_repo, "refs/heads/feature", get_ref(temp_repo, "refs/heads/gone-parent")
+    )
+    temp_repo.set_head("refs/heads/feature")
+    (tmp_path / "f.txt").write_text("f")
+    add_paths(temp_repo, tmp_path / "f.txt")
+    commit(temp_repo, Trailers(parent_branch="gone-parent").apply_to("feat: feature"))
+
+    temp_repo.references.delete("refs/heads/gone-parent")
+
+    result = runner.invoke(app, ["restack"])
+
+    assert result.exit_code == 0
+    assert "Parent branch 'gone-parent' no longer exists" in result.output
+    assert "sc adopt -f -p" in result.output
+    assert "Everything up to date" not in result.output
+
+    json_result = runner.invoke(app, ["restack", "--json"])
+
+    assert json_result.exit_code == 0
+    import json as json_module
+
+    document = json_module.loads(json_result.output)
+    assert document["data"]["orphaned_parent"] == "gone-parent"

@@ -25,6 +25,7 @@ class RestackResult:
     restacked_branches: list[str]
     conflict_branch: str | None = None
     planned: list[tuple[str, str]] = field(default_factory=list)
+    orphaned_parent: str | None = None
     current_branch_untracked: bool = False
     skipped_empty_commits: bool = False
 
@@ -308,6 +309,12 @@ def _restack(
     current_branch_parent = git.get_branch_parent(repo, current_branch, all_branches)
     is_current_untracked = current_branch_parent is None
 
+    # A trailer pointing at a deleted branch can't be restacked — surface it
+    # instead of reporting "everything up to date".
+    orphaned_parent = None
+    if current_branch_parent is not None and current_branch_parent not in all_branches:
+        orphaned_parent = current_branch_parent
+
     # Get stack in topological order
     stack_branches = _get_stack_in_order(repo, current_branch)
 
@@ -316,7 +323,9 @@ def _restack(
 
     if not plan:
         return RestackResult(
-            restacked_branches=[], current_branch_untracked=is_current_untracked
+            restacked_branches=[],
+            current_branch_untracked=is_current_untracked,
+            orphaned_parent=orphaned_parent,
         )
 
     # Dry run - just show plan
@@ -423,6 +432,7 @@ def restack(
                     {"branch": branch, "onto": onto} for branch, onto in result.planned
                 ],
                 "current_branch_untracked": result.current_branch_untracked,
+                "orphaned_parent": result.orphaned_parent,
                 "conflict": conflict,
             }
         )
@@ -440,6 +450,12 @@ def restack(
                     "Current branch is not tracked (no Shortcake-Parent trailer). "
                     "Nothing to restack. "
                     "Use 'sc adopt --parent <parent>' to track it."
+                )
+            elif result.orphaned_parent:
+                typer.echo(
+                    f"Parent branch '{result.orphaned_parent}' no longer exists. "
+                    "Re-parent with 'sc adopt -f -p <new-parent>', "
+                    "then run 'sc restack' again."
                 )
             else:
                 typer.echo("Everything up to date.")

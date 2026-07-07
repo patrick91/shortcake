@@ -85,32 +85,36 @@ def _adopt(
     if not git.branch_exists(repo, parent):
         raise AdoptError(f"Parent branch '{parent}' not found")
 
-    # Find commits on branch relative to new parent
+    # Find commits on branch relative to new parent. Walk down to the merge
+    # base, NOT the parent's head: when the parent has advanced past the fork
+    # point (e.g. trunk was fast-forwarded), its head is not an ancestor of
+    # the branch — walking to it would never terminate at the boundary and
+    # would collect (and rewrite) the branch's entire history.
     branch_head = git.get_branch_head(repo, branch)
     parent_head = git.get_branch_head(repo, parent)
-    commits = git.get_commits_between(repo, branch_head, parent_head)
+    merge_base = git.get_merge_base(repo, branch_head, parent_head)
+    if merge_base is None:
+        raise AdoptError(f"'{branch}' shares no history with '{parent}'")
+    commits = git.get_commits_between(repo, branch_head, merge_base)
 
     if not commits:
         raise AdoptError(f"No commits on '{branch}' relative to '{parent}'")
 
-    # When re-parenting with --force, the commit with the Shortcake-Parent
-    # trailer may not be commits[-1] (the oldest). This happens when the new
-    # parent diverges earlier in history, causing commits from other branches
-    # to appear in the diff. Scan all commits to find the right one.
+    # The commit with the Shortcake-Parent trailer may not be commits[-1]
+    # (the oldest): when the new parent diverges earlier in history, commits
+    # from ancestor branches appear in the range. Scan from newest to oldest —
+    # the branch's own trailer is always the first one we hit going backwards
+    # from HEAD, since any deeper trailers belong to ancestors.
     first_commit = commits[-1]
     trailer_commit_idx = len(commits) - 1  # index of commit with trailer
 
-    if force:
-        # Scan from newest to oldest — the branch's own trailer is always
-        # the first one we hit going backwards from HEAD, since any deeper
-        # trailers belong to ancestor branches that ended up in the range.
-        for i in range(len(commits)):
-            msg = git.get_commit_message(repo, commits[i])
-            t = Trailers.from_message(msg)
-            if t.parent_branch is not None:
-                first_commit = commits[i]
-                trailer_commit_idx = i
-                break
+    for i in range(len(commits)):
+        msg = git.get_commit_message(repo, commits[i])
+        t = Trailers.from_message(msg)
+        if t.parent_branch is not None:
+            first_commit = commits[i]
+            trailer_commit_idx = i
+            break
 
     # Check if already tracked
     message = git.get_commit_message(repo, first_commit)

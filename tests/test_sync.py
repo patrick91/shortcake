@@ -1894,7 +1894,8 @@ def test_delete_and_reparent_warns_on_child_reparent_conflict(temp_repo: Repo) -
 
     assert result.reparented_branches == {}
     assert any(
-        "Could not reparent 'child' to 'main'" in call.args[0]
+        "Keeping 'branch'" in call.args[0]
+        and "could not reparent 'child'" in call.args[0]
         and call.kwargs.get("err") is True
         for call in mock_echo.call_args_list
     )
@@ -1947,3 +1948,39 @@ def test_stdin_is_interactive_reads_stdin(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr("shortcake.commands.sync.sys.stdin", FakeStdin())
 
     assert _stdin_is_interactive() is True
+
+
+def test_sync_keeps_merged_branch_when_reparent_fails(
+    repo_with_merged_branch: Repo, tmp_path: Path
+) -> None:
+    """A merged branch is kept when its child cannot be reparented.
+
+    Regression test: sync used to delete the parent anyway, leaving the
+    child's trailer pointing at a branch that no longer exists (orphaned
+    stack) with misleading recovery guidance.
+    """
+    # Give the merged 'feature' branch a child
+    from shortcake._trailers import Trailers
+
+    feature_sha = get_ref(repo_with_merged_branch, "refs/heads/feature")
+    set_ref(repo_with_merged_branch, "refs/heads/child", feature_sha)
+    repo_with_merged_branch.set_head("refs/heads/child")
+    reset_hard(repo_with_merged_branch)
+    (tmp_path / "child.txt").write_text("child")
+    add_paths(repo_with_merged_branch, tmp_path / "child.txt")
+    commit(
+        repo_with_merged_branch,
+        Trailers(parent_branch="feature").apply_to("feat: child"),
+    )
+    git.switch_branch(repo_with_merged_branch, "main")
+
+    with patch("shortcake.commands.sync._reparent_branch", return_value=False):
+        result = _sync(repo_with_merged_branch, force=True)
+
+    # Parent kept, nothing deleted, child not orphaned
+    assert git.branch_exists(repo_with_merged_branch, "feature")
+    assert result.deleted_branches == []
+    all_branches = set(git.get_all_local_branches(repo_with_merged_branch))
+    assert git.get_branch_parent(repo_with_merged_branch, "child", all_branches) == (
+        "feature"
+    )
