@@ -100,8 +100,9 @@ trailer is "untracked" and most sc commands refuse to touch it.
    files into a new branch below the current one (`--after` for above) and
    verifies no content is lost — no manual patch surgery needed.
 4. `sc restack` — rebases all descendants after a parent changed.
-5. `sc submit --dry-run` to preview, then `sc submit` — pushes the stack and
-   creates/updates one PR per branch with correct bases.
+5. `sc submit --dry-run` to preview, then `sc submit` — pushes the current
+   branch and its downstack ancestors, then creates/updates their PRs in
+   dependency order. Use `sc submit --stack` to include upstack branches too.
 
 Pre-commit hooks: sc runs them itself and self-heals the "formatter rewrote
 files, exit 1" pattern by re-staging and re-running once. Do not run commands
@@ -135,8 +136,8 @@ on trunk: create the branch with git first, commit there, then `sc adopt`.
 ## PR bodies
 
 `sc submit` maintains a stack overview between `<!-- shortcake:start -->` and
-`<!-- shortcake:end -->` markers in each PR body. When editing bodies via
-`gh pr edit`, preserve those markers.
+`<!-- shortcake:end -->` markers in each submitted PR body. When editing bodies
+via `gh pr edit`, preserve those markers.
 """
 
 _SKILLS = {

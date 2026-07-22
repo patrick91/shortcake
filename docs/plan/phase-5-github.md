@@ -9,12 +9,13 @@ Commands for interacting with GitHub PRs.
 Push and create/update PRs.
 
 ```bash
-sc submit            # Submit stack
-sc submit --draft    # As drafts
+sc submit            # Submit through current branch
+sc submit --stack    # Include upstack branches
+sc submit --draft    # Submit through current branch as drafts
 ```
 
 **Flow:**
-1. Push each branch in stack
+1. Push each selected branch in dependency order
 2. Create PR if none exists
 3. Update PR base if changed
 4. Add stack info to PR description

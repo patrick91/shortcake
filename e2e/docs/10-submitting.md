@@ -2,9 +2,9 @@
 
 ## The `sc submit` Command
 
-The `sc submit` command pushes branches and creates/updates GitHub Pull Requests for the current stack. It:
+The `sc submit` command pushes the current branch and its downstack ancestors, then creates or updates their GitHub Pull Requests. Pass `--stack` to include upstack branches too. It:
 
-1. Pushes all branches in the stack to origin
+1. Pushes branches from the bottom of the stack through the current branch, or the whole stack with `--stack`, to origin
 2. Creates PRs for branches that don't have them
 3. Updates PR bases when parents change
 4. Adds stack visualization to PR descriptions
@@ -25,6 +25,14 @@ $ echo "feature code" > feature.py && git add feature.py
 $ sc create -m "Add feature"
 Created branch 'add-feature' from 'main'
 $ sc submit --dry-run
+Submit plan:
+
+  ◯ main (base)
+  │
+  ◉ add-feature (current) — create PR
+
+● 1 selected
+
 Would submit 1 branch(es):
   add-feature (create new PR)
 ```
@@ -38,6 +46,14 @@ $ echo "feature code" > feature.py && git add feature.py
 $ sc create -m "Add feature"
 Created branch 'add-feature' from 'main'
 $ sc submit
+Submit plan:
+
+  ◯ main (base)
+  │
+  ◉ add-feature (current) — create PR
+
+● 1 selected
+
 Pushing 'add-feature'...
   Creating PR for 'add-feature'...
   Created PR #1: https://github.com/test/repo/pull/1
@@ -54,6 +70,14 @@ $ echo "draft code" > draft.py && git add draft.py
 $ sc create -m "Draft feature"
 Created branch 'draft-feature' from 'main'
 $ sc submit --draft
+Submit plan:
+
+  ◯ main (base)
+  │
+  ◉ draft-feature (current) — create PR
+
+● 1 selected
+
 Pushing 'draft-feature'...
   Creating PR for 'draft-feature'...
   Created PR #1: https://github.com/test/repo/pull/1
@@ -73,14 +97,23 @@ $ sc create -m "Add feature"
 Created branch 'add-feature' from 'main'
 $ # github: add-pr add-feature 42 main
 $ sc submit
+Submit plan:
+
+  ◯ main (base)
+  │
+  ◉ add-feature (current) — update PR #42
+
+● 1 selected
+
 Pushing 'add-feature'...
 
 Updated 1 PR(s)
 ```
 
-## Submitting a Stack of PRs
+## Submitting Through the Current Diff
 
-When you have stacked branches, submit creates PRs for the entire stack:
+Plain `sc submit` includes every ancestor required as a PR base, but leaves
+branches above the current one untouched:
 
 ```console
 $ # reset-to-main
@@ -91,7 +124,57 @@ Created branch 'feature-a' from 'main'
 $ echo "feature b" > b.py && git add b.py
 $ sc create -m "Feature B"
 Created branch 'feature-b' from 'feature-a'
+$ echo "feature c" > c.py && git add c.py
+$ sc create -m "Feature C"
+Created branch 'feature-c' from 'feature-b'
+$ git checkout feature-b > /dev/null 2>&1
 $ sc submit
+Submit plan:
+
+  ◯ main (base)
+  │
+  ● feature-a — create PR
+  │
+  ◉ feature-b (current) — create PR
+  │
+  ◯ feature-c — not submitted
+
+● 2 selected · ○ 1 upstack branch not selected
+
+Pushing 'feature-a'...
+  Creating PR for 'feature-a'...
+  Created PR #1: https://github.com/test/repo/pull/1
+Pushing 'feature-b'...
+  Creating PR for 'feature-b'...
+  Created PR #2: https://github.com/test/repo/pull/2
+
+Created 2 PR(s)
+```
+
+## Submitting a Stack of PRs
+
+When you have stacked branches, `--stack` creates PRs for the entire stack:
+
+```console
+$ # reset-to-main
+$ # github: reset-state
+$ echo "feature a" > a.py && git add a.py
+$ sc create -m "Feature A"
+Created branch 'feature-a' from 'main'
+$ echo "feature b" > b.py && git add b.py
+$ sc create -m "Feature B"
+Created branch 'feature-b' from 'feature-a'
+$ sc submit --stack
+Submit plan:
+
+  ◯ main (base)
+  │
+  ● feature-a — create PR
+  │
+  ◉ feature-b (current) — create PR
+
+● 2 selected
+
 Pushing 'feature-a'...
   Creating PR for 'feature-a'...
   Created PR #1: https://github.com/test/repo/pull/1
@@ -117,7 +200,17 @@ $ # github: merge-pr 10
 $ echo "feature b" > b.py && git add b.py
 $ sc create -m "Feature B"
 Created branch 'feature-b' from 'feature-a'
-$ sc submit
+$ sc submit --stack
+Submit plan:
+
+  ◯ main (base)
+  │
+  ● feature-a — skip; already merged
+  │
+  ◉ feature-b (current) — create PR
+
+● 2 selected
+
 Pushing 'feature-a'...
   Skipping 'feature-a' - already has a merged PR. Run 'sc sync' to clean up merged branches.
 Pushing 'feature-b'...
@@ -138,6 +231,14 @@ $ echo "feature code" > feature.py && git add feature.py
 $ sc create -m "Add feature"
 Created branch 'add-feature' from 'main'
 $ sc submit
+Submit plan:
+
+  ◯ main (base)
+  │
+  ◉ add-feature (current) — create PR
+
+● 1 selected
+
 Pushing 'add-feature'...
   Creating PR for 'add-feature'...
   Created PR #1: https://github.com/test/repo/pull/1
@@ -160,6 +261,14 @@ $ echo "draft code" > draft.py && git add draft.py
 $ sc create -m "Draft feature"
 Created branch 'draft-feature' from 'main'
 $ sc submit --draft
+Submit plan:
+
+  ◯ main (base)
+  │
+  ◉ draft-feature (current) — create PR
+
+● 1 selected
+
 Pushing 'draft-feature'...
   Creating PR for 'draft-feature'...
   Created PR #1: https://github.com/test/repo/pull/1
@@ -184,7 +293,17 @@ Created branch 'feature-a' from 'main'
 $ echo "feature b" > b.py && git add b.py
 $ sc create -m "Feature B"
 Created branch 'feature-b' from 'feature-a'
-$ sc submit
+$ sc submit --stack
+Submit plan:
+
+  ◯ main (base)
+  │
+  ● feature-a — create PR
+  │
+  ◉ feature-b (current) — create PR
+
+● 2 selected
+
 Pushing 'feature-a'...
   Creating PR for 'feature-a'...
   Created PR #1: https://github.com/test/repo/pull/1
@@ -243,7 +362,17 @@ Created branch 'feature-b' from 'feature-a'
 $ git checkout feature-a > /dev/null 2>&1
 $ echo "updated a" >> a.py && git add a.py && git commit -m "update feature a" > /dev/null 2>&1
 $ git checkout feature-b > /dev/null 2>&1
-$ sc submit
+$ sc submit --stack
+Submit plan:
+
+  ◯ main (base)
+  │
+  ● feature-a — create PR
+  │
+  ◉ feature-b (current) — create PR
+
+● 2 selected
+
 Rebasing 'feature-b' onto 'feature-a'...
 Restacked feature-b.
 Pushing 'feature-a'...
@@ -268,6 +397,14 @@ $ echo "force feature" > force.py && git add force.py
 $ sc create -m "Force feature"
 Created branch 'force-feature' from 'main'
 $ sc submit --force
+Submit plan:
+
+  ◯ main (base)
+  │
+  ◉ force-feature (current) — create PR
+
+● 1 selected
+
 Pushing 'force-feature'...
   Creating PR for 'force-feature'...
   Created PR #1: https://github.com/test/repo/pull/1
@@ -297,6 +434,14 @@ $ git branch -D feature-a > /dev/null 2>&1
 $ git checkout feature-b > /dev/null 2>&1
 $ sc submit
 Parent 'feature-a' was merged into 'main', using as base.
+Submit plan:
+
+  ◯ feature-a (base)
+  │
+  ◉ feature-b (current) — update PR #2
+
+● 1 selected
+
 Pushing 'feature-b'...
   Updating PR #2 base: feature-a -> main
 
@@ -345,6 +490,7 @@ Error: Branch 'main' is not tracked by shortcake. Use 'sc adopt' to track it fir
 - `--draft` / `-d`: Create draft PRs
 - `--dry-run` / `-n`: Preview without making changes
 - `--force` / `-f`: Force push, ignoring remote changes
+- `--stack`: Submit every branch in the current stack
 - `--stealth`: Push branches without creating or updating PRs
 
 ## Token Resolution
