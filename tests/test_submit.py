@@ -19,15 +19,29 @@ from shortcake._pr_stack import (
     _parse_stack_order_from_body,
     _update_pr_body_with_stack,
 )
+from shortcake._trailers import Trailers
 from shortcake.cli import app
 from shortcake.commands.restack import RestackError, RestackResult
 from shortcake.commands.submit import (
+    BranchPlan,
     PRAction,
     SubmitError,
     _get_commit_title,
+    _show_submit_plan,
     _submit,
 )
-from tests._git_helpers import Repo, add_paths, commit, get_ref, set_ref, set_remote
+from tests._git_helpers import (
+    Repo,
+    add_paths,
+    commit,
+    commit_files,
+    create_branch,
+    get_branch_head,
+    get_ref,
+    set_ref,
+    set_remote,
+    switch_branch,
+)
 
 runner = CliRunner()
 
@@ -48,6 +62,21 @@ def setup_origin_remote(repo: Repo, url: str = "git@github.com:owner/repo.git") 
     set_remote(repo, "origin", url)
 
 
+@pytest.fixture
+def repo_with_three_branch_stack(repo_with_stack: Repo, tmp_path: Path) -> Repo:
+    """Extend the standard stack and check out its middle branch."""
+    create_branch(
+        repo_with_stack,
+        "branch_c",
+        get_branch_head(repo_with_stack, "branch_b"),
+        checkout=True,
+    )
+    message = Trailers(parent_branch="branch_b").apply_to("feat: branch c")
+    commit_files(repo_with_stack, {tmp_path / "c.txt": "branch c content"}, message)
+    switch_branch(repo_with_stack, "branch_b")
+    return repo_with_stack
+
+
 # Tests for helper functions
 
 
@@ -55,6 +84,108 @@ def test_get_commit_title(repo_with_tracked_feature: Repo) -> None:
     """Test getting commit title from branch."""
     title = _get_commit_title(repo_with_tracked_feature, "feature")
     assert title == "feat: add feature"
+
+
+def test_submit_plan_renders_downward_and_dims_excluded_branches(
+    repo_with_three_branch_stack: Repo,
+) -> None:
+    """The preview follows the ls graph style and de-emphasizes exclusions."""
+    toolkit = MagicMock()
+    plans = [
+        BranchPlan(
+            branch="branch_a",
+            action=PRAction.UPDATED,
+            existing_pr_number=12,
+            existing_pr_url="https://github.com/owner/repo/pull/12",
+        ),
+        BranchPlan(branch="branch_b", action=PRAction.CREATED),
+        BranchPlan(branch="branch_c", action=PRAction.CREATED),
+    ]
+
+    _show_submit_plan(
+        repo_with_three_branch_stack,
+        toolkit,
+        ["branch_a", "branch_b", "branch_c"],
+        ["branch_a", "branch_b"],
+        "branch_b",
+        plans=plans,
+    )
+
+    renderables = [call.args[0] for call in toolkit.print.call_args_list if call.args]
+    lines = [str(renderable) for renderable in renderables]
+    base_index = next(index for index, line in enumerate(lines) if "main" in line)
+    branch_a_index = next(
+        index for index, line in enumerate(lines) if "branch_a" in line
+    )
+    branch_b_index = next(
+        index for index, line in enumerate(lines) if "branch_b" in line
+    )
+    assert base_index < branch_a_index < branch_b_index
+    assert "● branch_a — update PR #12" in lines[branch_a_index]
+    assert "◉ branch_b (current) — create PR" in lines[branch_b_index]
+    pr_line = renderables[branch_a_index]
+    pr_span = next(
+        span
+        for span in pr_line.spans
+        if getattr(span.style, "link", None) == "https://github.com/owner/repo/pull/12"
+    )
+    assert pr_span.style.color.name == "cyan"
+    assert pr_span.style.underline is True
+    excluded = next(
+        renderable for renderable in renderables if "branch_c" in str(renderable)
+    )
+    assert "◯ branch_c — not submitted" in str(excluded)
+    assert any(str(span.style) == "dim" for span in excluded.spans)
+
+
+def test_submit_plan_preserves_forked_stack_shape(repo_with_fork: Repo) -> None:
+    """Sibling branches use tree connectors instead of appearing sequential."""
+    toolkit = MagicMock()
+    plans = [
+        BranchPlan(branch="branch_a", action=PRAction.CREATED),
+        BranchPlan(branch="branch_b", action=PRAction.CREATED),
+        BranchPlan(branch="branch_c", action=PRAction.CREATED),
+    ]
+
+    _show_submit_plan(
+        repo_with_fork,
+        toolkit,
+        ["branch_a", "branch_b", "branch_c"],
+        ["branch_a", "branch_c"],
+        "branch_c",
+        plans=plans,
+    )
+
+    lines = [str(call.args[0]) for call in toolkit.print.call_args_list if call.args]
+    assert any("├─◯ branch_b — not submitted" in line for line in lines)
+    assert any("└─◉ branch_c (current) — create PR" in line for line in lines)
+
+
+def test_submit_plan_handles_empty_or_actionless_plans(
+    repo_with_tracked_feature: Repo,
+) -> None:
+    """The renderer is optional and can display a branch without an action."""
+    toolkit = MagicMock()
+    _show_submit_plan(
+        repo_with_tracked_feature,
+        toolkit,
+        [],
+        [],
+        "feature",
+    )
+    toolkit.echo.assert_not_called()
+
+    _show_submit_plan(
+        repo_with_tracked_feature,
+        toolkit,
+        ["feature"],
+        ["feature"],
+        "feature",
+    )
+    lines = [str(call.args[0]) for call in toolkit.print.call_args_list if call.args]
+    feature_line = next(line for line in lines if "feature" in line)
+    assert "◉ feature (current)" in feature_line
+    assert " — " not in feature_line
 
 
 def test_build_stack_section() -> None:
@@ -384,6 +515,340 @@ def test_submit_dry_run(
     assert len(result.branch_results) == 0  # No actual results in dry run
 
 
+def test_cli_submit_defaults_to_current_and_downstack(
+    repo_with_three_branch_stack: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plain submit includes ancestors but excludes upstack branches."""
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_three_branch_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit._is_interactive", return_value=False),
+        patch("shortcake.commands.submit.typer.confirm") as confirm_mock,
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = runner.invoke(app, ["submit", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "Would submit 2 branch(es)" in result.output
+    assert "branch_a (create new PR)" in result.output
+    assert "branch_b (create new PR)" in result.output
+    assert "branch_c (create new PR)" not in result.output
+    assert "  ◯ branch_c — not submitted" in result.output
+    assert "  ◉ branch_b (current) — create PR" in result.output
+    assert "  ● branch_a — create PR" in result.output
+    assert "  ◯ main (base)" in result.output
+    assert "● 2 selected · ○ 1 upstack branch not selected" in result.output
+    confirm_mock.assert_not_called()
+    assert [call.args[0] for call in mock_client.get_pr_for_branch.call_args_list] == [
+        "branch_a",
+        "branch_b",
+    ]
+
+
+def test_submit_downstack_excludes_sibling_branch(
+    repo_with_fork: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default selection follows ancestors and does not include a sibling."""
+    setup_origin_remote(repo_with_fork)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("shortcake.commands.submit.GitHubClient", return_value=mock_client):
+        result = _submit(repo_with_fork, dry_run=True)
+
+    assert [plan.branch for plan in result.planned] == ["branch_a", "branch_c"]
+
+
+def test_submit_fills_gaps_in_precomputed_plan(
+    repo_with_three_branch_stack: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Execution fetches any selected branch missing from a preview plan."""
+    setup_origin_remote(repo_with_three_branch_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("shortcake.commands.submit.GitHubClient", return_value=mock_client):
+        result = _submit(
+            repo_with_three_branch_stack,
+            dry_run=True,
+            precomputed_plans=[
+                BranchPlan(
+                    branch="branch_a",
+                    action=PRAction.CREATED,
+                    parent="main",
+                )
+            ],
+        )
+
+    assert [plan.branch for plan in result.planned] == ["branch_a", "branch_b"]
+
+
+def test_cli_submit_stack_submits_every_branch(
+    repo_with_three_branch_stack: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--stack retains the previous whole-stack behavior."""
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_three_branch_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("shortcake.commands.submit.GitHubClient", return_value=mock_client):
+        result = runner.invoke(app, ["submit", "--stack", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "Would submit 3 branch(es)" in result.output
+    assert "branch_a (create new PR)" in result.output
+    assert "branch_b (create new PR)" in result.output
+    assert "branch_c (create new PR)" in result.output
+    assert "  ● branch_c — create PR" in result.output
+    assert "○ 1 upstack branch not selected" not in result.output
+
+
+def test_cli_submit_interactively_offers_whole_stack(
+    repo_with_three_branch_stack: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An interactive user can expand plain submit to the full stack."""
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_three_branch_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit._is_interactive", return_value=True),
+        patch("shortcake.commands.submit.typer.confirm", return_value=True) as confirm,
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = runner.invoke(app, ["submit", "--dry-run"])
+
+    assert result.exit_code == 0
+    confirm.assert_called_once_with(
+        "Also submit upstack branches (3 branches total)?", default=False
+    )
+    assert "Would submit 3 branch(es)" in result.output
+    assert "Submit plan:" in result.output
+    assert "  ◯ branch_c — not submitted" in result.output
+    assert "Updated submit plan:" in result.output
+    assert "  ● branch_c — create PR" in result.output
+    assert [call.args[0] for call in mock_client.get_pr_for_branch.call_args_list] == [
+        "branch_a",
+        "branch_b",
+        "branch_c",
+    ]
+
+
+def test_cli_submit_declining_upstack_keeps_downstack_selection(
+    repo_with_three_branch_stack: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Declining the prompt submits only ancestors through the current branch."""
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_three_branch_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit._is_interactive", return_value=True),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = runner.invoke(app, ["submit", "--dry-run"], input="n\n")
+
+    assert result.exit_code == 0
+    assert "Would submit 2 branch(es)" in result.output
+    assert "branch_a (create new PR)" in result.output
+    assert "branch_b (create new PR)" in result.output
+    assert "branch_c (create new PR)" not in result.output
+    assert "  ◯ branch_c — not submitted" in result.output
+    assert "Updated submit plan:" not in result.output
+    assert result.output.index("Submit plan:") < result.output.index(
+        "Also submit upstack branches"
+    )
+
+
+def test_submit_downstack_limits_push_and_pr_updates(
+    repo_with_three_branch_stack: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Downstack submit pushes ancestors but leaves upstack PRs untouched."""
+    setup_origin_remote(repo_with_three_branch_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    prs = {
+        "branch_a": PRInfo(
+            number=1,
+            url="https://github.com/owner/repo/pull/1",
+            base="main",
+            title="feat: branch a",
+            body="",
+            state="open",
+            is_draft=False,
+        ),
+        "branch_b": PRInfo(
+            number=2,
+            url="https://github.com/owner/repo/pull/2",
+            base="branch_a",
+            title="feat: branch b",
+            body="",
+            state="open",
+            is_draft=False,
+        ),
+        "branch_c": PRInfo(
+            number=3,
+            url="https://github.com/owner/repo/pull/3",
+            base="branch_b",
+            title="feat: branch c",
+            body="",
+            state="open",
+            is_draft=False,
+        ),
+    }
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.side_effect = prs.get
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+    restack_mock = MagicMock(return_value=RestackResult(restacked_branches=[]))
+
+    with (
+        patch("shortcake.commands.submit._restack", restack_mock),
+        patch(
+            "shortcake.commands.submit.push_branch", return_value=(True, None)
+        ) as push_mock,
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = _submit(repo_with_three_branch_stack, submit_stack=False)
+
+    pushed_branches = [call.args[1] for call in push_mock.call_args_list]
+    assert pushed_branches == ["branch_a", "branch_b"]
+    assert restack_mock.call_args.kwargs["branches"] == ["branch_a", "branch_b"]
+    assert [branch.branch for branch in result.branch_results] == [
+        "branch_a",
+        "branch_b",
+    ]
+    body_update_numbers = [
+        call.args[0]
+        for call in mock_client.update_pr.call_args_list
+        if "body" in call.kwargs
+    ]
+    assert body_update_numbers == [1, 2]
+
+    captured = capsys.readouterr()
+    assert "Submit plan:" in captured.out
+    assert "  ◯ branch_c — not submitted" in captured.out
+    assert "  ◉ branch_b (current) — update PR #2" in captured.out
+    assert "  ● branch_a — update PR #1" in captured.out
+
+    updated_bodies = [
+        call.kwargs["body"]
+        for call in mock_client.update_pr.call_args_list
+        if "body" in call.kwargs
+    ]
+    assert updated_bodies
+    assert all("branch_c" not in body for body in updated_bodies)
+
+
+def test_submit_downstack_creates_parent_before_current(
+    repo_with_three_branch_stack: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new current PR is created only after its downstack base is pushed."""
+    setup_origin_remote(repo_with_three_branch_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    created_prs: dict[str, PRInfo] = {}
+
+    def create_pr(**kwargs: object) -> PRInfo:
+        head = str(kwargs["head"])
+        pr = PRInfo(
+            number=len(created_prs) + 1,
+            url=f"https://github.com/owner/repo/pull/{len(created_prs) + 1}",
+            base=str(kwargs["base"]),
+            title=str(kwargs["title"]),
+            body="",
+            state="open",
+            is_draft=bool(kwargs["draft"]),
+        )
+        created_prs[head] = pr
+        return pr
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.side_effect = created_prs.get
+    mock_client.has_merged_pr.return_value = False
+    mock_client.create_pr.side_effect = create_pr
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch(
+            "shortcake.commands.submit.push_branch", return_value=(True, None)
+        ) as push_mock,
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = _submit(repo_with_three_branch_stack)
+
+    assert [call.args[1] for call in push_mock.call_args_list] == [
+        "branch_a",
+        "branch_b",
+    ]
+    assert [call.kwargs["head"] for call in mock_client.create_pr.call_args_list] == [
+        "branch_a",
+        "branch_b",
+    ]
+    assert [call.kwargs["base"] for call in mock_client.create_pr.call_args_list] == [
+        "main",
+        "branch_a",
+    ]
+    assert [branch.branch for branch in result.branch_results] == [
+        "branch_a",
+        "branch_b",
+    ]
+    updated_bodies = [
+        call.kwargs["body"]
+        for call in mock_client.update_pr.call_args_list
+        if "body" in call.kwargs
+    ]
+    assert updated_bodies
+    assert all("branch_c" not in body for body in updated_bodies)
+    assert all("(no PR)" not in body for body in updated_bodies)
+
+
 def test_submit_dry_run_shows_create_new_pr(
     repo_with_tracked_feature: Repo,
     monkeypatch: pytest.MonkeyPatch,
@@ -680,7 +1145,7 @@ def test_submit_updates_pr_base(
         patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
-        _submit(repo_with_stack)
+        _submit(repo_with_stack, submit_stack=True)
 
     # Verify update_pr was called to update the base
     update_calls = [c for c in mock_client.update_pr.call_args_list if c[1].get("base")]
@@ -1082,7 +1547,8 @@ def test_cli_submit_help() -> None:
     assert result.exit_code == 0
     # Strip ANSI codes: CI terminals force color, which splits flag names
     output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
-    assert "Push branches and create/update GitHub PRs" in output
+    assert "Submit through the current diff" in output
+    assert "--stack" in output
     assert "--stealth" in output
 
 
@@ -2312,7 +2778,7 @@ def test_submit_updates_moved_away_branch_prs(
         patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
-        _submit(repo_with_stack)
+        _submit(repo_with_stack, submit_stack=True)
 
     # Find update_pr calls for branch_b's PR (#20)
     body_updates_for_b = [

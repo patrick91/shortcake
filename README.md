@@ -89,12 +89,25 @@ $ sc ls
 ◯ main
 ```
 
-**4. Submit the stack** to GitHub. `sc submit` pushes every branch and opens (or updates) a PR
-for each, with bases that match the stack. Add `--draft`/`-d` for drafts, `--dry-run`/`-n`
-to preview first, or `--stealth` to push without creating or updating PRs.
+**4. Submit through the current diff** to GitHub. `sc submit` pushes the current branch and
+its downstack ancestors, opening or updating their PRs in dependency order. Use
+`sc submit --stack` to include upstack branches too. In an interactive terminal, `sc submit`
+offers to expand the submission to the whole stack when there are branches above the current
+one. Add `--draft`/`-d` for drafts, `--dry-run`/`-n` to preview first, or `--stealth` to push
+without creating or updating PRs.
 
 ```console
-$ sc submit
+$ sc submit --stack
+Submit plan:
+
+  ◯ main (base)
+  │
+  ● add-login-form — create PR
+  │
+  ◉ add-password-reset (current) — create PR
+
+● 2 selected
+
 Pushing 'add-login-form'...
   Creating PR for 'add-login-form'...
   Created PR #1: https://github.com/you/repo/pull/1

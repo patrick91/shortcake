@@ -281,9 +281,10 @@ def _restack(
     repo: Repo,
     dry_run: bool = False,
     toolkit: ShortcakeRichToolkit | None = None,
+    branches: list[str] | None = None,
 ) -> RestackResult:
     """
-    Restack current branch's stack.
+    Restack the current branch's stack, or a caller-provided branch subset.
 
     Raises RestackError on failure, returns RestackResult on success.
     """
@@ -315,8 +316,13 @@ def _restack(
     if current_branch_parent is not None and current_branch_parent not in all_branches:
         orphaned_parent = current_branch_parent
 
-    # Get stack in topological order
-    stack_branches = _get_stack_in_order(repo, current_branch)
+    # Get stack in topological order. Callers such as partial submit may limit
+    # this to the dependency prefix that must be current before it is pushed.
+    stack_branches = (
+        list(branches)
+        if branches is not None
+        else _get_stack_in_order(repo, current_branch)
+    )
 
     # Build restack plan
     plan = _plan_restack(repo, stack_branches)

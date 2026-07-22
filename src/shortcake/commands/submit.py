@@ -1,12 +1,15 @@
 """Submit command - push branches and create/update GitHub PRs."""
 
 import contextlib
+import sys
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Annotated
 
 import httpx
 import typer
+from rich.style import Style
+from rich.text import Text
 
 from shortcake import _git as git
 from shortcake._cache import update_pr_cache
@@ -71,6 +74,11 @@ class SubmitError(ShortcakeError):
     pass
 
 
+def _is_interactive() -> bool:
+    """Return whether submit may safely ask an interactive question."""
+    return sys.stdin.isatty()
+
+
 def _get_commit_title(repo: Repo, branch: str) -> str:
     """Get the first line of the first commit message on a branch."""
     sha = git.get_branch_head(repo, branch)
@@ -79,24 +87,284 @@ def _get_commit_title(repo: Repo, branch: str) -> str:
     return first_line
 
 
+def _get_downstack_in_order(
+    repo: Repo, current_branch: str, full_stack_branches: list[str]
+) -> list[str]:
+    """Return the current branch and its tracked ancestors, bottom first."""
+    stack_set = set(full_stack_branches)
+    all_branches = set(git.get_all_local_branches(repo))
+    branch_heads = {
+        branch: git.get_branch_head(repo, branch) for branch in all_branches
+    }
+    downstack: list[str] = []
+    visited: set[str] = set()
+    branch = current_branch
+
+    while branch in stack_set and branch not in visited:
+        visited.add(branch)
+        downstack.append(branch)
+        parent = git.get_branch_parent(repo, branch, all_branches, branch_heads)
+        if parent not in stack_set:
+            break
+        branch = parent
+
+    downstack.reverse()
+    return downstack
+
+
+def _show_submit_plan(
+    repo: Repo,
+    toolkit: ShortcakeRichToolkit,
+    full_stack_branches: list[str],
+    selected_branches: list[str],
+    current_branch: str,
+    *,
+    heading: str = "Submit plan",
+    plans: list[BranchPlan] | None = None,
+) -> None:
+    """Show the full stack as a downward tree with planned PR actions."""
+    if not full_stack_branches:
+        return
+
+    selected = set(selected_branches)
+    plans_by_branch = {plan.branch: plan for plan in plans or []}
+    all_branches = set(git.get_all_local_branches(repo))
+    branch_heads = {
+        branch: git.get_branch_head(repo, branch) for branch in all_branches
+    }
+    stack_set = set(full_stack_branches)
+    parents = {
+        branch: git.get_branch_parent(repo, branch, all_branches, branch_heads)
+        for branch in full_stack_branches
+    }
+    children: dict[str, list[str]] = {branch: [] for branch in full_stack_branches}
+    roots: list[str] = []
+    for branch in full_stack_branches:
+        parent = parents[branch]
+        if parent in stack_set:
+            children[parent].append(branch)
+        else:
+            roots.append(branch)
+
+    order = {branch: index for index, branch in enumerate(full_stack_branches)}
+    for branch_children in children.values():
+        branch_children.sort(key=order.__getitem__)
+
+    def branch_label(branch: str) -> Text:
+        marker = "◉" if branch == current_branch else "●"
+        if branch not in selected:
+            marker = "◯"
+        current = " (current)" if branch == current_branch else ""
+        label = Text(f"{marker} {branch}{current}")
+
+        if branch not in selected:
+            label.append(" — not submitted")
+            label.stylize("dim")
+            return label
+
+        plan = plans_by_branch.get(branch)
+        if plan is None:
+            return label
+        if plan.action == PRAction.UPDATED:
+            label.append(" — update PR ")
+            pr_style = Style(color="cyan", underline=True)
+            if plan.existing_pr_url:
+                pr_style += Style(link=plan.existing_pr_url)
+            label.append(f"#{plan.existing_pr_number}", style=pr_style)
+        elif plan.action == PRAction.CREATED:
+            label.append(" — create PR")
+        elif plan.action == PRAction.SKIPPED:
+            label.append(" — skip; already merged", style="dim")
+        else:
+            label.append(" — push only")
+        return label
+
+    def render_branch(
+        branch: str,
+        prefix: str = "  ",
+        connector: str = "",
+        continuation: str = "  ",
+    ) -> None:
+        line = Text(f"{prefix}{connector}")
+        line.append_text(branch_label(branch))
+        toolkit.print(line)
+        branch_children = children[branch]
+        if len(branch_children) == 1:
+            child = branch_children[0]
+            connector_line = Text(f"{continuation}│")
+            if child not in selected:
+                connector_line.stylize("dim")
+            toolkit.print(connector_line)
+            render_branch(child, continuation, continuation=continuation)
+            return
+
+        for index, child in enumerate(branch_children):
+            is_last = index == len(branch_children) - 1
+            child_connector = "└─" if is_last else "├─"
+            child_continuation = continuation + ("  " if is_last else "│ ")
+            render_branch(
+                child,
+                continuation,
+                child_connector,
+                child_continuation,
+            )
+
+    toolkit.echo(f"{heading}:")
+    toolkit.echo()
+    base = parents[roots[0]] if roots else None
+    if base is not None:
+        toolkit.print(Text(f"  ◯ {base} (base)"))
+
+    for index, root in enumerate(roots):
+        if base is not None:
+            toolkit.print(Text("  │"))
+        root_connector = (
+            "" if len(roots) == 1 else ("└─" if index == len(roots) - 1 else "├─")
+        )
+        render_branch(root, connector=root_connector)
+
+    toolkit.echo()
+    selected_count = len(selected_branches)
+    excluded_count = len(full_stack_branches) - selected_count
+    if excluded_count:
+        excluded_label = "branch" if excluded_count == 1 else "branches"
+        toolkit.echo(
+            f"● {selected_count} selected · "
+            f"○ {excluded_count} upstack {excluded_label} not selected"
+        )
+    else:
+        toolkit.echo(f"● {selected_count} selected")
+    toolkit.echo()
+
+
+def _get_submit_github_details(repo: Repo) -> tuple[str, str, str]:
+    """Return the token, owner, and repository used for submission."""
+    token = get_github_token()
+    if not token:
+        raise SubmitError(
+            "No GitHub token found. "
+            "Run 'gh auth login' or set GH_TOKEN environment variable."
+        )
+
+    repo_info = get_repo_info(repo)
+    if not repo_info:
+        raise SubmitError(
+            "Cannot determine GitHub repo from origin URL. "
+            "Expected format: git@github.com:owner/repo.git or https://github.com/owner/repo.git"
+        )
+    owner, repo_name = repo_info
+    return token, owner, repo_name
+
+
+def _build_branch_plans(
+    repo: Repo,
+    gh: GitHubClient,
+    toolkit: ShortcakeRichToolkit,
+    branches: list[str],
+    full_stack_branches: list[str],
+) -> list[BranchPlan]:
+    """Inspect GitHub and build the action planned for each branch."""
+    plans: list[BranchPlan] = []
+    all_branches = set(git.get_all_local_branches(repo))
+    stack_branches_set = set(full_stack_branches)
+
+    for branch in branches:
+        parent = git.get_branch_parent(repo, branch, all_branches)
+
+        # If parent was deleted locally (merged + cleaned up), resolve to the
+        # branch it was merged into so the PR does not use an invalid base.
+        if parent and parent not in all_branches and parent not in stack_branches_set:
+            try:
+                merged_base = gh.get_merged_pr_base(parent)
+                if merged_base:
+                    toolkit.echo(
+                        f"Parent '{parent}' was merged into "
+                        f"'{merged_base}', using as base."
+                    )
+                    parent = merged_base
+            except (httpx.HTTPStatusError, httpx.RequestError):
+                pass
+
+        try:
+            existing_pr = gh.get_pr_for_branch(branch)
+            if existing_pr:
+                plans.append(
+                    BranchPlan(
+                        branch=branch,
+                        action=PRAction.UPDATED,
+                        existing_pr_number=existing_pr.number,
+                        existing_pr_url=existing_pr.url,
+                        existing_pr_base=existing_pr.base,
+                        parent=parent,
+                    )
+                )
+            elif gh.has_merged_pr(branch):
+                plans.append(
+                    BranchPlan(branch=branch, action=PRAction.SKIPPED, parent=parent)
+                )
+            else:
+                plans.append(
+                    BranchPlan(branch=branch, action=PRAction.CREATED, parent=parent)
+                )
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                raise SubmitError(
+                    "GitHub authentication failed. "
+                    "Re-run 'gh auth login' or check your token."
+                ) from None
+            if e.response.status_code == 403:
+                if "rate limit" in e.response.text.lower():
+                    raise SubmitError(
+                        "GitHub API rate limit exceeded. Please wait and try again."
+                    ) from None
+                raise SubmitError(f"GitHub API forbidden: {e.response.text}") from None
+            plans.append(
+                BranchPlan(branch=branch, action=PRAction.CREATED, parent=parent)
+            )
+        except httpx.RequestError:
+            plans.append(
+                BranchPlan(branch=branch, action=PRAction.CREATED, parent=parent)
+            )
+
+    return plans
+
+
+def _load_submit_plans(
+    repo: Repo,
+    toolkit: ShortcakeRichToolkit,
+    branches: list[str],
+    full_stack_branches: list[str],
+) -> list[BranchPlan]:
+    """Build a live GitHub plan for the pre-submit visualization."""
+    token, owner, repo_name = _get_submit_github_details(repo)
+    with GitHubClient(token, owner, repo_name) as gh:
+        return _build_branch_plans(repo, gh, toolkit, branches, full_stack_branches)
+
+
 def _submit(
     repo: Repo,
+    submit_stack: bool = False,
     dry_run: bool = False,
     draft: bool = False,
     force: bool = False,
     stealth: bool = False,
+    show_plan: bool = True,
+    precomputed_plans: list[BranchPlan] | None = None,
     toolkit: ShortcakeRichToolkit | None = None,
 ) -> SubmitResult:
-    """Submit current stack to GitHub.
+    """Submit through the current branch or submit its whole stack to GitHub.
 
     Pushes branches and creates/updates PRs.
 
     Args:
         repo: The repository.
+        submit_stack: If True, also submit branches above the current branch.
         dry_run: If True, preview without making changes.
         draft: If True, create draft PRs.
         force: If True, force push without lease check.
         stealth: If True, push branches without creating or updating PRs.
+        show_plan: If True, print the selected branches before acting.
+        precomputed_plans: Live plans already fetched for the preview.
 
     Returns:
         SubmitResult with per-branch results.
@@ -121,10 +389,50 @@ def _submit(
     if stealth and draft:
         raise SubmitError("--draft cannot be used with --stealth")
 
+    full_stack_branches = _get_stack_in_order(repo, current_branch)
+    if not full_stack_branches:
+        # Current branch is untracked
+        raise SubmitError(
+            f"Branch '{current_branch}' is not tracked by shortcake. "
+            "Use 'sc adopt' to track it first."
+        )
+
+    stack_branches = (
+        full_stack_branches
+        if submit_stack
+        else _get_downstack_in_order(repo, current_branch, full_stack_branches)
+    )
+
+    result.stack_branches = full_stack_branches
+
+    if not dry_run and show_plan and (stealth or precomputed_plans is not None):
+        display_plans = precomputed_plans
+        if stealth:
+            display_plans = [
+                BranchPlan(branch=branch, action=PRAction.PUSHED)
+                for branch in stack_branches
+            ]
+        _show_submit_plan(
+            repo,
+            toolkit,
+            full_stack_branches,
+            stack_branches,
+            current_branch,
+            heading="Push plan" if stealth else "Submit plan",
+            plans=display_plans,
+        )
+
     # Restack before pushing (ensures branches are up-to-date with parents)
     if not dry_run:
         try:
-            restack_result = _restack(repo, toolkit=toolkit)
+            if submit_stack:
+                restack_result = _restack(repo, toolkit=toolkit)
+            else:
+                restack_result = _restack(
+                    repo,
+                    toolkit=toolkit,
+                    branches=stack_branches,
+                )
             if restack_result.conflict_branch:
                 raise SubmitError(
                     f"Conflict while restacking '{restack_result.conflict_branch}'. "
@@ -135,16 +443,6 @@ def _submit(
                     toolkit.echo(f"Restacked {branch}.")
         except RestackError as e:
             raise SubmitError(str(e)) from None
-
-    # Get stack in order (bottom to top)
-    stack_branches = _get_stack_in_order(repo, current_branch)
-    if not stack_branches:
-        # Current branch is untracked
-        raise SubmitError(
-            f"Branch '{current_branch}' is not tracked by shortcake. "
-            "Use 'sc adopt' to track it first."
-        )
-    result.stack_branches = stack_branches
 
     if stealth:
         if dry_run:
@@ -172,103 +470,40 @@ def _submit(
 
         return result
 
-    all_branches = set(git.get_all_local_branches(repo))
-
-    # Get GitHub token
-    token = get_github_token()
-    if not token:
-        raise SubmitError(
-            "No GitHub token found. "
-            "Run 'gh auth login' or set GH_TOKEN environment variable."
-        )
-
-    # Get repo info
-    repo_info = get_repo_info(repo)
-    if not repo_info:
-        raise SubmitError(
-            "Cannot determine GitHub repo from origin URL. "
-            "Expected format: git@github.com:owner/repo.git or https://github.com/owner/repo.git"
-        )
-    owner, repo_name = repo_info
-
-    # Phase 1: Build plan - check GitHub for existing PRs
-    plans: list[BranchPlan] = []
-    pr_numbers: dict[str, int] = {}
-    stack_branches_set = set(stack_branches)
+    token, owner, repo_name = _get_submit_github_details(repo)
 
     with GitHubClient(token, owner, repo_name) as gh:
-        for branch in stack_branches:
-            parent = git.get_branch_parent(repo, branch, all_branches)
+        if precomputed_plans is None:
+            plans = _build_branch_plans(
+                repo, gh, toolkit, stack_branches, full_stack_branches
+            )
+        else:
+            plans_by_branch = {plan.branch: plan for plan in precomputed_plans}
+            missing_branches = [
+                branch for branch in stack_branches if branch not in plans_by_branch
+            ]
+            if missing_branches:
+                for plan in _build_branch_plans(
+                    repo, gh, toolkit, missing_branches, full_stack_branches
+                ):
+                    plans_by_branch[plan.branch] = plan
+            plans = [plans_by_branch[branch] for branch in stack_branches]
 
-            # If parent was deleted locally (merged + cleaned up), resolve
-            # to the branch it was merged into so we don't try to set the
-            # PR base to a non-existent remote branch.
-            if (
-                parent
-                and parent not in all_branches
-                and parent not in stack_branches_set
-            ):
-                try:
-                    merged_base = gh.get_merged_pr_base(parent)
-                    if merged_base:
-                        toolkit.echo(
-                            f"Parent '{parent}' was merged into "
-                            f"'{merged_base}', using as base."
-                        )
-                        parent = merged_base
-                except (httpx.HTTPStatusError, httpx.RequestError):
-                    pass
+        pr_numbers = {
+            plan.branch: plan.existing_pr_number
+            for plan in plans
+            if plan.existing_pr_number is not None
+        }
 
-            try:
-                existing_pr = gh.get_pr_for_branch(branch)
-                if existing_pr:
-                    plans.append(
-                        BranchPlan(
-                            branch=branch,
-                            action=PRAction.UPDATED,
-                            existing_pr_number=existing_pr.number,
-                            existing_pr_url=existing_pr.url,
-                            existing_pr_base=existing_pr.base,
-                            parent=parent,
-                        )
-                    )
-                    pr_numbers[branch] = existing_pr.number
-                elif gh.has_merged_pr(branch):
-                    plans.append(
-                        BranchPlan(
-                            branch=branch, action=PRAction.SKIPPED, parent=parent
-                        )
-                    )
-                else:
-                    plans.append(
-                        BranchPlan(
-                            branch=branch, action=PRAction.CREATED, parent=parent
-                        )
-                    )
-            except httpx.HTTPStatusError as e:
-                # Handle fatal errors during planning
-                if e.response.status_code == 401:
-                    raise SubmitError(
-                        "GitHub authentication failed. "
-                        "Re-run 'gh auth login' or check your token."
-                    ) from None
-                elif e.response.status_code == 403:
-                    if "rate limit" in e.response.text.lower():
-                        raise SubmitError(
-                            "GitHub API rate limit exceeded. Please wait and try again."
-                        ) from None
-                    raise SubmitError(
-                        f"GitHub API forbidden: {e.response.text}"
-                    ) from None
-                # For other errors, assume create
-                plans.append(
-                    BranchPlan(branch=branch, action=PRAction.CREATED, parent=parent)
-                )
-            except httpx.RequestError:
-                # Network errors during planning - assume create
-                plans.append(
-                    BranchPlan(branch=branch, action=PRAction.CREATED, parent=parent)
-                )
+        if not dry_run and show_plan and precomputed_plans is None:
+            _show_submit_plan(
+                repo,
+                toolkit,
+                full_stack_branches,
+                stack_branches,
+                current_branch,
+                plans=plans,
+            )
 
         # Collect historical PR info and stack order from existing open PRs
         # This preserves PR info even after branches are deleted locally
@@ -303,7 +538,7 @@ def _submit(
 
         # For historical branches not in local repo, try to look up their PRs
         # Skip branches that are already known to be merged
-        local_branches = set(stack_branches)
+        local_branches = set(full_stack_branches)
         for hist_branch in historical_stack_order:
             if (
                 hist_branch not in local_branches
@@ -459,29 +694,34 @@ def _submit(
         # If the old stack section listed branches that are no longer in the
         # current stack (e.g., after sc move/reorder), update those PRs with
         # their new base branch and stack visualization.
-        current_stack_set = set(stack_branches)
-        all_local = set(git.get_all_local_branches(repo))
-        moved_away = [
-            b
-            for b in historical_stack_order
-            if b not in current_stack_set
-            and b in all_local
-            and b not in historical_merged_prs
-        ]
+        if submit_stack:
+            current_stack_set = set(full_stack_branches)
+            all_local = set(git.get_all_local_branches(repo))
+            moved_away = [
+                b
+                for b in historical_stack_order
+                if b not in current_stack_set
+                and b in all_local
+                and b not in historical_merged_prs
+            ]
 
-        with contextlib.suppress(httpx.HTTPStatusError, httpx.RequestError):
-            _sync_pr_descriptions_for_branches(
-                repo,
-                gh,
-                owner,
-                moved_away,
-                sync_bases=True,
-            )
+            with contextlib.suppress(httpx.HTTPStatusError, httpx.RequestError):
+                _sync_pr_descriptions_for_branches(
+                    repo,
+                    gh,
+                    owner,
+                    moved_away,
+                    sync_bases=True,
+                )
 
     return result
 
 
 def submit(
+    stack: Annotated[
+        bool,
+        typer.Option("--stack", help="Submit every branch in the current stack"),
+    ] = False,
     draft: Annotated[
         bool,
         typer.Option("--draft", "-d", help="Create draft PRs"),
@@ -504,17 +744,88 @@ def submit(
         bool, typer.Option("--json", help="Output the result as JSON")
     ] = False,
 ) -> None:
-    """Push branches and create/update GitHub PRs for the current stack."""
+    """Submit through the current diff, or use --stack for the whole stack."""
     repo = git.open_repo()
     toolkit = get_rich_toolkit(json_output=json_output)
 
+    preview_plans: list[BranchPlan] | None = None
     try:
+        current_branch = git.get_current_branch(repo)
+        if current_branch is not None:
+            stack_branches = _get_stack_in_order(repo, current_branch)
+            downstack_branches = _get_downstack_in_order(
+                repo, current_branch, stack_branches
+            )
+            selected_branches = stack_branches if stack else downstack_branches
+            if not json_output and stack_branches:
+                if stealth:
+                    preview_plans = [
+                        BranchPlan(branch=branch, action=PRAction.PUSHED)
+                        for branch in stack_branches
+                    ]
+                else:
+                    preview_plans = _load_submit_plans(
+                        repo,
+                        toolkit,
+                        selected_branches,
+                        stack_branches,
+                    )
+                _show_submit_plan(
+                    repo,
+                    toolkit,
+                    stack_branches,
+                    selected_branches,
+                    current_branch,
+                    heading="Push plan" if stealth else "Submit plan",
+                    plans=preview_plans,
+                )
+            if (
+                not stack
+                and not json_output
+                and _is_interactive()
+                and len(downstack_branches) < len(stack_branches)
+            ):
+                prompt = (
+                    "Also submit upstack branches "
+                    f"({len(stack_branches)} branches total)?"
+                )
+                stack = typer.confirm(
+                    prompt,
+                    default=False,
+                )
+                if stack:
+                    planned_branches = {plan.branch for plan in preview_plans or []}
+                    missing_branches = [
+                        branch
+                        for branch in stack_branches
+                        if branch not in planned_branches
+                    ]
+                    if not stealth and missing_branches:
+                        preview_plans = (preview_plans or []) + _load_submit_plans(
+                            repo,
+                            toolkit,
+                            missing_branches,
+                            stack_branches,
+                        )
+                    _show_submit_plan(
+                        repo,
+                        toolkit,
+                        stack_branches,
+                        stack_branches,
+                        current_branch,
+                        heading="Updated submit plan",
+                        plans=preview_plans,
+                    )
+
         result = _submit(
             repo,
+            submit_stack=stack,
             dry_run=dry_run,
             draft=draft,
             force=force,
             stealth=stealth,
+            show_plan=False,
+            precomputed_plans=preview_plans,
             toolkit=toolkit,
         )
     except SubmitError as e:
