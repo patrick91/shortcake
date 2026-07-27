@@ -19,6 +19,7 @@ class CommitSummary:
     sha: str
     short_sha: str
     subject: str
+    time: int  # commit timestamp, unix seconds
 
 
 @dataclass(frozen=True)
@@ -136,6 +137,7 @@ def get_branch_latest_commit(repo: Repo, branch: str) -> CommitSummary:
         sha=sha,
         short_sha=sha[:7],
         subject=subject or "(no subject)",
+        time=commit.commit_time,
     )
 
 

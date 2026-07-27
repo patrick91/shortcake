@@ -85,6 +85,7 @@ class StackDiffBranch:
     commit: str
     commit_short: str
     commit_subject: str
+    commit_time: int
 
 
 @dataclass(frozen=True)
@@ -283,15 +284,36 @@ def _get_stack_diff_branches(repo: Repo) -> list[StackDiffBranch]:
                 commit=latest_commit.sha,
                 commit_short=latest_commit.short_sha,
                 commit_subject=latest_commit.subject,
+                commit_time=latest_commit.time,
             )
         )
 
     return result
 
 
-def _build_stack_payload(repo: Repo) -> dict[str, Any]:
+def _working_diff_stats(patch: str) -> dict[str, int]:
+    """Summarize a unified diff patch: changed files and added/deleted lines."""
+    files = additions = deletions = 0
+    for line in patch.splitlines():
+        if line.startswith("diff --git "):
+            files += 1
+        elif line.startswith("+") and not line.startswith("+++"):
+            additions += 1
+        elif line.startswith("-") and not line.startswith("---"):
+            deletions += 1
+    return {"files": files, "additions": additions, "deletions": deletions}
+
+
+def _build_stack_payload(
+    repo: Repo, working_patch: str | None = None
+) -> dict[str, Any]:
     """Build payload for stack visualization endpoint."""
     branches = _get_stack_diff_branches(repo)
+    if working_patch is None:
+        try:
+            working_patch = _git_working_diff(Path(repo.workdir))
+        except ValueError:
+            working_patch = None
     return {
         "currentBranch": git.get_current_branch(repo),
         "branches": [
@@ -304,9 +326,13 @@ def _build_stack_payload(repo: Repo) -> dict[str, Any]:
                 "commit": item.commit,
                 "commitShort": item.commit_short,
                 "commitSubject": item.commit_subject,
+                "commitTime": item.commit_time,
             }
             for item in branches
         ],
+        "workingStats": (
+            None if working_patch is None else _working_diff_stats(working_patch)
+        ),
     }
 
 
@@ -358,8 +384,9 @@ def _git_working_diff_key(repo_path: Path) -> str:
 
 def _build_ui_state_payload(repo: Repo) -> dict[str, Any]:
     """Build lightweight polling payload for stack and working tree changes."""
-    payload = _build_stack_payload(repo)
-    payload["workingDiffKey"] = _git_working_diff_key(Path(repo.workdir))
+    patch = _git_working_diff(Path(repo.workdir))
+    payload = _build_stack_payload(repo, working_patch=patch)
+    payload["workingDiffKey"] = hashlib.sha256(patch.encode()).hexdigest()
     return payload
 
 
@@ -449,6 +476,7 @@ def _build_github_info_payload(repo: Repo, branch_names: list[str]) -> dict[str,
                 "prNumber": info.pr_number,
                 "prUrl": info.pr_url,
                 "prIsDraft": info.pr_is_draft,
+                "prState": info.pr_state,
                 "checkStatus": info.check_status,
             }
 
