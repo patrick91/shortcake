@@ -1417,6 +1417,7 @@ def test_get_branch_github_info_with_pr_and_checks() -> None:
         pr_number=42,
         pr_url="https://github.com/owner/repo/pull/42",
         pr_is_draft=True,
+        pr_state="open",
         check_status="success",
     )
 
@@ -1438,5 +1439,41 @@ def test_get_branch_github_info_no_pr_no_checks() -> None:
         pr_number=None,
         pr_url=None,
         pr_is_draft=False,
+        pr_state=None,
+        check_status=None,
+    )
+
+
+@respx.mock
+def test_get_branch_github_info_merged_pr_fallback() -> None:
+    """Falls back to a merged PR when no open PR exists."""
+    respx.get(
+        "https://api.github.com/repos/owner/repo/pulls",
+        params={"state": "open"},
+    ).mock(return_value=httpx.Response(200, json=[]))
+    respx.get(
+        "https://api.github.com/repos/owner/repo/pulls",
+        params={"state": "closed"},
+    ).mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"number": 7, "merged_at": None},
+                {"number": 9, "merged_at": "2026-07-01T00:00:00Z"},
+            ],
+        )
+    )
+    respx.get("https://api.github.com/repos/owner/repo/commits/feat/check-runs").mock(
+        return_value=httpx.Response(200, json={"check_runs": []})
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        info = client.get_branch_github_info("feat")
+
+    assert info == BranchGitHubInfo(
+        pr_number=9,
+        pr_url="https://github.com/owner/repo/pull/9",
+        pr_is_draft=False,
+        pr_state="merged",
         check_status=None,
     )

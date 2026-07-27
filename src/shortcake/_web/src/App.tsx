@@ -78,11 +78,19 @@ type StackBranch = {
   commit: string;
   commitShort: string;
   commitSubject: string;
+  commitTime: number;
+};
+
+type WorkingStats = {
+  files: number;
+  additions: number;
+  deletions: number;
 };
 
 type StackResponse = {
   currentBranch: string | null;
   branches: StackBranch[];
+  workingStats?: WorkingStats | null;
 };
 
 type DiffResponse = {
@@ -147,6 +155,7 @@ type GitHubBranchInfo = {
   prNumber: number | null;
   prUrl: string | null;
   prIsDraft: boolean;
+  prState?: 'open' | 'merged' | null;
   checkStatus: 'success' | 'failure' | 'pending' | null;
 };
 
@@ -224,10 +233,6 @@ type FileInfo = {
 
 const API_BASE = import.meta.env.VITE_SHORTCAKE_API_URL ?? '';
 const FILE_TREE_VIEWED_MARK = '\u2713';
-const STACK_CARD_INDENT_BASE = 4;
-const STACK_CARD_INDENT_STEP = 10;
-const STACK_GUIDE_OFFSET = 6;
-const STACK_GUIDE_STEP = 10;
 
 function hashString(value: string): string {
   let h1 = 0xdeadbeef ^ value.length;
@@ -2909,14 +2914,20 @@ function diffItemId(key: string): string {
   return `sc-diff-item-${key.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
 }
 
+type StackRow = {
+  branch: StackBranch;
+  stackIndex: number;
+  dateLabel: string | null;
+};
+
 type StackListProps = {
-  branches: StackBranch[];
+  rows: StackRow[];
+  trunkName: string | null;
+  workingStats: WorkingStats | null;
   selection: DiffSelection | null;
   isStackLoading: boolean;
   isGithubInfoLoading: boolean;
   githubInfo: Record<string, GitHubBranchInfo>;
-  parentIndexMap: Map<string, number>;
-  lastChildIndexMap: Map<number, number>;
   onSelect: (sel: DiffSelection) => void;
   isFiltering: boolean;
   workingVisible: boolean;
@@ -2924,14 +2935,16 @@ type StackListProps = {
   onActivateKey: (key: string) => void;
 };
 
+const DATE_PREFIX_RE = /^(\d{4}-\d{2}-\d{2}-)(.+)$/;
+
 function StackList({
-  branches,
+  rows,
+  trunkName,
+  workingStats,
   selection,
   isStackLoading,
   isGithubInfoLoading,
   githubInfo,
-  parentIndexMap,
-  lastChildIndexMap,
   onSelect,
   isFiltering,
   workingVisible,
@@ -2939,17 +2952,37 @@ function StackList({
   onActivateKey,
 }: StackListProps) {
   const activeRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const [scrolledToEnd, setScrolledToEnd] = useState(true);
 
   useEffect(() => {
     activeRef.current?.scrollIntoView({ block: 'nearest' });
   }, [activeKey]);
 
-  const renderBranchButton = (branch: StackBranch, index: number | null) => {
+  const updateScrollEnd = useCallback(() => {
+    const el = listRef.current;
+    if (!el) return;
+    setScrolledToEnd(el.scrollTop + el.clientHeight >= el.scrollHeight - 4);
+  }, []);
+
+  useEffect(() => {
+    updateScrollEnd();
+  }, [rows, isFiltering, workingVisible, updateScrollEnd]);
+
+  const renderBranchButton = (row: StackRow, index: number | null) => {
+    const { branch } = row;
     const active = selection?.type === 'branch' && branch.name === selection.name;
     const isActive = activeKey === branch.name;
-    const branchPadding =
-      index === null ? 8 : STACK_CARD_INDENT_BASE + branch.depth * STACK_CARD_INDENT_STEP;
     const ghInfo = githubInfo[branch.name];
+    const prefixMatch = branch.name.match(DATE_PREFIX_RE);
+    const prLabel =
+      ghInfo?.prState === 'merged' ? ' merged' : ghInfo?.prIsDraft ? ' draft' : '';
+    const prPillCls =
+      ghInfo?.prState === 'merged'
+        ? 'text-purple-400 bg-purple-400/10 border-purple-400/18'
+        : ghInfo?.prIsDraft
+          ? 'text-text-muted bg-surface-hover border-border'
+          : 'text-green-400 bg-green-400/10 border-green-400/18';
 
     return (
       <button
@@ -2957,174 +2990,222 @@ function StackList({
         id={diffItemId(branch.name)}
         role="option"
         aria-selected={active}
-        className={`relative appearance-none rounded-md py-[7px] px-[9px] text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${active ? 'bg-accent-bg' : isActive ? 'bg-surface-hover' : 'bg-transparent hover:bg-surface-hover'}`}
-        style={{
-          ...(index === null ? {} : { anchorName: `--branch-${index}` }),
-          marginInlineStart: `${branchPadding}px`,
-          marginInlineEnd: '8px',
-        } as React.CSSProperties}
+        className={`relative appearance-none rounded-md py-[7px] pr-[9px] mx-[8px] text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${index === null ? 'pl-[9px]' : 'pl-[28px]'} ${active ? 'bg-accent-bg' : isActive ? 'bg-surface-hover' : 'bg-transparent hover:bg-surface-hover'}`}
+        style={index === null ? undefined : ({ anchorName: `--branch-${index}` } as React.CSSProperties)}
         onClick={() => onSelect({ type: 'branch', name: branch.name })}
         onMouseMove={() => { if (!isActive) onActivateKey(branch.name); }}
         type="button"
       >
+        {index !== null && (
+          <span
+            aria-hidden
+            className={branch.isCurrent ? 'stack-node stack-node-current' : 'stack-node'}
+          />
+        )}
         <span className="relative z-[2] flex items-start gap-[8px] w-full min-w-0">
-                <span className="min-w-0 flex-1 flex flex-col gap-[3px]">
-                  <span className="flex items-start gap-[6px] min-w-0">
-                    <span className="text-[0.86rem] font-semibold leading-5 break-words min-w-0">
-                      {branch.name}
-                    </span>
-                    {branch.isCurrent && (
-                      <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-accent/10 border border-accent/18 px-[5px] py-px rounded-full shrink-0 leading-[1.5] mt-[2px]">
-                        current
-                      </span>
-                    )}
-                  </span>
-                  <span
-                    className="font-mono text-[0.63rem] text-text-muted leading-4 break-words line-clamp-2"
-                    title={`${branch.commitShort} ${branch.commitSubject}`}
-                  >
-                    {branch.commitShort} {branch.commitSubject}
-                  </span>
-                </span>
-                {isGithubInfoLoading ? (
-                  <span className="ml-auto flex items-center gap-[5px] shrink-0 mt-[2px]">
-                    <span className="inline-block w-[32px] h-[14px] rounded-full bg-surface-hover animate-pulse" />
-                    <span className="inline-block w-[10px] h-[10px] rounded-full bg-surface-hover animate-pulse" />
-                  </span>
-                ) : (ghInfo?.prNumber != null || ghInfo?.checkStatus != null) ? (
-                  <span className="ml-auto flex items-center gap-[5px] shrink-0 mt-[2px]">
-                    {ghInfo?.prNumber != null && ghInfo.prUrl && (
-                      <a
-                        href={ghInfo.prUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className={`font-mono text-[0.58rem] font-medium no-underline px-[5px] py-px rounded-full leading-[1.5] border ${ghInfo.prIsDraft ? 'text-text-muted bg-surface-hover border-border' : 'text-green-400 bg-green-400/10 border-green-400/18'}`}
-                      >
-                        #{ghInfo.prNumber}
-                      </a>
-                    )}
-                    {ghInfo?.checkStatus != null && (
-                      <span
-                        className="shrink-0 text-[0.7rem] leading-none"
-                        title={`CI: ${ghInfo.checkStatus}`}
-                      >
-                        {ghInfo.checkStatus === 'success' && <span className="text-green-400">&#10003;</span>}
-                        {ghInfo.checkStatus === 'failure' && <span className="text-red-400">&#10007;</span>}
-                        {ghInfo.checkStatus === 'pending' && <span className="text-yellow-400">&#9679;</span>}
-                      </span>
-                    )}
-                  </span>
-                ) : null}
+          <span className="min-w-0 flex-1 flex flex-col gap-[3px]">
+            <span className="flex items-start gap-[6px] min-w-0">
+              <span className="text-[0.86rem] font-semibold leading-5 break-words min-w-0">
+                {prefixMatch ? (
+                  <>
+                    <span className="text-text-muted font-medium">{prefixMatch[1]}</span>
+                    {prefixMatch[2]}
+                  </>
+                ) : (
+                  branch.name
+                )}
+                {isFiltering && (
+                  <span className="text-text-muted font-medium"> &rarr; {branch.parent}</span>
+                )}
               </span>
-            </button>
+              {branch.isCurrent && (
+                <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-accent bg-accent/10 border border-accent/18 px-[5px] py-px rounded-full shrink-0 leading-[1.5] mt-[2px]">
+                  current
+                </span>
+              )}
+            </span>
+            <span
+              className="font-mono text-[0.63rem] text-text-muted leading-4 break-words line-clamp-2"
+              title={`${branch.commitShort} ${branch.commitSubject}`}
+            >
+              {branch.commitShort} {branch.commitSubject}
+              {branch.commitCount > 0 && (
+                <span className="opacity-75"> &middot; {branch.commitCount} commit{branch.commitCount === 1 ? '' : 's'}</span>
+              )}
+              {!isFiltering && row.dateLabel && (
+                <span className="opacity-75"> &middot; {row.dateLabel}</span>
+              )}
+            </span>
+          </span>
+          {isGithubInfoLoading ? (
+            <span className="ml-auto flex items-center gap-[5px] shrink-0 mt-[2px]">
+              <span className="inline-block w-[32px] h-[14px] rounded-full bg-surface-hover animate-pulse" />
+              <span className="inline-block w-[10px] h-[10px] rounded-full bg-surface-hover animate-pulse" />
+            </span>
+          ) : (ghInfo?.prNumber != null || ghInfo?.checkStatus != null) ? (
+            <span className="ml-auto flex items-center gap-[5px] shrink-0 mt-[2px]">
+              {ghInfo?.prNumber != null && ghInfo.prUrl && (
+                <a
+                  href={ghInfo.prUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className={`font-mono text-[0.58rem] font-medium no-underline px-[5px] py-px rounded-full leading-[1.5] whitespace-nowrap border ${prPillCls}`}
+                >
+                  #{ghInfo.prNumber}{prLabel}
+                </a>
+              )}
+              {ghInfo?.checkStatus != null && (
+                <span
+                  className="shrink-0 text-[0.7rem] leading-none"
+                  title={`CI: ${ghInfo.checkStatus}`}
+                >
+                  {ghInfo.checkStatus === 'success' && <span className="text-green-400">&#10003;</span>}
+                  {ghInfo.checkStatus === 'failure' && <span className="text-red-400">&#10007;</span>}
+                  {ghInfo.checkStatus === 'pending' && <span className="text-yellow-400">&#9679;</span>}
+                </span>
+              )}
+            </span>
+          ) : null}
+        </span>
+      </button>
     );
   };
 
-  const noResults = isFiltering && !workingVisible && branches.length === 0;
+  const noResults = isFiltering && !workingVisible && rows.length === 0;
 
   return (
-    <div
-      id="sc-diff-listbox"
-      className="relative flex flex-col gap-[2px] p-1.5 overflow-y-auto overflow-x-clip flex-1 min-h-0"
-      role="listbox"
-      aria-label="Tracked stack branches"
-    >
-      {isStackLoading ? (
-        <p className="m-3 text-text-muted text-[0.82rem]">Loading stack…</p>
-      ) : null}
+    <div className="relative flex-1 min-h-0 flex flex-col">
+      <div
+        id="sc-diff-listbox"
+        ref={listRef}
+        onScroll={updateScrollEnd}
+        className="relative flex flex-col gap-[2px] p-1.5 overflow-y-auto overflow-x-clip flex-1 min-h-0"
+        role="listbox"
+        aria-label="Tracked stack branches"
+      >
+        {isStackLoading ? (
+          <p className="m-3 text-text-muted text-[0.82rem]">Loading stack…</p>
+        ) : null}
 
-      {!isStackLoading && !isFiltering && branches.length === 0 ? (
-        <p className="m-3 text-text-muted text-[0.82rem]">
-          No tracked branches found in this repository.
-        </p>
-      ) : null}
+        {!isStackLoading && !isFiltering && rows.length === 0 ? (
+          <p className="m-3 text-text-muted text-[0.82rem]">
+            No tracked branches found in this repository.
+          </p>
+        ) : null}
 
-      {noResults ? (
-        <p className="m-3 text-text-muted text-[0.82rem]">No matches.</p>
-      ) : null}
+        {noResults ? (
+          <p className="m-3 text-text-muted text-[0.82rem]">No matches.</p>
+        ) : null}
 
-      {workingVisible && (
-        <button
-          ref={activeKey === WORKING_KEY ? activeRef : undefined}
-          id={diffItemId(WORKING_KEY)}
-          role="option"
-          aria-selected={selection?.type === 'working'}
-          className={`relative appearance-none rounded-md py-[7px] px-[9px] mx-[8px] mb-1 text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${selection?.type === 'working' ? 'bg-accent-bg' : activeKey === WORKING_KEY ? 'bg-surface-hover' : 'bg-transparent hover:bg-surface-hover'}`}
-          onClick={() => onSelect({ type: 'working' })}
-          onMouseMove={() => { if (activeKey !== WORKING_KEY) onActivateKey(WORKING_KEY); }}
-          type="button"
-        >
-          <span className="relative z-[2] flex items-center gap-[7px]">
-            <span className="text-[0.82rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
-              Working Changes
+        {workingVisible && (
+          <button
+            ref={activeKey === WORKING_KEY ? activeRef : undefined}
+            id={diffItemId(WORKING_KEY)}
+            role="option"
+            aria-selected={selection?.type === 'working'}
+            className={`relative appearance-none rounded-md py-[7px] px-[9px] mx-[8px] mb-1 text-left text-text-primary cursor-pointer transition-[background] duration-150 ease-in-out border-none ${selection?.type === 'working' ? 'bg-accent-bg' : activeKey === WORKING_KEY ? 'bg-surface-hover' : 'bg-transparent hover:bg-surface-hover'}`}
+            onClick={() => onSelect({ type: 'working' })}
+            onMouseMove={() => { if (activeKey !== WORKING_KEY) onActivateKey(WORKING_KEY); }}
+            type="button"
+          >
+            <span className="relative z-[2] flex items-center gap-[7px] w-full min-w-0">
+              <span className="text-[0.82rem] font-semibold whitespace-nowrap overflow-hidden text-ellipsis">
+                Working Changes
+              </span>
+              <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-text-muted bg-surface-hover border border-border px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
+                git diff
+              </span>
+              {workingStats != null && workingStats.files > 0 && (
+                <span className="ml-auto font-mono text-[0.62rem] whitespace-nowrap shrink-0 tabular-nums">
+                  <span className="text-stat-add">+{workingStats.additions}</span>{' '}
+                  <span className="text-stat-del">&minus;{workingStats.deletions}</span>{' '}
+                  <span className="text-text-muted">&middot; {workingStats.files} file{workingStats.files === 1 ? '' : 's'}</span>
+                </span>
+              )}
             </span>
-            <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-text-muted bg-surface-hover border border-border px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
-              git diff
+          </button>
+        )}
+
+        {!isFiltering && workingVisible && rows.length > 0 && (
+          <div className="border-t border-border -mx-1.5 my-1" />
+        )}
+
+        {!isFiltering && trunkName && rows.length > 0 && (
+          <div
+            aria-hidden
+            className="flex items-center gap-[7px] py-[5px] pl-[5px] pr-[9px] mx-[8px]"
+          >
+            <span className="text-text-muted shrink-0"><GitBranchIcon /></span>
+            <span className="text-[0.8rem] font-semibold text-text-secondary min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+              {trunkName}
             </span>
-          </span>
-        </button>
-      )}
+            <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-text-secondary bg-surface-hover border border-border px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
+              trunk
+            </span>
+          </div>
+        )}
 
-      {!isFiltering && workingVisible && branches.length > 0 && (
-        <div className="border-t border-border mx-2 my-1" />
-      )}
-
-      {isFiltering
-        ? branches.map((branch) => (
-            <React.Fragment key={branch.name}>
-              {renderBranchButton(branch, null)}
+        {rows.map((row, index) => {
+          const prevRow = index > 0 ? rows[index - 1]! : null;
+          const sameStackAsPrev = prevRow != null && row.stackIndex === prevRow.stackIndex;
+          return (
+            <React.Fragment key={row.branch.name}>
+              {!isFiltering && prevRow != null && !sameStackAsPrev && (
+                <div className="border-t border-border -mx-1.5 my-[3px]" />
+              )}
+              {renderBranchButton(row, isFiltering ? null : index)}
+              {!isFiltering && sameStackAsPrev && (
+                <div
+                  aria-hidden
+                  className="stack-rail"
+                  style={{
+                    '--from': `--branch-${index - 1}`,
+                    '--to': `--branch-${index}`,
+                  } as React.CSSProperties}
+                />
+              )}
             </React.Fragment>
-          ))
-        : branches.map((branch, index) => {
-            const parentIndex = parentIndexMap.get(branch.parent) ?? -1;
-            const lastChildIdx = lastChildIndexMap.get(index);
-
-            return (
-              <React.Fragment key={branch.name}>
-                {renderBranchButton(branch, index)}
-                {lastChildIdx !== undefined && (
-                  <div
-                    aria-hidden
-                    className="stack-guide-vertical"
-                    style={{
-                      '--from': `--branch-${index}`,
-                      '--to': `--branch-${lastChildIdx}`,
-                      left: `${STACK_GUIDE_OFFSET + branch.depth * STACK_GUIDE_STEP}px`,
-                    } as React.CSSProperties}
-                  />
-                )}
-                {branch.depth > 0 && parentIndex >= 0 && (
-                  <div
-                    aria-hidden
-                    className="stack-guide-horizontal"
-                    style={{
-                      '--at': `--branch-${index}`,
-                      left: `${STACK_GUIDE_OFFSET + (branch.depth - 1) * STACK_GUIDE_STEP}px`,
-                      width: '10px',
-                    } as React.CSSProperties}
-                  />
-                )}
-              </React.Fragment>
-            );
-          })}
+          );
+        })}
+      </div>
+      <div
+        aria-hidden
+        className={`pointer-events-none absolute inset-x-px bottom-0 h-8 bg-gradient-to-b from-transparent to-surface transition-opacity duration-200 ${scrolledToEnd ? 'opacity-0' : 'opacity-100'}`}
+      />
     </div>
   );
 }
 
-type DiffSwitcherProps = Omit<
-  StackListProps,
-  'isFiltering' | 'workingVisible' | 'activeKey' | 'onActivateKey'
-> & {
+type DiffSwitcherProps = {
   diff: DiffResponse | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  selection: DiffSelection | null;
+  branches: StackBranch[];
+  workingStats: WorkingStats | null;
+  isStackLoading: boolean;
+  isGithubInfoLoading: boolean;
+  githubInfo: Record<string, GitHubBranchInfo>;
+  onSelect: (sel: DiffSelection) => void;
 };
 
 const IS_MAC = typeof navigator !== 'undefined' && navigator.platform.includes('Mac');
 
-function DiffSwitcher({ diff, open, onOpenChange, ...stackProps }: DiffSwitcherProps) {
-  const { selection, branches, onSelect } = stackProps;
+const KBD_CLS = 'font-mono text-[0.58rem] bg-surface-hover border border-border rounded px-1 py-px leading-none';
+
+function DiffSwitcher({
+  diff,
+  open,
+  onOpenChange,
+  selection,
+  branches,
+  workingStats,
+  isStackLoading,
+  isGithubInfoLoading,
+  githubInfo,
+  onSelect,
+}: DiffSwitcherProps) {
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -3144,20 +3225,66 @@ function DiffSwitcher({ diff, open, onOpenChange, ...stackProps }: DiffSwitcherP
   const targetParent = !isWorking && diff ? diff.parent : null;
   const chevronCls = `text-text-muted shrink-0 transition-transform duration-150 ${open ? 'rotate-180' : ''}`;
 
+  // Group the pre-ordered branch list into stacks — a stack root is a branch
+  // whose parent is not itself tracked (it hangs off the trunk). Then order
+  // stacks: the one holding the checked-out branch first, the rest by most
+  // recent commit. Stale stack roots carry a last-commit date label.
+  const orderedRows = useMemo<StackRow[]>(() => {
+    const tracked = new Set(branches.map((b) => b.name));
+    const groups: StackBranch[][] = [];
+    for (const b of branches) {
+      if (!tracked.has(b.parent) || groups.length === 0) groups.push([]);
+      groups[groups.length - 1]!.push(b);
+    }
+    const meta = groups.map((group) => ({
+      group,
+      isActive: group.some((b) => b.isCurrent),
+      lastTime: Math.max(0, ...group.map((b) => b.commitTime ?? 0)),
+    }));
+    meta.sort(
+      (a, b) => Number(b.isActive) - Number(a.isActive) || b.lastTime - a.lastTime,
+    );
+    return meta.flatMap(({ group, isActive, lastTime }, stackIndex) =>
+      group.map((branch, indexInGroup) => ({
+        branch,
+        stackIndex,
+        dateLabel:
+          indexInGroup === 0 && !isActive && lastTime > 0
+            ? new Date(lastTime * 1000).toLocaleDateString(undefined, {
+                month: 'short',
+                day: 'numeric',
+              })
+            : null,
+      })),
+    );
+  }, [branches]);
+
+  const trunkName = useMemo(() => {
+    const tracked = new Set(branches.map((b) => b.name));
+    const roots = branches.filter((b) => !tracked.has(b.parent));
+    if (roots.length === 0) return null;
+    const parent = roots[0]!.parent;
+    return roots.every((b) => b.parent === parent) ? parent : null;
+  }, [branches]);
+
   const q = query.trim().toLowerCase();
-  const isFiltering = q !== '';
+  const tokens = q === '' ? [] : q.split(/\s+/);
+  const isFiltering = tokens.length > 0;
   const workingVisible =
-    !isFiltering || 'working changes'.includes(q) || 'uncommitted changes'.includes(q);
-  const filteredBranches = isFiltering
-    ? branches.filter(
-        (b) => b.name.toLowerCase().includes(q) || b.commitSubject.toLowerCase().includes(q),
-      )
-    : branches;
+    !isFiltering ||
+    tokens.every((t) => 'working changes uncommitted changes'.includes(t));
+  const filteredRows = isFiltering
+    ? orderedRows.filter(({ branch }) => {
+        const pr = githubInfo[branch.name]?.prNumber;
+        const hay = `${branch.name} ${branch.commitSubject}${pr != null ? ` #${pr}` : ''}`.toLowerCase();
+        return tokens.every((t) => hay.includes(t));
+      })
+    : orderedRows;
 
   // Flat list of selectable rows, in the same order StackList renders them.
   const items: DiffSelection[] = [
     ...(workingVisible ? [{ type: 'working' as const }] : []),
-    ...filteredBranches.map((b) => ({ type: 'branch' as const, name: b.name })),
+    ...filteredRows.map(({ branch }) => ({ type: 'branch' as const, name: branch.name })),
   ];
   const clampedActive = items.length === 0 ? -1 : Math.min(activeIndex, items.length - 1);
   const activeItem = clampedActive >= 0 ? items[clampedActive] : undefined;
@@ -3171,7 +3298,23 @@ function DiffSwitcher({ diff, open, onOpenChange, ...stackProps }: DiffSwitcherP
   // Reset the highlight to the top whenever the result set changes.
   useEffect(() => {
     setActiveIndex(0);
-  }, [query, open]);
+  }, [query]);
+
+  // On open, start the keyboard highlight on the diff being viewed instead of
+  // resetting to the top. The query is always empty here (cleared on close),
+  // so indices are relative to the unfiltered list.
+  useEffect(() => {
+    if (!open) return;
+    if (selection?.type === 'branch') {
+      const idx = orderedRows.findIndex((r) => r.branch.name === selection.name);
+      if (idx >= 0) {
+        setActiveIndex(idx + 1); // +1 for the Working Changes row
+        return;
+      }
+    }
+    setActiveIndex(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only on open
+  }, [open]);
 
   const activateKey = (key: string) => {
     const idx = items.findIndex(
@@ -3196,6 +3339,11 @@ function DiffSwitcher({ diff, open, onOpenChange, ...stackProps }: DiffSwitcherP
     } else if (e.key === 'Enter') {
       e.preventDefault();
       if (activeItem) onSelect(activeItem);
+    } else if (e.key === 'Escape' && query !== '') {
+      // First Esc clears the filter; the second closes the popover.
+      e.preventDefault();
+      e.stopPropagation();
+      setQuery('');
     }
   };
 
@@ -3239,7 +3387,7 @@ function DiffSwitcher({ diff, open, onOpenChange, ...stackProps }: DiffSwitcherP
               </span>
               {branches.length > 0 && (
                 <span className="font-mono text-[0.6rem] text-text-muted bg-surface-hover border border-border px-2 py-[2px] rounded-full">
-                  {isFiltering ? `${filteredBranches.length}/${branches.length}` : branches.length} branch{branches.length === 1 ? '' : 'es'}
+                  {isFiltering ? `${filteredRows.length}/${branches.length}` : branches.length} branch{branches.length === 1 ? '' : 'es'}
                 </span>
               )}
             </div>
@@ -3262,13 +3410,24 @@ function DiffSwitcher({ diff, open, onOpenChange, ...stackProps }: DiffSwitcherP
               </div>
             )}
             <StackList
-              {...stackProps}
-              branches={filteredBranches}
+              rows={filteredRows}
+              trunkName={trunkName}
+              workingStats={workingStats}
+              selection={selection}
+              isStackLoading={isStackLoading}
+              isGithubInfoLoading={isGithubInfoLoading}
+              githubInfo={githubInfo}
+              onSelect={onSelect}
               isFiltering={isFiltering}
               workingVisible={workingVisible}
               activeKey={activeKey}
               onActivateKey={activateKey}
             />
+            <div className="shrink-0 border-t border-border px-3.5 py-[6px] flex items-center gap-3.5 font-mono text-[0.6rem] text-text-muted">
+              <span className="flex items-center gap-1"><kbd className={KBD_CLS}>↑↓</kbd> navigate</span>
+              <span className="flex items-center gap-1"><kbd className={KBD_CLS}>↵</kbd> select</span>
+              <span className="flex items-center gap-1"><kbd className={KBD_CLS}>esc</kbd> clear &middot; close</span>
+            </div>
           </Popover.Popup>
         </Popover.Positioner>
       </Popover.Portal>
@@ -3847,6 +4006,10 @@ export default function App() {
 
           if (stackChanged || workingDiffChanged) {
             await refreshDataRef.current(data);
+          } else if (data.workingDiffKey !== previousWorkingDiffKey) {
+            // Keep the switcher's working-tree stats fresh even when the
+            // stack itself didn't change and no diff refetch is needed.
+            setStack(data);
           }
         } catch {
           // Silent failure — will retry on next poll
@@ -4055,23 +4218,6 @@ export default function App() {
   const branches = stack?.branches ?? [];
   const isRecapRoute = recapId !== null;
 
-  const parentIndexMap = useMemo(() => {
-    const map = new Map<string, number>();
-    branches.forEach((b, i) => map.set(b.name, i));
-    return map;
-  }, [branches]);
-
-  const lastChildIndexMap = useMemo(() => {
-    const map = new Map<number, number>();
-    for (let i = 0; i < branches.length; i++) {
-      const parentIdx = parentIndexMap.get(branches[i]!.parent);
-      if (parentIdx !== undefined) {
-        map.set(parentIdx, i);
-      }
-    }
-    return map;
-  }, [branches, parentIndexMap]);
-
   return (
     <WorkerPoolContextProvider
       poolOptions={{ workerFactory: () => new DiffsWorker(), poolSize: 4 }}
@@ -4116,11 +4262,10 @@ export default function App() {
                 onOpenChange={setSwitcherOpen}
                 selection={selection}
                 branches={branches}
+                workingStats={stack?.workingStats ?? null}
                 isStackLoading={isStackLoading}
                 isGithubInfoLoading={isGithubInfoLoading}
                 githubInfo={githubInfo}
-                parentIndexMap={parentIndexMap}
-                lastChildIndexMap={lastChildIndexMap}
                 onSelect={(sel) => { setSelection(sel); setSwitcherOpen(false); }}
               />
             )}

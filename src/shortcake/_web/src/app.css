@@ -102,24 +102,38 @@ body::before {
   background: rgba(255, 255, 255, 0.15);
 }
 
-/* Connectors align to the first line of the branch name (button top padding
-   7px + half the name's 20px line box = 17px), so they stay put when long
-   names wrap to multiple lines. */
-.stack-guide-vertical {
+/* CLI-style stack rail (matches `sc ls`): a commit node per branch on a
+   straight vertical line. Nodes align to the first line of the branch name
+   (button top padding 7px + half the name's 20px line box = 17px), so they
+   stay put when long names wrap to multiple lines. Rail segments connect
+   consecutive nodes with a small gap on each side of the circle. */
+.stack-node {
   position: absolute;
-  top: calc(anchor(var(--from) top) + 17px);
-  bottom: calc(anchor(var(--to) top) - 17px);
-  width: 0;
-  border-left: 1px solid var(--color-guide);
-  pointer-events: none;
-  z-index: 1;
+  left: 7.5px;
+  top: 13.5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid var(--color-text-secondary);
+  z-index: 2;
 }
 
-.stack-guide-horizontal {
+.stack-node-current {
+  left: 6.5px;
+  top: 12.5px;
+  width: 9px;
+  height: 9px;
+  border-color: var(--color-accent);
+  background: var(--color-accent);
+}
+
+.stack-rail {
   position: absolute;
-  top: calc(anchor(var(--at) top) + 17px);
-  height: 0;
-  border-top: 1px solid var(--color-guide);
+  left: 24.5px;
+  top: calc(anchor(var(--from) top) + 23px);
+  bottom: calc(anchor(var(--to) top) - 11px);
+  width: 0;
+  border-left: 1px solid var(--color-guide);
   pointer-events: none;
   z-index: 1;
 }

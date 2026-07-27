@@ -92,6 +92,59 @@ def test_default_selection(page: Page, ui_url: str):
     expect(header).to_contain_text("Uncommitted changes")
 
 
+def test_diff_switcher_token_filter(page: Page, ui_url: str):
+    """Multi-word queries AND-match across branch name and commit subject."""
+    page.goto(ui_url)
+    open_diff_switcher(page)
+
+    search = page.get_by_role("combobox")
+    search.fill("branch_a feature")
+    listbox = page.locator("#sc-diff-listbox")
+    expect(listbox.get_by_text("branch_a")).to_be_visible()
+    expect(listbox.get_by_text("branch_b")).not_to_be_visible()
+
+
+def test_diff_switcher_escape_clears_filter_first(page: Page, ui_url: str):
+    """Esc with an active query clears it; a second Esc closes the popover."""
+    page.goto(ui_url)
+    open_diff_switcher(page)
+
+    search = page.get_by_role("combobox")
+    search.fill("branch_a")
+    search.press("Escape")
+    expect(page.locator("#sc-diff-listbox")).to_be_visible()
+    expect(search).to_have_value("")
+    expect(page.locator("#sc-diff-listbox").get_by_text("branch_b")).to_be_visible()
+
+    search.press("Escape")
+    expect(page.locator("#sc-diff-listbox")).not_to_be_visible()
+
+
+def test_diff_switcher_trunk_row(page: Page, ui_url: str):
+    """The trunk branch anchors the stack list as a non-selectable root row."""
+    page.goto(ui_url)
+    open_diff_switcher(page)
+
+    listbox = page.locator("#sc-diff-listbox")
+    expect(listbox.get_by_text("main", exact=True)).to_be_visible()
+    expect(listbox.get_by_text("trunk", exact=True)).to_be_visible()
+
+
+def test_diff_switcher_highlight_opens_on_selection(page: Page, ui_url: str):
+    """Reopening the switcher starts the keyboard highlight on the viewed branch."""
+    page.set_viewport_size({"width": 1400, "height": 900})
+    page.goto(ui_url)
+    select_diff_option(page, "branch_a")
+    page.wait_for_selector(".diff-content", timeout=10_000)
+
+    # Highlight starts on branch_a, so one ArrowDown lands on branch_b.
+    open_diff_switcher(page)
+    search = page.get_by_role("combobox")
+    search.press("ArrowDown")
+    search.press("Enter")
+    expect(page.locator("header")).to_contain_text("branch_b")
+
+
 def test_no_branches_message(page: Page, ui_url: str):
     """With no tracked branches, shows the empty state message."""
     # Intercept the stack API to return empty branches

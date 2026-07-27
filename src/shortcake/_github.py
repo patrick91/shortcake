@@ -34,6 +34,7 @@ class BranchGitHubInfo:
     pr_number: int | None
     pr_url: str | None
     pr_is_draft: bool
+    pr_state: str | None  # "open" | "merged" | None (no PR)
     check_status: str | None  # "success" | "failure" | "pending" | None
 
 
@@ -260,13 +261,37 @@ class GitHubClient:
             return None
 
     def get_branch_github_info(self, branch: str) -> BranchGitHubInfo:
-        """Get combined PR + CI info for a branch."""
+        """Get combined PR + CI info for a branch.
+
+        Falls back to a merged PR when no open PR exists, so the UI can flag
+        merged branches as cleanup candidates.
+        """
         pr = self.get_pr_for_branch(branch)
         check_status = self.get_check_status(branch)
+        if pr is not None:
+            return BranchGitHubInfo(
+                pr_number=pr.number,
+                pr_url=pr.url,
+                pr_is_draft=pr.is_draft,
+                pr_state="open",
+                check_status=check_status,
+            )
+
+        merged_number = self.get_merged_pr_number(branch)
+        if merged_number is not None:
+            return BranchGitHubInfo(
+                pr_number=merged_number,
+                pr_url=f"https://github.com/{self.owner}/{self.repo}/pull/{merged_number}",
+                pr_is_draft=False,
+                pr_state="merged",
+                check_status=check_status,
+            )
+
         return BranchGitHubInfo(
-            pr_number=pr.number if pr else None,
-            pr_url=pr.url if pr else None,
-            pr_is_draft=pr.is_draft if pr else False,
+            pr_number=None,
+            pr_url=None,
+            pr_is_draft=False,
+            pr_state=None,
             check_status=check_status,
         )
 

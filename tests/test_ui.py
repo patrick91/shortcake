@@ -49,6 +49,7 @@ from shortcake.commands.ui import (
     _start_api_server_on_available_port,
     _start_static_ui_background,
     _update_persisted_ui_state,
+    _working_diff_stats,
     _write_json,
     _write_ui_session,
     ui,
@@ -86,6 +87,10 @@ def test_build_stack_payload_linear_stack(repo_with_stack: Repo) -> None:
     assert branch_b["commitShort"] == branch_b["commit"][:7]
     assert branch_b["commitSubject"] == "feat: branch b"
     assert branch_b["isCurrent"] is True
+    assert branch_b["commitTime"] > 0
+
+    # Clean working tree — stats are present but empty.
+    assert payload["workingStats"] == {"files": 0, "additions": 0, "deletions": 0}
 
 
 def test_build_stack_payload_no_tracked_branches(temp_repo: Repo) -> None:
@@ -93,6 +98,40 @@ def test_build_stack_payload_no_tracked_branches(temp_repo: Repo) -> None:
     payload = _build_stack_payload(temp_repo)
 
     assert payload["branches"] == []
+
+
+def test_build_stack_payload_counts_working_stats() -> None:
+    """A provided working patch is summarized into file and line counts."""
+    patch = (
+        "diff --git a/one.py b/one.py\n"
+        "--- a/one.py\n"
+        "+++ b/one.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        "-old line\n"
+        "+new line\n"
+        "+added line\n"
+        "diff --git a/two.py b/two.py\n"
+        "--- a/two.py\n"
+        "+++ b/two.py\n"
+        "@@ -1 +0,0 @@\n"
+        "-removed\n"
+    )
+    assert _working_diff_stats(patch) == {
+        "files": 2,
+        "additions": 2,
+        "deletions": 2,
+    }
+
+
+def test_build_stack_payload_working_stats_none_on_error(temp_repo: Repo) -> None:
+    """Stack payload degrades to null stats when the working diff fails."""
+    with patch(
+        "shortcake.commands.ui._git_working_diff",
+        side_effect=ValueError("boom"),
+    ):
+        payload = _build_stack_payload(temp_repo)
+
+    assert payload["workingStats"] is None
 
 
 def test_build_diff_payload_for_tracked_branch(
@@ -2481,6 +2520,7 @@ def test_build_github_info_payload_fetches_info(temp_repo: Repo) -> None:
         pr_number=42,
         pr_url="https://github.com/owner/repo/pull/42",
         pr_is_draft=False,
+        pr_state="open",
         check_status="success",
     )
     with (
@@ -2499,6 +2539,7 @@ def test_build_github_info_payload_fetches_info(temp_repo: Repo) -> None:
                 "prNumber": 42,
                 "prUrl": "https://github.com/owner/repo/pull/42",
                 "prIsDraft": False,
+                "prState": "open",
                 "checkStatus": "success",
             }
         }
@@ -2528,6 +2569,7 @@ def test_handler_github_info(repo_with_stack: Repo) -> None:
         pr_number=10,
         pr_url="https://github.com/o/r/pull/10",
         pr_is_draft=True,
+        pr_state="open",
         check_status="pending",
     )
     with patch(
