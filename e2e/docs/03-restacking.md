@@ -33,7 +33,7 @@ $ git checkout add-database-schema
 $ echo "CREATE TABLE posts;" >> schema.sql
 $ git add schema.sql
 $ git commit -m "Add posts table to schema"
-[add-database-schema a275262] Add posts table to schema
+[add-database-schema b161e02] Add posts table to schema
  1 file changed, 1 insertion(+)
 ```
 
@@ -54,8 +54,11 @@ Run `sc restack` to update the stack:
 
 ```console
 $ sc restack
-Rebasing 'add-repository-layer' onto 'add-database-schema'...
-Restacked 1 branch(es) successfully.
+Restacking 1 branch
+
+  ● add-repository-layer  rebased
+
+✓ 1 branch restacked
 ```
 
 Verify the child branch now includes the parent's changes:

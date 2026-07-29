@@ -52,8 +52,9 @@ def test_cli_restack_success(
     result = runner.invoke(app, ["restack"])
 
     assert result.exit_code == 0
-    assert "Restacked" in result.output
-    assert "successfully" in result.output
+    assert "2 branches restacked" in result.output
+    assert "● branch_a" in result.output
+    assert "● branch_b" in result.output
 
 
 def test_cli_restack_detached_head(

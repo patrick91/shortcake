@@ -23,7 +23,7 @@ Go back to the parent and add a conflicting change:
 $ git checkout add-data-file
 $ echo "parent line" >> data.txt
 $ git add data.txt && git commit -m "Add parent line"
-[add-data-file 6470462] Add parent line
+[add-data-file 1e538d8] Add parent line
  1 file changed, 1 insertion(+)
 ```
 
@@ -34,7 +34,9 @@ When we try to restack from the child, we'll encounter a conflict:
 ```console
 $ git checkout extend-data-file
 $ sc restack
-Rebasing 'extend-data-file' onto 'add-data-file'...
+Restacking 1 branch
+
+  ✗ extend-data-file  conflict
 
 Conflict while rebasing 'extend-data-file' onto 'add-data-file'.
 
@@ -77,11 +79,13 @@ If you want to discard changes instead, use `sc abort`. First recreate a conflic
 $ git checkout add-data-file
 $ echo "another change" >> data.txt
 $ git add data.txt && git commit -m "Another change"
-[add-data-file 3de1560] Another change
+[add-data-file 1e051f8] Another change
  1 file changed, 1 insertion(+)
 $ git checkout extend-data-file
 $ sc restack
-Rebasing 'extend-data-file' onto 'add-data-file'...
+Restacking 1 branch
+
+  ✗ extend-data-file  conflict
 
 Conflict while rebasing 'extend-data-file' onto 'add-data-file'.
 

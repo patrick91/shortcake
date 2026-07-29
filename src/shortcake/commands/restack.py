@@ -3,12 +3,15 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+from rich.style import Style
+from rich.text import Text
 
 from shortcake import _git as git
 from shortcake._exceptions import ShortcakeError
 from shortcake._git._core import Repo
 from shortcake._output import ShortcakeRichToolkit, get_rich_toolkit
 from shortcake._restack_state import STATE_VERSION, RestackState, RestackStep
+from shortcake._stack_view import DIM, RowState, StackRow
 from shortcake._trailers import Trailers
 
 
@@ -245,7 +248,9 @@ def _show_conflict_message(
 ) -> None:
     """Display conflict resolution instructions."""
     toolkit = toolkit or get_rich_toolkit()
-    toolkit.echo(f"\nConflict while rebasing '{branch}' onto '{onto}'.\n")
+    # The view already closed with a blank line, so this one only needs its own
+    # trailing gap.
+    toolkit.echo(f"Conflict while rebasing '{branch}' onto '{onto}'.\n")
 
     if conflict_files:
         toolkit.echo("Fix conflicts in the following files:")
@@ -360,17 +365,41 @@ def _restack(
     )
     state.save(repo)
 
-    # Execute restack
+    # Execute restack — same stack view submit uses, so a rebase reads like a
+    # rebase of the *stack* rather than a flat list of branch names.
+    rows = [StackRow(step.branch, parent=step.onto, label=Text("")) for step in plan]
+    if plan:
+        rows.insert(
+            0,
+            StackRow(
+                plan[0].onto, state=RowState.BASE, label=Text("(base)", style=DIM)
+            ),
+        )
+    by_branch = {row.branch: row for row in rows}
+    noun = "branch" if len(plan) == 1 else "branches"
+    view, _ = toolkit.stack_view(rows, f"Restacking {len(plan)} {noun}")
+
     restacked = []
     any_skipped_empty = False
+    view.__enter__()
     for i, step in enumerate(plan):
         state.current_index = i
         state.save(repo)
 
-        toolkit.echo(f"Rebasing '{step.branch}' onto '{step.onto}'...")
+        row = by_branch[step.branch]
+        row.state = RowState.ACTIVE
+        row.label = Text(f"rebasing onto {step.onto}…", style=Style(color="cyan"))
+        view.sync()
         result = _rebase_branch(repo, step.branch, step.onto, step.merge_base)
 
         if not result.success:
+            row.state = RowState.FAILED
+            row.label = Text(
+                "conflict" if git.is_rebase_in_progress(repo) else "failed",
+                style=Style(color="red"),
+            )
+            view.sync()
+            view.__exit__(None, None, None)
             # Check if this is a conflict or other error
             if git.is_rebase_in_progress(repo):
                 conflict_files = _get_conflict_files(repo)
@@ -381,15 +410,25 @@ def _restack(
                 restacked_branches=restacked, conflict_branch=step.branch
             )
 
+        row.state = RowState.DONE
         if result.skipped_empty:
-            toolkit.echo(f"  Skipped empty commit (changes already in '{step.onto}')")
+            row.label = Text("empty, already applied", style=DIM)
             any_skipped_empty = True
+        else:
+            row.label = Text("rebased", style=Style(color="green"))
 
         # Check if trailer survived the rebase (--empty=drop may have dropped it)
         if _trailer_lost(repo, step.branch, step.onto):
             _restore_trailer(repo, step.branch, step.onto)
 
         restacked.append(step.branch)
+        view.sync()
+
+    head = Text("✓ ", style=Style(color="green"))
+    head.append(f"{len(restacked)} {noun} restacked")
+    view.finish([head])
+    view.sync()
+    view.__exit__(None, None, None)
 
     # Success - clean up state
     state.delete(repo)
@@ -449,24 +488,20 @@ def restack(
     if result.conflict_branch:
         raise typer.Exit(1)
 
-    if not result.restacked_branches:
-        if not dry_run:
-            if result.current_branch_untracked:
-                typer.echo(
-                    "Current branch is not tracked (no Shortcake-Parent trailer). "
-                    "Nothing to restack. "
-                    "Use 'sc adopt --parent <parent>' to track it."
-                )
-            elif result.orphaned_parent:
-                typer.echo(
-                    f"Parent branch '{result.orphaned_parent}' no longer exists. "
-                    "Re-parent with 'sc adopt -f -p <new-parent>', "
-                    "then run 'sc restack' again."
-                )
-            else:
-                typer.echo("Everything up to date.")
-    else:
-        if not dry_run:
+    if not result.restacked_branches and not dry_run:
+        if result.current_branch_untracked:
             typer.echo(
-                f"Restacked {len(result.restacked_branches)} branch(es) successfully."
+                "Current branch is not tracked (no Shortcake-Parent trailer). "
+                "Nothing to restack. "
+                "Use 'sc adopt --parent <parent>' to track it."
             )
+        elif result.orphaned_parent:
+            typer.echo(
+                f"Parent branch '{result.orphaned_parent}' no longer exists. "
+                "Re-parent with 'sc adopt -f -p <new-parent>', "
+                "then run 'sc restack' again."
+            )
+        else:
+            typer.echo("Everything up to date.")
+    # Nothing to print on success: the stack view already rendered the tree and
+    # its "✓ N branches restacked" footer.
