@@ -293,21 +293,46 @@ def _ask_scope(
     draft: bool,
 ) -> tuple[str, list[str]]:
     """Run the picker; returns the chosen scope and its branches."""
-    # The preview labels upstack rows too, so plans for the whole stack are
-    # loaded up front rather than lazily after the answer.
-    plans = (
-        [BranchPlan(branch=branch, action=PRAction.PUSHED) for branch in stack_branches]
-        if stealth
-        else _load_submit_plans(repo, toolkit, stack_branches, stack_branches)
-    )
     rows = _build_stack_rows(
         repo,
         stack_branches,
         stack_branches if stack else downstack_branches,
         current_branch,
-        plans=plans,
         draft=draft,
     )
+    by_branch = {row.branch: row for row in rows}
+    # The preview labels upstack rows too, so the whole stack is looked up —
+    # one API call per branch. That runs with the tree already on screen, each
+    # row showing "checking…" until its own answer lands.
+    labels: dict[str, Text] = {}
+    resting: dict[str, RowState] = {}
+
+    def load_plans(redraw: Callable[[], None]) -> None:
+        def on_lookup(branch: str, plan: BranchPlan | None) -> None:
+            row = by_branch[branch]
+            if plan is None:
+                resting[branch] = row.state
+                row.state = RowState.ACTIVE
+                row.label = Text("checking…", style=DIM)
+            else:
+                labels[branch] = _plan_label(plan, draft=draft)
+                row.state = resting.pop(branch, RowState.PENDING)
+                row.label = (
+                    labels[branch]
+                    if row.state is RowState.PENDING
+                    else Text("not submitted", style=DIM)
+                )
+            redraw()
+
+        if stealth:
+            for branch in stack_branches:
+                on_lookup(branch, None)
+                on_lookup(branch, BranchPlan(branch=branch, action=PRAction.PUSHED))
+            return
+        _load_submit_plans(
+            repo, toolkit, stack_branches, stack_branches, progress=on_lookup
+        )
+
     header = (
         _submit_header(len(stack_branches), None, draft=draft, stealth=stealth)
         .replace("Submitting", "Submit plan ·")
@@ -320,6 +345,8 @@ def _ask_scope(
         header,
         len(downstack_branches),
         stack=stack,
+        labels=labels,
+        load_plans=load_plans,
     )
     return scope, [row.branch for row in rows if row.state is RowState.PENDING]
 
@@ -597,11 +624,14 @@ def _load_submit_plans(
     toolkit: ShortcakeRichToolkit,
     branches: list[str],
     full_stack_branches: list[str],
+    progress: Callable[[str, BranchPlan | None], None] | None = None,
 ) -> list[BranchPlan]:
     """Build a live GitHub plan for the pre-submit visualization."""
     token, owner, repo_name = _get_submit_github_details(repo)
     with GitHubClient(token, owner, repo_name) as gh:
-        return _build_branch_plans(repo, gh, toolkit, branches, full_stack_branches)
+        return _build_branch_plans(
+            repo, gh, toolkit, branches, full_stack_branches, progress=progress
+        )
 
 
 def _submit(

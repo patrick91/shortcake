@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import pytest
 from rich.console import Console
+from rich.live import Live
 from rich.text import Text
 
 from shortcake._stack_view import RowState, StackRenderer, StackRow
@@ -308,3 +309,66 @@ def test_pick_scope_previews_the_highlighted_option_before_choosing() -> None:
     assert scope == "lineage"
     assert seen[0] == ["a", "b", "c", "d", "e", "f"]  # whole stack previewed
     assert seen[1] == ["a", "b", "e", "f"]  # then just my arm
+
+
+def test_apply_scope_updates_the_status_column_too() -> None:
+    """Regression: flipping state alone leaves a stale label.
+
+    `state` and `label` are separate on StackRow, so a row that comes into
+    scope kept reading "not submitted" and one that left it kept promising
+    "create PR".
+    """
+    rows = linear_rows(3)
+    for row in rows[1:]:
+        row.state = RowState.PENDING
+    labels = {name: Text(f"create PR {name[-2:]}") for name in LONG[:3]}
+
+    apply_scope(rows, "downstack", 2, LONG[1], labels)
+    assert [row.label.plain for row in rows[1:]] == [
+        "create PR 00",
+        "create PR 01",
+        "not submitted",
+    ]
+
+    apply_scope(rows, "stack", 2, LONG[1], labels)
+    assert [row.label.plain for row in rows[1:]] == [
+        "create PR 00",
+        "create PR 01",
+        "create PR 02",
+    ]
+
+
+def test_apply_scope_without_labels_leaves_the_column_alone() -> None:
+    rows = linear_rows(2)
+    rows[1].label = Text("kept")
+    apply_scope(rows, "stack", 2, None)
+    assert rows[1].label.plain == "kept"
+
+
+def test_pick_scope_draws_before_loading_plans() -> None:
+    """Regression: looking up PRs first left the terminal blank.
+
+    One API call per branch ran before the Live opened, so the menu appeared
+    seconds after the command did.
+    """
+    rows = linear_rows(3)
+    console = Console(width=100, height=40)
+    order: list[str] = []
+
+    def load_plans(redraw):
+        order.append("load")
+        redraw()
+
+    real_live_enter = Live.__enter__
+
+    def spy_enter(self):
+        order.append("draw")
+        return real_live_enter(self)
+
+    with (
+        patch.object(Live, "__enter__", spy_enter),
+        patch("shortcake.commands._submit_picker.getchar", _keys("\r")),
+    ):
+        pick_scope(console, rows, "Submit plan", 2, stack=False, load_plans=load_plans)
+
+    assert order == ["draw", "load"]

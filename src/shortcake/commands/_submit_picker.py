@@ -12,6 +12,8 @@ each option is visible before choosing it.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from rich.console import Console, Group, RenderableType
 from rich.live import Live
 from rich.style import Style
@@ -63,25 +65,47 @@ def lineage_of(rows: list[StackRow], current: str) -> set[str]:
     return keep
 
 
+def _set_scope(row: StackRow, included: bool, labels: dict[str, Text] | None) -> None:
+    """Move one row in or out of scope, status column included.
+
+    ``state`` and ``label`` are separate on :class:`StackRow`, so flipping the
+    state alone leaves a stale label — a selected row still reading "not
+    submitted", or an excluded one still promising "create PR".
+    """
+    row.state = RowState.PENDING if included else RowState.EXCLUDED
+    if labels is None:
+        return
+    row.label = (
+        labels.get(row.branch, Text(""))
+        if included
+        else Text("not submitted", style=DIM)
+    )
+
+
 def apply_scope(
-    rows: list[StackRow], scope: str, downstack: int, current: str | None
+    rows: list[StackRow],
+    scope: str,
+    downstack: int,
+    current: str | None,
+    labels: dict[str, Text] | None = None,
 ) -> None:
-    """Preview a scope choice on the plan tree."""
+    """Preview a scope choice on the plan tree.
+
+    ``labels`` maps a branch to the status column it should show while in
+    scope; pass it so the column tracks the highlighted option.
+    """
     if scope == "lineage" and current is not None:
         keep = lineage_of(rows, current)
         for row in rows:
             if row.state is not RowState.BASE:
-                row.state = (
-                    RowState.PENDING if row.branch in keep else RowState.EXCLUDED
-                )
+                _set_scope(row, row.branch in keep, labels)
         return
 
     index = 0
     for row in rows:
         if row.state is RowState.BASE:
             continue
-        included = scope == "stack" or index < downstack
-        row.state = RowState.PENDING if included else RowState.EXCLUDED
+        _set_scope(row, scope == "stack" or index < downstack, labels)
         index += 1
 
 
@@ -247,8 +271,15 @@ def pick_scope(
     downstack: int,
     *,
     stack: bool,
+    labels: dict[str, Text] | None = None,
+    load_plans: Callable[[Callable[[], None]], None] | None = None,
 ) -> str:
     """Ask once, with the tree previewing the highlighted option.
+
+    ``load_plans`` is run *after* the block is on screen and handed a redraw
+    callable. Looking up PRs before opening the Live left the terminal blank
+    for as long as the API took — one call per branch — so the menu appeared
+    seconds after the command did.
 
     Returns the chosen scope: ``downstack``, ``stack``, ``lineage`` or
     ``cancel``.
@@ -259,8 +290,17 @@ def pick_scope(
 
     cursor = 0
     with Live(console=console, auto_refresh=False, transient=True) as live:
+
+        def redraw() -> None:
+            live.update(render_picker(renderer, options, cursor, warning))
+            live.refresh()
+
+        if load_plans is not None:
+            redraw()  # the stack is on screen before any network happens
+            load_plans(redraw)
+
         while True:
-            apply_scope(rows, options[cursor][0], downstack, current)
+            apply_scope(rows, options[cursor][0], downstack, current, labels)
             live.update(render_picker(renderer, options, cursor, warning))
             live.refresh()
             try:
@@ -273,7 +313,7 @@ def pick_scope(
                 cursor = (cursor - 1) % len(options)
             elif key == TextInputHandler.ENTER_KEY:
                 scope = options[cursor][0]
-                apply_scope(rows, scope, downstack, current)
+                apply_scope(rows, scope, downstack, current, labels)
                 return scope
             elif key in ("\x03", "\x04"):
                 return "cancel"
