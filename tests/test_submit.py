@@ -32,6 +32,7 @@ from shortcake.commands.submit import (
     PRAction,
     SubmitError,
     SubmitResult,
+    _ask_scope,
     _build_branch_plans,
     _get_commit_title,
     _plan_heading,
@@ -3324,3 +3325,92 @@ def test_submit_folds_precomputed_plans_into_the_block(
     assert [r.branch for r in result.branch_results] == ["branch_a", "branch_b"]
     # the plans were reused rather than re-fetched per branch
     assert mock_client.get_pr_for_branch.call_count <= len(precomputed)
+
+
+def _capturing_picker(captured: dict, scope: str = "downstack"):
+    """pick_scope stub that runs load_plans, as the real picker does."""
+
+    def fake(console, rows, header, downstack, *, stack, labels=None, load_plans=None):
+        seen: list[dict[str, RowState]] = []
+        load_plans(lambda: seen.append({r.branch: r.state for r in rows}))
+        captured["frames"] = seen
+        captured["labels"] = {name: text.plain for name, text in labels.items()}
+        captured["final"] = {r.branch: r.state for r in rows}
+        return scope
+
+    return fake
+
+
+def test_ask_scope_looks_up_plans_with_the_tree_already_drawn(
+    repo_with_three_branch_stack: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Each row shows "checking…" and settles, instead of a blank screen."""
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_three_branch_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    captured: dict = {}
+    with (
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+        patch("shortcake.commands.submit.pick_scope", _capturing_picker(captured)),
+    ):
+        scope, selected = _ask_scope(
+            repo_with_three_branch_stack,
+            get_rich_toolkit(),
+            ["branch_a", "branch_b", "branch_c"],
+            ["branch_a", "branch_b"],
+            "branch_b",
+            stack=False,
+            stealth=False,
+            draft=False,
+        )
+
+    assert scope == "downstack"
+    assert selected == ["branch_a", "branch_b"]
+    # every branch was announced as in-flight at some point during the load
+    assert any(RowState.ACTIVE in frame.values() for frame in captured["frames"])
+    # and nothing is left mid-lookup
+    assert RowState.ACTIVE not in captured["final"].values()
+    # an excluded row keeps its excluded label rather than a plan label
+    assert captured["final"]["branch_c"] is RowState.EXCLUDED
+    assert set(captured["labels"]) == {"branch_a", "branch_b", "branch_c"}
+
+
+def test_ask_scope_stealth_needs_no_github_lookup(
+    repo_with_three_branch_stack: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--stealth pushes only, so there is nothing to ask GitHub about."""
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_three_branch_stack)
+
+    captured: dict = {}
+    with (
+        patch("shortcake.commands.submit.GitHubClient") as client,
+        patch(
+            "shortcake.commands.submit.pick_scope", _capturing_picker(captured, "stack")
+        ),
+    ):
+        scope, _ = _ask_scope(
+            repo_with_three_branch_stack,
+            get_rich_toolkit(),
+            ["branch_a", "branch_b", "branch_c"],
+            ["branch_a", "branch_b"],
+            "branch_b",
+            stack=True,
+            stealth=True,
+            draft=False,
+        )
+
+    assert scope == "stack"
+    client.assert_not_called()
+    assert set(captured["labels"].values()) == {"push only"}
