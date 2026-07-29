@@ -23,7 +23,7 @@ Main receives the same changes as the first branch (simulating a squash merge):
 ```console
 $ git checkout main
 $ echo "feature A" > file_a.txt && git add file_a.txt && git commit -m "squash merge feature A"
-[main 24b6c2a] squash merge feature A
+[main 0c264c2] squash merge feature A
  1 file changed, 1 insertion(+)
  create mode 100644 file_a.txt
 ```
@@ -35,10 +35,12 @@ When restacking, the first branch's commit becomes empty but the second branch's
 ```console
 $ git checkout add-feature-b
 $ sc restack
-Rebasing 'add-feature-a' onto 'main'...
-  Skipped empty commit (changes already in 'main')
-Rebasing 'add-feature-b' onto 'add-feature-a'...
-Restacked 2 branch(es) successfully.
+Restacking 2 branches
+
+  ● add-feature-a  empty, already applied
+  ● add-feature-b  rebased
+
+✓ 2 branches restacked
 ```
 
 ## Verify Changes Preserved

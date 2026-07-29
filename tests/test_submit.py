@@ -5,9 +5,12 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+from rich.console import Console
+from rich.text import Text
 from typer.testing import CliRunner
 
 from shortcake._github import GitHubClient, PRInfo
+from shortcake._output import get_rich_toolkit
 from shortcake._pr_stack import (
     SHORTCAKE_URL,
     STACK_END_MARKER,
@@ -19,16 +22,25 @@ from shortcake._pr_stack import (
     _parse_stack_order_from_body,
     _update_pr_body_with_stack,
 )
+from shortcake._stack_view import RowState, StackRenderer, StackRow
 from shortcake._trailers import Trailers
 from shortcake.cli import app
 from shortcake.commands.restack import RestackError, RestackResult
 from shortcake.commands.submit import (
     BranchPlan,
+    BranchSubmitResult,
     PRAction,
     SubmitError,
+    SubmitResult,
+    _build_branch_plans,
     _get_commit_title,
+    _plan_heading,
+    _rows_for_execution,
+    _should_ask_scope,
     _show_submit_plan,
+    _start_execution,
     _submit,
+    _submit_footer,
 )
 from tests._git_helpers import (
     Repo,
@@ -86,11 +98,32 @@ def test_get_commit_title(repo_with_tracked_feature: Repo) -> None:
     assert title == "feat: add feature"
 
 
+def _row(output: str, branch: str) -> str:
+    """The plan-tree row for a branch, with column padding collapsed.
+
+    Status lives in a right-hand column now, so the padding depends on the
+    longest branch name; assertions should not encode it.
+    """
+    line = next(
+        line
+        for line in output.splitlines()
+        if line.strip().endswith(branch) or f" {branch} " in line + " "
+    )
+    return " ".join(line.split())
+
+
+def _plan_toolkit() -> MagicMock:
+    """MagicMock toolkit with a real console, so layout can measure a width."""
+    toolkit = MagicMock()
+    toolkit.console = Console(width=100, height=40)
+    return toolkit
+
+
 def test_submit_plan_renders_downward_and_dims_excluded_branches(
     repo_with_three_branch_stack: Repo,
 ) -> None:
     """The preview follows the ls graph style and de-emphasizes exclusions."""
-    toolkit = MagicMock()
+    toolkit = _plan_toolkit()
     plans = [
         BranchPlan(
             branch="branch_a",
@@ -121,8 +154,15 @@ def test_submit_plan_renders_downward_and_dims_excluded_branches(
         index for index, line in enumerate(lines) if "branch_b" in line
     )
     assert base_index < branch_a_index < branch_b_index
-    assert "● branch_a — update PR #12" in lines[branch_a_index]
-    assert "◉ branch_b (current) — create PR" in lines[branch_b_index]
+    assert "● branch_a" in lines[branch_a_index]
+    assert "update PR #12" in lines[branch_a_index]
+    # the current branch keeps ◉ while planning, and is bold rather than labelled
+    assert "◉ branch_b" in lines[branch_b_index]
+    assert "create PR" in lines[branch_b_index]
+    assert any(
+        span.style is not None and getattr(span.style, "bold", None)
+        for span in renderables[branch_b_index].spans
+    )
     pr_line = renderables[branch_a_index]
     pr_span = next(
         span
@@ -134,13 +174,18 @@ def test_submit_plan_renders_downward_and_dims_excluded_branches(
     excluded = next(
         renderable for renderable in renderables if "branch_c" in str(renderable)
     )
-    assert "◯ branch_c — not submitted" in str(excluded)
-    assert any(str(span.style) == "dim" for span in excluded.spans)
+    assert "◯ branch_c" in str(excluded)
+    assert "not submitted" in str(excluded)
+    assert any(
+        getattr(span.style, "color", None) is not None
+        and span.style.color.name == "bright_black"
+        for span in excluded.spans
+    )
 
 
 def test_submit_plan_preserves_forked_stack_shape(repo_with_fork: Repo) -> None:
     """Sibling branches use tree connectors instead of appearing sequential."""
-    toolkit = MagicMock()
+    toolkit = _plan_toolkit()
     plans = [
         BranchPlan(branch="branch_a", action=PRAction.CREATED),
         BranchPlan(branch="branch_b", action=PRAction.CREATED),
@@ -157,15 +202,16 @@ def test_submit_plan_preserves_forked_stack_shape(repo_with_fork: Repo) -> None:
     )
 
     lines = [str(call.args[0]) for call in toolkit.print.call_args_list if call.args]
-    assert any("├─◯ branch_b — not submitted" in line for line in lines)
-    assert any("└─◉ branch_c (current) — create PR" in line for line in lines)
+    # arms now get the same `│` breathing line a linear chain gets
+    assert any("├─◯ branch_b" in line and "not submitted" in line for line in lines)
+    assert any("└─◉ branch_c" in line and "create PR" in line for line in lines)
 
 
 def test_submit_plan_handles_empty_or_actionless_plans(
     repo_with_tracked_feature: Repo,
 ) -> None:
     """The renderer is optional and can display a branch without an action."""
-    toolkit = MagicMock()
+    toolkit = _plan_toolkit()
     _show_submit_plan(
         repo_with_tracked_feature,
         toolkit,
@@ -184,8 +230,9 @@ def test_submit_plan_handles_empty_or_actionless_plans(
     )
     lines = [str(call.args[0]) for call in toolkit.print.call_args_list if call.args]
     feature_line = next(line for line in lines if "feature" in line)
-    assert "◉ feature (current)" in feature_line
-    assert " — " not in feature_line
+    assert "◉ feature" in feature_line
+    # no plan means no status column at all
+    assert feature_line.rstrip().endswith("feature")
 
 
 def test_build_stack_section() -> None:
@@ -543,10 +590,10 @@ def test_cli_submit_defaults_to_current_and_downstack(
     assert "branch_a (create new PR)" in result.output
     assert "branch_b (create new PR)" in result.output
     assert "branch_c (create new PR)" not in result.output
-    assert "  ◯ branch_c — not submitted" in result.output
-    assert "  ◉ branch_b (current) — create PR" in result.output
-    assert "  ● branch_a — create PR" in result.output
-    assert "  ◯ main (base)" in result.output
+    assert _row(result.output, "branch_c") == "◯ branch_c not submitted"
+    assert _row(result.output, "branch_b") == "◉ branch_b create PR"
+    assert _row(result.output, "branch_a") == "● branch_a create PR"
+    assert _row(result.output, "main") == "◯ main (base)"
     assert "● 2 selected · ○ 1 upstack branch not selected" in result.output
     confirm_mock.assert_not_called()
     assert [call.args[0] for call in mock_client.get_pr_for_branch.call_args_list] == [
@@ -626,7 +673,7 @@ def test_cli_submit_stack_submits_every_branch(
     assert "branch_a (create new PR)" in result.output
     assert "branch_b (create new PR)" in result.output
     assert "branch_c (create new PR)" in result.output
-    assert "  ● branch_c — create PR" in result.output
+    assert _row(result.output, "branch_c") == "● branch_c create PR"
     assert "○ 1 upstack branch not selected" not in result.output
 
 
@@ -648,25 +695,18 @@ def test_cli_submit_interactively_offers_whole_stack(
 
     with (
         patch("shortcake.commands.submit._is_interactive", return_value=True),
-        patch("shortcake.commands.submit.typer.confirm", return_value=True) as confirm,
+        patch.object(type(get_rich_toolkit().console), "is_terminal", True),
+        patch("shortcake.commands.submit.pick_scope", return_value="stack") as picker,
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         result = runner.invoke(app, ["submit", "--dry-run"])
 
     assert result.exit_code == 0
-    confirm.assert_called_once_with(
-        "Also submit upstack branches (3 branches total)?", default=False
-    )
+    picker.assert_called_once()
+    # the picker replaces the plan tree, so it is not printed separately
+    assert "Submit plan:" not in result.output
     assert "Would submit 3 branch(es)" in result.output
-    assert "Submit plan:" in result.output
-    assert "  ◯ branch_c — not submitted" in result.output
-    assert "Updated submit plan:" in result.output
-    assert "  ● branch_c — create PR" in result.output
-    assert [call.args[0] for call in mock_client.get_pr_for_branch.call_args_list] == [
-        "branch_a",
-        "branch_b",
-        "branch_c",
-    ]
+    assert "branch_c (create new PR)" in result.output
 
 
 def test_cli_submit_declining_upstack_keeps_downstack_selection(
@@ -674,7 +714,7 @@ def test_cli_submit_declining_upstack_keeps_downstack_selection(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Declining the prompt submits only ancestors through the current branch."""
+    """Choosing the downstack scope submits only ancestors through current."""
     monkeypatch.chdir(tmp_path)
     setup_origin_remote(repo_with_three_branch_stack)
     monkeypatch.setenv("GH_TOKEN", "test-token")
@@ -687,6 +727,8 @@ def test_cli_submit_declining_upstack_keeps_downstack_selection(
 
     with (
         patch("shortcake.commands.submit._is_interactive", return_value=True),
+        patch.object(type(get_rich_toolkit().console), "is_terminal", True),
+        patch("shortcake.commands.submit.pick_scope", return_value="downstack"),
         patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
     ):
         result = runner.invoke(app, ["submit", "--dry-run"], input="n\n")
@@ -696,11 +738,36 @@ def test_cli_submit_declining_upstack_keeps_downstack_selection(
     assert "branch_a (create new PR)" in result.output
     assert "branch_b (create new PR)" in result.output
     assert "branch_c (create new PR)" not in result.output
-    assert "  ◯ branch_c — not submitted" in result.output
-    assert "Updated submit plan:" not in result.output
-    assert result.output.index("Submit plan:") < result.output.index(
-        "Also submit upstack branches"
-    )
+
+
+def test_cli_submit_cancel_scope_does_nothing(
+    repo_with_three_branch_stack: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Cancel is a real option now: nothing is pushed and no PR is touched."""
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_three_branch_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit._is_interactive", return_value=True),
+        patch.object(type(get_rich_toolkit().console), "is_terminal", True),
+        patch("shortcake.commands.submit.pick_scope", return_value="cancel"),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+        patch("shortcake.commands.submit.push_branch") as push,
+    ):
+        result = runner.invoke(app, ["submit"])
+
+    assert result.exit_code == 0
+    assert "Cancelled" in result.output
+    push.assert_not_called()
 
 
 def test_submit_downstack_limits_push_and_pr_updates(
@@ -772,9 +839,9 @@ def test_submit_downstack_limits_push_and_pr_updates(
 
     captured = capsys.readouterr()
     assert "Submit plan:" in captured.out
-    assert "  ◯ branch_c — not submitted" in captured.out
-    assert "  ◉ branch_b (current) — update PR #2" in captured.out
-    assert "  ● branch_a — update PR #1" in captured.out
+    assert _row(captured.out, "branch_c") == "◯ branch_c not submitted"
+    assert _row(captured.out, "branch_b") == "◉ branch_b update PR #2"
+    assert _row(captured.out, "branch_a") == "● branch_a update PR #1"
 
     updated_bodies = [
         call.kwargs["body"]
@@ -1617,7 +1684,7 @@ def test_cli_submit_success(
         result = runner.invoke(app, ["submit"])
 
     assert result.exit_code == 0
-    assert "Created" in result.output
+    assert "1 PR created" in result.output
 
 
 def test_cli_submit_stealth_success(
@@ -1637,7 +1704,7 @@ def test_cli_submit_stealth_success(
         result = runner.invoke(app, ["submit", "--stealth"])
 
     assert result.exit_code == 0
-    assert "Pushed 1 branch(es)" in result.output
+    assert "1 branch pushed" in result.output
     assert "Created" not in result.output
     token_mock.assert_not_called()
     client_mock.assert_not_called()
@@ -1741,7 +1808,7 @@ def test_cli_submit_updated_only(
         result = runner.invoke(app, ["submit"])
 
     assert result.exit_code == 0
-    assert "Updated" in result.output
+    assert "1 updated" in result.output
     # Should not have created any PRs
     mock_client.create_pr.assert_not_called()
 
@@ -2948,3 +3015,312 @@ def test_cli_submit_json_stealth_dry_run(
     assert document["data"]["planned"] == [
         {"branch": "feature", "action": "pushed", "pr": None}
     ]
+
+
+def test_should_ask_scope_only_prompts_when_it_can_change_something() -> None:
+    """No TTY, JSON output, or nothing extra to offer means no prompt."""
+    stack = ["a", "b", "c"]
+    down = ["a", "b"]
+    ask = _should_ask_scope
+
+    assert ask(
+        stack, down, stack=False, json_output=False, interactive=True, forks=False
+    )
+    # a pipe or CI takes the flags at face value rather than hanging
+    assert not ask(
+        stack, down, stack=False, json_output=False, interactive=False, forks=False
+    )
+    assert not ask(
+        stack, down, stack=False, json_output=True, interactive=True, forks=False
+    )
+    assert not ask(
+        [], [], stack=False, json_output=False, interactive=True, forks=False
+    )
+    # nothing upstack to offer
+    assert not ask(
+        stack, stack, stack=False, json_output=False, interactive=True, forks=False
+    )
+    # --stack asks only on a fork, where it sweeps in a sibling arm
+    assert not ask(
+        stack, down, stack=True, json_output=False, interactive=True, forks=False
+    )
+    assert ask(stack, down, stack=True, json_output=False, interactive=True, forks=True)
+
+
+def _footer_renderer(rows: list[StackRow]) -> StackRenderer:
+    return StackRenderer(rows, "h", Console(width=100, height=40))
+
+
+def test_submit_footer_reports_elapsed_once_it_is_meaningful() -> None:
+    rows = [StackRow("main", state=RowState.BASE), StackRow("a", parent="main")]
+    renderer = _footer_renderer(rows)
+    renderer.started_at -= 42
+    result = SubmitResult()
+    result.branch_results = [
+        BranchSubmitResult(branch="a", action=PRAction.CREATED, pr_number=1, pr_url="u")
+    ]
+    head = _submit_footer(result, renderer, draft=False, excluded=0)[0].plain
+    assert "42s" in head
+
+
+def test_submit_footer_lists_every_tip_when_the_stack_forks() -> None:
+    """ "Top of stack" is meaningless with more than one leaf."""
+    rows = [
+        StackRow("main", state=RowState.BASE),
+        StackRow("a", parent="main"),
+        StackRow("b", parent="a"),
+        StackRow("c", parent="a"),
+    ]
+    result = SubmitResult()
+    result.branch_results = [
+        BranchSubmitResult(
+            branch=name, action=PRAction.CREATED, pr_number=index, pr_url=f"u{index}"
+        )
+        for index, name in enumerate(["a", "b", "c"], start=1)
+    ]
+    lines = [
+        line.plain
+        for line in _submit_footer(
+            result, _footer_renderer(rows), draft=False, excluded=0
+        )
+    ]
+    assert any("2 tips" in line for line in lines)
+    assert any(line.strip().startswith("#2") for line in lines)
+    assert any(line.strip().startswith("#3") for line in lines)
+    assert not any("Top of stack" in line for line in lines)
+
+
+def test_submit_footer_points_at_the_upstack_you_skipped() -> None:
+    rows = [StackRow("main", state=RowState.BASE), StackRow("a", parent="main")]
+    result = SubmitResult()
+    result.branch_results = [
+        BranchSubmitResult(branch="a", action=PRAction.CREATED, pr_number=1, pr_url="u")
+    ]
+    lines = [
+        line.plain
+        for line in _submit_footer(
+            result, _footer_renderer(rows), draft=False, excluded=2
+        )
+    ]
+    assert any("2 upstack branches not submitted" in line for line in lines)
+
+
+def test_submit_with_explicit_branches_submits_just_that_arm(
+    repo_with_three_branch_stack: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The picker's "just my arm" is neither downstack nor the whole stack."""
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_three_branch_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("shortcake.commands.submit.GitHubClient", return_value=mock_client):
+        result = _submit(
+            repo_with_three_branch_stack,
+            dry_run=True,
+            explicit_branches=["branch_a", "branch_c"],
+        )
+
+    assert [plan.branch for plan in result.planned] == ["branch_a", "branch_c"]
+
+
+def test_execution_rows_seeded_with_plan_labels_for_the_folded_block(
+    repo_with_three_branch_stack: Repo,
+) -> None:
+    """The live block opens *as* the plan, so it is not printed twice."""
+    plans = [
+        BranchPlan(branch="branch_a", action=PRAction.CREATED),
+        BranchPlan(branch="branch_b", action=PRAction.CREATED),
+    ]
+    rows, _ = _rows_for_execution(
+        repo_with_three_branch_stack,
+        ["branch_a", "branch_b", "branch_c"],
+        ["branch_a", "branch_b"],
+        "branch_b",
+        plans=plans,
+        draft=True,
+    )
+    labels = {row.branch: row.label.plain for row in rows}
+    assert labels["branch_a"] == "create draft PR"
+    assert labels["branch_c"] == "not submitted"
+
+    # without plans the rows start blank, ready for progress
+    rows, _ = _rows_for_execution(
+        repo_with_three_branch_stack,
+        ["branch_a", "branch_b", "branch_c"],
+        ["branch_a", "branch_b"],
+        "branch_b",
+    )
+    assert {row.label.plain for row in rows if row.state is RowState.PENDING} == {""}
+
+
+def test_start_execution_switches_the_block_from_plan_to_progress() -> None:
+    rows = [
+        StackRow("main", state=RowState.BASE),
+        StackRow("a", parent="main", state=RowState.PENDING, label=Text("create PR")),
+    ]
+    renderer = StackRenderer(
+        rows, "Submit plan · 1 branch", Console(width=100, height=40), planning=True
+    )
+    _start_execution(renderer, "Submitting 1 branch to owner/repo")
+
+    assert renderer.planning is False
+    assert renderer.header == "Submitting 1 branch to owner/repo"
+    assert rows[1].label.plain == ""
+
+
+def test_cli_submit_prints_the_plan_once_when_the_block_is_folded(
+    repo_with_three_branch_stack: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On a TTY the plan is the live block's first frame, not a second tree."""
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_three_branch_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.create_pr.return_value = PRInfo(
+        number=1,
+        url="https://github.com/owner/repo/pull/1",
+        base="main",
+        title="t",
+        body="",
+        state="open",
+        is_draft=False,
+    )
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch.object(type(get_rich_toolkit().console), "is_terminal", True),
+        patch("shortcake.commands.submit._is_interactive", return_value=False),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = runner.invoke(app, ["submit", "--stack"])
+
+    assert result.exit_code == 0
+    assert "Submit plan:" not in result.output
+
+
+def test_plan_heading_states_count_and_draftness() -> None:
+    assert _plan_heading(1, draft=False) == "Submit plan · 1 branch"
+    assert _plan_heading(3, draft=True) == "Submit plan · 3 branches · draft"
+
+
+def test_cli_submit_stealth_folds_the_plan_into_the_live_block(
+    repo_with_tracked_feature: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """--stealth gets the same single block: plan first, then progress."""
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_tracked_feature)
+
+    with (
+        patch.object(type(get_rich_toolkit().console), "is_terminal", True),
+        patch("shortcake.commands.submit._is_interactive", return_value=False),
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+    ):
+        result = runner.invoke(app, ["submit", "--stealth"])
+
+    assert result.exit_code == 0
+    assert "Push plan:" not in result.output
+    assert "1 branch pushed" in result.output
+
+
+def test_build_branch_plans_reports_each_lookup(
+    repo_with_three_branch_stack: Repo,
+) -> None:
+    """One API call per branch, so the caller can show the tree filling in."""
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+
+    seen: list[tuple[str, bool]] = []
+    _build_branch_plans(
+        repo_with_three_branch_stack,
+        mock_client,
+        get_rich_toolkit(),
+        ["branch_a", "branch_b"],
+        ["branch_a", "branch_b", "branch_c"],
+        progress=lambda branch, plan: seen.append((branch, plan is not None)),
+    )
+
+    # each branch is announced before its lookup and again once resolved
+    assert seen == [
+        ("branch_a", False),
+        ("branch_a", True),
+        ("branch_b", False),
+        ("branch_b", True),
+    ]
+
+
+def test_planning_tally_does_not_flicker_while_branches_are_checked() -> None:
+    """An ACTIVE row is still selected; the count must not tick down."""
+    rows = [
+        StackRow("main", state=RowState.BASE),
+        StackRow("a", parent="main", state=RowState.PENDING),
+        StackRow("b", parent="a", state=RowState.PENDING),
+    ]
+    renderer = StackRenderer(
+        rows, "Submit plan", Console(width=100, height=40), planning=True
+    )
+    before = renderer.progress_footer().plain
+    rows[1].state = RowState.ACTIVE
+    assert renderer.progress_footer().plain == before == "  ● 2 selected"
+
+
+def test_submit_folds_precomputed_plans_into_the_block(
+    repo_with_three_branch_stack: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Plans handed in already still populate the block's first frame."""
+    monkeypatch.chdir(tmp_path)
+    setup_origin_remote(repo_with_three_branch_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.has_merged_pr.return_value = False
+    mock_client.create_pr.return_value = PRInfo(
+        number=9,
+        url="https://github.com/owner/repo/pull/9",
+        base="main",
+        title="t",
+        body="",
+        state="open",
+        is_draft=False,
+    )
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    precomputed = [
+        BranchPlan(branch="branch_a", action=PRAction.CREATED, parent="main"),
+        BranchPlan(branch="branch_b", action=PRAction.CREATED, parent="branch_a"),
+    ]
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = _submit(
+            repo_with_three_branch_stack,
+            precomputed_plans=precomputed,
+            fold_plan=True,
+        )
+
+    assert [r.branch for r in result.branch_results] == ["branch_a", "branch_b"]
+    # the plans were reused rather than re-fetched per branch
+    assert mock_client.get_pr_for_branch.call_count <= len(precomputed)

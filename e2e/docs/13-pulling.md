@@ -34,7 +34,7 @@ automatically resets to match the remote:
 ```console
 $ # remote: force-push add-feature
 $ sc pull
-Updated 'add-feature' to origin/add-feature (<HASH>)
+Updated 'add-feature' to origin/add-feature (f9131f5)
 ```
 
 This is equivalent to:
@@ -69,8 +69,12 @@ After someone force-pushes to a branch in the stack:
 ```console
 $ # remote: force-push feature-a
 $ sc pull
-Updated 'feature-a' to origin/feature-a (<HASH>)
-Rebasing 'feature-b' onto 'feature-a'...
+Updated 'feature-a' to origin/feature-a (f3a7e49)
+Restacking 1 branch
+
+  ● feature-b   rebased
+
+✓ 1 branch restacked
 Restacked 1 branch(es).
 ```
 
@@ -88,7 +92,7 @@ $ git push -u origin rebase-feature > /dev/null 2>&1
 $ echo "local change" >> rebase.py && git add rebase.py && git commit -m "local work" > /dev/null 2>&1
 $ # remote: force-push rebase-feature
 $ sc pull --rebase
-Rebased 'rebase-feature' onto origin/rebase-feature (<HASH>)
+Rebased 'rebase-feature' onto origin/rebase-feature (93c0a2b)
 ```
 
 ## Error Cases

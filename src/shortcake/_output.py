@@ -3,6 +3,14 @@ from typing import Any, NoReturn
 import typer
 from rich_toolkit import RichToolkit
 
+from shortcake._stack_view import (
+    AppendStackView,
+    LiveStackView,
+    SilentStackView,
+    StackRenderer,
+    StackRow,
+)
+
 
 class ShortcakeRichToolkit(RichToolkit):
     """Toolkit with a stable success/error envelope for JSON output.
@@ -50,6 +58,27 @@ class ShortcakeRichToolkit(RichToolkit):
             if hint is not None:
                 typer.echo(f"hint: {hint}", err=True)
         raise typer.Exit(exit_code)
+
+    def stack_view(
+        self,
+        rows: list[StackRow],
+        header: str,
+        *,
+        planning: bool = False,
+    ) -> tuple[LiveStackView | AppendStackView | SilentStackView, StackRenderer]:
+        """Build the stack progress view for the current mode.
+
+        Returns the view and its renderer; commands mutate the rows and call
+        ``view.sync()``. JSON mode gets a silent view, and a non-TTY gets the
+        append-only one because ``Live`` emits nothing until it stops when the
+        output is piped.
+        """
+        renderer = StackRenderer(rows, header, self.console, planning=planning)
+        if self.mode == "json":
+            return SilentStackView(renderer), renderer
+        if not self.console.is_terminal:
+            return AppendStackView(renderer, self.console), renderer
+        return LiveStackView(renderer, self.console), renderer
 
 
 def get_rich_toolkit(*, json_output: bool = False) -> ShortcakeRichToolkit:

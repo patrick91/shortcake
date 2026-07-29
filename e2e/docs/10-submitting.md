@@ -27,9 +27,9 @@ Created branch 'add-feature' from 'main'
 $ sc submit --dry-run
 Submit plan:
 
-  ◯ main (base)
+  ◯ main         (base)
   │
-  ◉ add-feature (current) — create PR
+  ◉ add-feature  create PR
 
 ● 1 selected
 
@@ -48,17 +48,20 @@ Created branch 'add-feature' from 'main'
 $ sc submit
 Submit plan:
 
-  ◯ main (base)
+  ◯ main         (base)
   │
-  ◉ add-feature (current) — create PR
+  ◉ add-feature  create PR
 
 ● 1 selected
 
-Pushing 'add-feature'...
-  Creating PR for 'add-feature'...
-  Created PR #1: https://github.com/test/repo/pull/1
+Submitting 1 branch to test/repo
 
-Created 1 PR(s)
+  ● add-feature  #1
+
+✓ 1 PR created
+
+  Top of stack  #1
+  https://github.com/test/repo/pull/1
 ```
 
 ## Creating a Draft PR
@@ -72,17 +75,20 @@ Created branch 'draft-feature' from 'main'
 $ sc submit --draft
 Submit plan:
 
-  ◯ main (base)
+  ◯ main           (base)
   │
-  ◉ draft-feature (current) — create PR
+  ◉ draft-feature  create PR
 
 ● 1 selected
 
-Pushing 'draft-feature'...
-  Creating PR for 'draft-feature'...
-  Created PR #1: https://github.com/test/repo/pull/1
+Submitting 1 branch to test/repo · draft
 
-Created 1 PR(s)
+  ● draft-feature  #1
+
+✓ 1 draft PR created
+
+  Top of stack  #1
+  https://github.com/test/repo/pull/1
 ```
 
 ## Updating an Existing PR
@@ -99,15 +105,20 @@ $ # github: add-pr add-feature 42 main
 $ sc submit
 Submit plan:
 
-  ◯ main (base)
+  ◯ main         (base)
   │
-  ◉ add-feature (current) — update PR #42
+  ◉ add-feature  update PR #42
 
 ● 1 selected
 
-Pushing 'add-feature'...
+Submitting 1 branch to test/repo
 
-Updated 1 PR(s)
+  ● add-feature  #42
+
+✓ 1 updated
+
+  Top of stack  #42
+  https://github.com/test/repo/pull/42
 ```
 
 ## Submitting Through the Current Diff
@@ -131,24 +142,24 @@ $ git checkout feature-b > /dev/null 2>&1
 $ sc submit
 Submit plan:
 
-  ◯ main (base)
+  ◯ main        (base)
   │
-  ● feature-a — create PR
+  ● feature-a   create PR
   │
-  ◉ feature-b (current) — create PR
+  ◉ feature-b   create PR
   │
-  ◯ feature-c — not submitted
+  ◯ feature-c   not submitted
 
 ● 2 selected · ○ 1 upstack branch not selected
 
-Pushing 'feature-a'...
-  Creating PR for 'feature-a'...
-  Created PR #1: https://github.com/test/repo/pull/1
-Pushing 'feature-b'...
-  Creating PR for 'feature-b'...
-  Created PR #2: https://github.com/test/repo/pull/2
+Submitting 2 branches to test/repo
 
-Created 2 PR(s)
+  ● feature-a   #1
+  ● feature-b   #2
+
+✓ 2 PRs created
+
+  1 upstack branch not submitted · sc submit --stack for the whole stack
 ```
 
 ## Submitting a Stack of PRs
@@ -167,22 +178,23 @@ Created branch 'feature-b' from 'feature-a'
 $ sc submit --stack
 Submit plan:
 
-  ◯ main (base)
+  ◯ main        (base)
   │
-  ● feature-a — create PR
+  ● feature-a   create PR
   │
-  ◉ feature-b (current) — create PR
+  ◉ feature-b   create PR
 
 ● 2 selected
 
-Pushing 'feature-a'...
-  Creating PR for 'feature-a'...
-  Created PR #1: https://github.com/test/repo/pull/1
-Pushing 'feature-b'...
-  Creating PR for 'feature-b'...
-  Created PR #2: https://github.com/test/repo/pull/2
+Submitting 2 branches to test/repo
 
-Created 2 PR(s)
+  ● feature-a   #1
+  ● feature-b   #2
+
+✓ 2 PRs created
+
+  Top of stack  #2
+  https://github.com/test/repo/pull/2
 ```
 
 ## Skipping Merged PRs
@@ -203,21 +215,23 @@ Created branch 'feature-b' from 'feature-a'
 $ sc submit --stack
 Submit plan:
 
-  ◯ main (base)
+  ◯ main        (base)
   │
-  ● feature-a — skip; already merged
+  ● feature-a   merged
   │
-  ◉ feature-b (current) — create PR
+  ◉ feature-b   create PR
 
 ● 2 selected
 
-Pushing 'feature-a'...
-  Skipping 'feature-a' - already has a merged PR. Run 'sc sync' to clean up merged branches.
-Pushing 'feature-b'...
-  Creating PR for 'feature-b'...
-  Created PR #11: https://github.com/test/repo/pull/11
+Submitting 2 branches to test/repo
 
-Created 1 PR(s)
+  ◌ feature-a   merged
+  ● feature-b   #11
+
+✓ 1 PR created · 1 merged
+
+  Top of stack  #11
+  https://github.com/test/repo/pull/11
 ```
 
 ## Viewing PR Info in Branch List
@@ -233,17 +247,20 @@ Created branch 'add-feature' from 'main'
 $ sc submit
 Submit plan:
 
-  ◯ main (base)
+  ◯ main         (base)
   │
-  ◉ add-feature (current) — create PR
+  ◉ add-feature  create PR
 
 ● 1 selected
 
-Pushing 'add-feature'...
-  Creating PR for 'add-feature'...
-  Created PR #1: https://github.com/test/repo/pull/1
+Submitting 1 branch to test/repo
 
-Created 1 PR(s)
+  ● add-feature  #1
+
+✓ 1 PR created
+
+  Top of stack  #1
+  https://github.com/test/repo/pull/1
 $ sc ls
 ◉ add-feature #1 (current)
 │ Add feature
@@ -263,17 +280,20 @@ Created branch 'draft-feature' from 'main'
 $ sc submit --draft
 Submit plan:
 
-  ◯ main (base)
+  ◯ main           (base)
   │
-  ◉ draft-feature (current) — create PR
+  ◉ draft-feature  create PR
 
 ● 1 selected
 
-Pushing 'draft-feature'...
-  Creating PR for 'draft-feature'...
-  Created PR #1: https://github.com/test/repo/pull/1
+Submitting 1 branch to test/repo · draft
 
-Created 1 PR(s)
+  ● draft-feature  #1
+
+✓ 1 draft PR created
+
+  Top of stack  #1
+  https://github.com/test/repo/pull/1
 $ sc ls
 ◉ draft-feature #1 draft (current)
 │ Draft feature
@@ -296,22 +316,23 @@ Created branch 'feature-b' from 'feature-a'
 $ sc submit --stack
 Submit plan:
 
-  ◯ main (base)
+  ◯ main        (base)
   │
-  ● feature-a — create PR
+  ● feature-a   create PR
   │
-  ◉ feature-b (current) — create PR
+  ◉ feature-b   create PR
 
 ● 2 selected
 
-Pushing 'feature-a'...
-  Creating PR for 'feature-a'...
-  Created PR #1: https://github.com/test/repo/pull/1
-Pushing 'feature-b'...
-  Creating PR for 'feature-b'...
-  Created PR #2: https://github.com/test/repo/pull/2
+Submitting 2 branches to test/repo
 
-Created 2 PR(s)
+  ● feature-a   #1
+  ● feature-b   #2
+
+✓ 2 PRs created
+
+  Top of stack  #2
+  https://github.com/test/repo/pull/2
 $ sc ls
 ◉ feature-b #2 (current)
 │ Feature B
@@ -365,24 +386,29 @@ $ git checkout feature-b > /dev/null 2>&1
 $ sc submit --stack
 Submit plan:
 
-  ◯ main (base)
+  ◯ main        (base)
   │
-  ● feature-a — create PR
+  ● feature-a   create PR
   │
-  ◉ feature-b (current) — create PR
+  ◉ feature-b   create PR
 
 ● 2 selected
 
-Rebasing 'feature-b' onto 'feature-a'...
-Restacked feature-b.
-Pushing 'feature-a'...
-  Creating PR for 'feature-a'...
-  Created PR #1: https://github.com/test/repo/pull/1
-Pushing 'feature-b'...
-  Creating PR for 'feature-b'...
-  Created PR #2: https://github.com/test/repo/pull/2
+Restacking 1 branch
 
-Created 2 PR(s)
+  ● feature-b   rebased
+
+✓ 1 branch restacked
+Restacked feature-b.
+Submitting 2 branches to test/repo
+
+  ● feature-a   #1
+  ● feature-b   #2
+
+✓ 2 PRs created
+
+  Top of stack  #2
+  https://github.com/test/repo/pull/2
 ```
 
 ## Force Push
@@ -399,17 +425,20 @@ Created branch 'force-feature' from 'main'
 $ sc submit --force
 Submit plan:
 
-  ◯ main (base)
+  ◯ main           (base)
   │
-  ◉ force-feature (current) — create PR
+  ◉ force-feature  create PR
 
 ● 1 selected
 
-Pushing 'force-feature'...
-  Creating PR for 'force-feature'...
-  Created PR #1: https://github.com/test/repo/pull/1
+Submitting 1 branch to test/repo
 
-Created 1 PR(s)
+  ● force-feature  #1
+
+✓ 1 PR created
+
+  Top of stack  #1
+  https://github.com/test/repo/pull/1
 ```
 
 ## Submitting After Parent Branch Merged and Deleted
@@ -436,16 +465,20 @@ $ sc submit
 Parent 'feature-a' was merged into 'main', using as base.
 Submit plan:
 
-  ◯ feature-a (base)
+  ◯ feature-a   (base)
   │
-  ◉ feature-b (current) — update PR #2
+  ◉ feature-b   update PR #2
 
 ● 1 selected
 
-Pushing 'feature-b'...
-  Updating PR #2 base: feature-a -> main
+Submitting 1 branch to test/repo
 
-Updated 1 PR(s)
+  ● feature-b   #2 base→main
+
+✓ 1 updated
+
+  Top of stack  #2
+  https://github.com/test/repo/pull/2
 ```
 
 ## Error Handling
