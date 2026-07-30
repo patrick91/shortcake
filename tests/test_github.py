@@ -10,6 +10,7 @@ import respx
 from shortcake._github import (
     BranchGitHubInfo,
     GitHubClient,
+    NativeStack,
     get_github_token,
     get_repo_info,
     push_branch,
@@ -18,6 +19,40 @@ from tests._git_helpers import Repo, run_git, set_ref, set_remote
 
 # Save reference to real method before conftest autouse fixture patches it out
 _real_resolve_repo_identity = GitHubClient._resolve_repo_identity
+
+
+def _native_stack_json(
+    *,
+    number: int = 7,
+    pull_requests: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
+    if pull_requests is None:
+        pull_requests = [
+            {
+                "number": 10,
+                "state": "closed",
+                "draft": False,
+                "merged_at": "2026-07-30T12:00:00Z",
+                "head": {"ref": "foundation", "sha": "aaa111"},
+            },
+            {
+                "number": 11,
+                "state": "open",
+                "draft": True,
+                "merged_at": None,
+                "head": {"ref": "feature", "sha": "bbb222"},
+            },
+        ]
+    return {
+        "id": 9000 + number,
+        "number": number,
+        "node_id": f"S_stack_{number}",
+        "url": f"https://api.github.com/repos/owner/repo/stacks/{number}",
+        "base": {"ref": "main"},
+        "open": True,
+        "created_at": "2026-07-30T10:00:00Z",
+        "pull_requests": pull_requests,
+    }
 
 
 # Tests for get_github_token
@@ -1477,3 +1512,161 @@ def test_get_branch_github_info_merged_pr_fallback() -> None:
         pr_state="merged",
         check_status=None,
     )
+
+
+@respx.mock
+def test_pr_info_includes_native_stack_membership() -> None:
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 11,
+                    "html_url": "https://github.com/owner/repo/pull/11",
+                    "base": {"ref": "foundation"},
+                    "head": {"ref": "feature"},
+                    "title": "Feature",
+                    "body": "",
+                    "state": "open",
+                    "draft": False,
+                    "stack": {
+                        "id": 9007,
+                        "number": 7,
+                        "size": 2,
+                        "position": 2,
+                        "base": {"ref": "main", "sha": "abc123"},
+                    },
+                }
+            ],
+        )
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        pr = client.get_pr_for_branch("feature")
+
+    assert pr is not None
+    assert pr.head_ref == "feature"
+    assert pr.stack is not None
+    assert pr.stack.id == 9007
+    assert pr.stack.number == 7
+    assert pr.stack.size == 2
+    assert pr.stack.position == 2
+    assert pr.stack.base_ref == "main"
+    assert pr.stack.base_sha == "abc123"
+
+
+@respx.mock
+def test_list_native_stacks_and_filter_by_pull_request() -> None:
+    route = respx.get("https://api.github.com/repos/owner/repo/stacks").mock(
+        return_value=httpx.Response(200, json=[_native_stack_json()])
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        stacks = client.list_stacks(pull_request=11)
+
+    assert route.calls.last.request.url.params["pull_request"] == "11"
+    assert len(stacks) == 1
+    stack = stacks[0]
+    assert isinstance(stack, NativeStack)
+    assert stack.id == 9007
+    assert stack.number == 7
+    assert stack.node_id == "S_stack_7"
+    assert stack.base_ref == "main"
+    assert stack.is_open is True
+    assert stack.created_at == "2026-07-30T10:00:00Z"
+    assert stack.pr_numbers == [10, 11]
+    assert stack.open_pr_numbers == [11]
+    assert stack.pull_requests[0].is_open is False
+    assert stack.pull_requests[1].is_open is True
+    assert stack.pull_requests[1].is_draft is True
+    assert stack.pull_requests[1].head_ref == "feature"
+    assert stack.pull_requests[1].head_sha == "bbb222"
+
+
+@respx.mock
+def test_list_native_stacks_without_filter() -> None:
+    route = respx.get("https://api.github.com/repos/owner/repo/stacks").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        stacks = client.list_stacks()
+
+    assert stacks == []
+    assert "pull_request" not in route.calls.last.request.url.params
+
+
+@respx.mock
+def test_get_native_stack() -> None:
+    respx.get("https://api.github.com/repos/owner/repo/stacks/7").mock(
+        return_value=httpx.Response(200, json=_native_stack_json())
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        stack = client.get_stack(7)
+
+    assert stack is not None
+    assert stack.number == 7
+
+
+@respx.mock
+def test_get_native_stack_not_found() -> None:
+    respx.get("https://api.github.com/repos/owner/repo/stacks/404").mock(
+        return_value=httpx.Response(404, json={"message": "Not Found"})
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        stack = client.get_stack(404)
+
+    assert stack is None
+
+
+@respx.mock
+def test_create_native_stack() -> None:
+    route = respx.post("https://api.github.com/repos/owner/repo/stacks").mock(
+        return_value=httpx.Response(201, json=_native_stack_json())
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        stack = client.create_stack([10, 11])
+
+    assert stack.number == 7
+    assert route.calls.last.request.content == b'{"pull_requests":[10,11]}'
+
+
+@respx.mock
+def test_add_to_native_stack() -> None:
+    route = respx.post("https://api.github.com/repos/owner/repo/stacks/7/add").mock(
+        return_value=httpx.Response(200, json=_native_stack_json())
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        stack = client.add_to_stack(7, [11])
+
+    assert stack.number == 7
+    assert route.calls.last.request.content == b'{"pull_requests":[11]}'
+
+
+@respx.mock
+def test_unstack_dissolved_native_stack() -> None:
+    respx.post("https://api.github.com/repos/owner/repo/stacks/7/unstack").mock(
+        return_value=httpx.Response(204)
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        stack = client.unstack(7)
+
+    assert stack is None
+
+
+@respx.mock
+def test_unstack_returns_remaining_native_stack() -> None:
+    respx.post("https://api.github.com/repos/owner/repo/stacks/7/unstack").mock(
+        return_value=httpx.Response(200, json=_native_stack_json())
+    )
+
+    with GitHubClient("token", "owner", "repo") as client:
+        stack = client.unstack(7)
+
+    assert stack is not None
+    assert stack.number == 7

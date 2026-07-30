@@ -9,7 +9,13 @@ from rich.console import Console
 from rich.text import Text
 from typer.testing import CliRunner
 
-from shortcake._github import GitHubClient, PRInfo
+from shortcake._github import (
+    GitHubClient,
+    NativeStack,
+    NativeStackPullRequest,
+    PRInfo,
+    PullRequestStackMembership,
+)
 from shortcake._output import get_rich_toolkit
 from shortcake._pr_stack import (
     SHORTCAKE_URL,
@@ -118,6 +124,68 @@ def _plan_toolkit() -> MagicMock:
     toolkit = MagicMock()
     toolkit.console = Console(width=100, height=40)
     return toolkit
+
+
+def _native_stack(
+    entries: list[tuple[int, str, bool]],
+    *,
+    number: int = 7,
+) -> NativeStack:
+    return NativeStack(
+        id=9000 + number,
+        number=number,
+        node_id=f"STACK_{number}",
+        url=f"https://api.github.com/repos/owner/repo/stacks/{number}",
+        base_ref="main",
+        is_open=any(not merged for _, _, merged in entries),
+        created_at="2026-07-30T00:00:00Z",
+        pull_requests=tuple(
+            NativeStackPullRequest(
+                number=pr_number,
+                state="closed" if merged else "open",
+                is_draft=False,
+                merged_at="2026-07-30T00:00:00Z" if merged else None,
+                head_ref=branch,
+                head_sha=f"{pr_number:040x}",
+            )
+            for pr_number, branch, merged in entries
+        ),
+    )
+
+
+def _membership(number: int = 7, position: int = 1) -> PullRequestStackMembership:
+    return PullRequestStackMembership(
+        id=9000 + number,
+        number=number,
+        size=2,
+        position=position,
+        base_ref="main",
+        base_sha="abc",
+    )
+
+
+def _legacy_three_branch_prs() -> dict[str, PRInfo]:
+    branches = ["branch_a", "branch_b", "branch_c"]
+    pr_numbers = {"branch_a": 1, "branch_b": 2, "branch_c": 3}
+    bases = {"branch_a": "main", "branch_b": "branch_a", "branch_c": "branch_b"}
+    return {
+        branch: PRInfo(
+            number=pr_numbers[branch],
+            url=f"https://github.com/owner/repo/pull/{pr_numbers[branch]}",
+            base=bases[branch],
+            title=f"feat: {branch.replace('_', ' ')}",
+            body=_build_stack_section(
+                branches,
+                branch,
+                pr_numbers,
+                "owner",
+                {},
+            ),
+            state="open",
+            is_draft=False,
+        )
+        for branch in branches
+    }
 
 
 def test_submit_plan_renders_downward_and_dims_excluded_branches(
@@ -811,6 +879,8 @@ def test_submit_downstack_limits_push_and_pr_updates(
     }
     mock_client = MagicMock(spec=GitHubClient)
     mock_client.get_pr_for_branch.side_effect = prs.get
+    mock_client.list_stacks.return_value = []
+    mock_client.create_stack.return_value.number = 9
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
     restack_mock = MagicMock(return_value=RestackResult(restacked_branches=[]))
@@ -836,7 +906,10 @@ def test_submit_downstack_limits_push_and_pr_updates(
         for call in mock_client.update_pr.call_args_list
         if "body" in call.kwargs
     ]
-    assert body_update_numbers == [1, 2]
+    assert body_update_numbers == []
+    mock_client.create_stack.assert_called_once_with([1, 2])
+    assert result.native_stack is not None
+    assert result.native_stack.stack_number == 9
 
     captured = capsys.readouterr()
     assert "Submit plan:" in captured.out
@@ -844,13 +917,79 @@ def test_submit_downstack_limits_push_and_pr_updates(
     assert _row(captured.out, "branch_b") == "◉ branch_b update PR #2"
     assert _row(captured.out, "branch_a") == "● branch_a update PR #1"
 
-    updated_bodies = [
+
+def test_submit_downstack_keeps_legacy_stack_until_full_migration(
+    repo_with_three_branch_stack: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A legacy stack is not partially migrated from its middle branch."""
+    setup_origin_remote(repo_with_three_branch_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    prs = _legacy_three_branch_prs()
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.side_effect = prs.get
+    mock_client.list_stacks.return_value = []
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = _submit(repo_with_three_branch_stack, submit_stack=False)
+
+    mock_client.create_stack.assert_not_called()
+    assert result.native_stack is not None
+    assert result.native_stack.action.value == "fallback"
+    assert result.native_stack.message == (
+        "The existing Shortcake stack includes unselected PR #3; "
+        "run 'sc submit --stack' to migrate the whole stack. "
+        "The managed PR-body map was kept as a compatibility fallback."
+    )
+
+    body_updates = {
+        call.args[0]: call.kwargs["body"]
+        for call in mock_client.update_pr.call_args_list
+        if "body" in call.kwargs
+    }
+    assert set(body_updates) == {1, 2}
+    assert all("#3" in body for body in body_updates.values())
+    assert all(STACK_START_MARKER in body for body in body_updates.values())
+
+
+def test_submit_stack_migrates_complete_legacy_stack(
+    repo_with_three_branch_stack: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Selecting every open layer permits native migration and map cleanup."""
+    setup_origin_remote(repo_with_three_branch_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+
+    prs = _legacy_three_branch_prs()
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.side_effect = prs.get
+    mock_client.list_stacks.return_value = []
+    mock_client.create_stack.return_value.number = 9
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=mock_client),
+    ):
+        result = _submit(repo_with_three_branch_stack, submit_stack=True)
+
+    mock_client.create_stack.assert_called_once_with([1, 2, 3])
+    assert result.native_stack is not None
+    assert result.native_stack.synced
+    body_updates = [
         call.kwargs["body"]
         for call in mock_client.update_pr.call_args_list
         if "body" in call.kwargs
     ]
-    assert updated_bodies
-    assert all("branch_c" not in body for body in updated_bodies)
+    assert body_updates
+    assert all(STACK_START_MARKER not in body for body in body_updates)
 
 
 def test_submit_downstack_creates_parent_before_current(
@@ -880,6 +1019,8 @@ def test_submit_downstack_creates_parent_before_current(
     mock_client.get_pr_for_branch.side_effect = created_prs.get
     mock_client.has_merged_pr.return_value = False
     mock_client.create_pr.side_effect = create_pr
+    mock_client.list_stacks.return_value = []
+    mock_client.create_stack.return_value.number = 9
     mock_client.__enter__ = MagicMock(return_value=mock_client)
     mock_client.__exit__ = MagicMock(return_value=False)
 
@@ -912,9 +1053,8 @@ def test_submit_downstack_creates_parent_before_current(
         for call in mock_client.update_pr.call_args_list
         if "body" in call.kwargs
     ]
-    assert updated_bodies
-    assert all("branch_c" not in body for body in updated_bodies)
-    assert all("(no PR)" not in body for body in updated_bodies)
+    assert updated_bodies == []
+    mock_client.create_stack.assert_called_once_with([1, 2])
 
 
 def test_submit_dry_run_shows_create_new_pr(
@@ -1601,6 +1741,239 @@ def test_submit_stack_body_update_error_non_fatal(
         result = _submit(repo_with_tracked_feature)
 
     assert result.branch_results[0].action == PRAction.UPDATED
+
+
+def test_submit_reads_native_history_and_keeps_exact_stack(
+    repo_with_stack: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup_origin_remote(repo_with_stack)
+    monkeypatch.setenv("GH_TOKEN", "token")
+    prs = {
+        "branch_a": PRInfo(
+            1,
+            "https://github.com/owner/repo/pull/1",
+            "main",
+            "a",
+            "",
+            "open",
+            False,
+            stack=_membership(position=1),
+        ),
+        "branch_b": PRInfo(
+            2,
+            "https://github.com/owner/repo/pull/2",
+            "branch_a",
+            "b",
+            "",
+            "open",
+            False,
+            stack=_membership(position=2),
+        ),
+    }
+    native = _native_stack(
+        [(99, "merged-base", True), (1, "branch_a", False), (2, "branch_b", False)]
+    )
+    client = MagicMock(spec=GitHubClient)
+    client.get_pr_for_branch.side_effect = prs.get
+    client.list_stacks.return_value = [native]
+    client.__enter__.return_value = client
+    client.__exit__.return_value = False
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=client),
+    ):
+        result = _submit(repo_with_stack, submit_stack=True)
+
+    assert result.native_stack is not None
+    assert result.native_stack.action.value == "unchanged"
+    client.create_stack.assert_not_called()
+    client.unstack.assert_not_called()
+
+
+def test_submit_refuses_to_recreate_stack_with_unknown_pr(
+    repo_with_stack: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup_origin_remote(repo_with_stack)
+    monkeypatch.setenv("GH_TOKEN", "token")
+    prs = {
+        "branch_a": PRInfo(1, "u1", "main", "a", "", "open", False),
+        "branch_b": PRInfo(2, "u2", "branch_a", "b", "", "open", False),
+    }
+    remote = _native_stack([(1, "branch_a", False), (99, "external", False)])
+    client = MagicMock(spec=GitHubClient)
+    client.get_pr_for_branch.side_effect = prs.get
+    client.list_stacks.return_value = [remote]
+    client.__enter__.return_value = client
+    client.__exit__.return_value = False
+
+    with (
+        patch("shortcake.commands.submit.GitHubClient", return_value=client),
+        patch("shortcake.commands.submit.push_branch") as push,
+        pytest.raises(SubmitError, match="unselected PRs #99"),
+    ):
+        _submit(repo_with_stack, submit_stack=True)
+
+    push.assert_not_called()
+    client.unstack.assert_not_called()
+
+
+def test_submit_does_not_change_native_bases_when_endpoint_is_unavailable(
+    repo_with_stack: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup_origin_remote(repo_with_stack)
+    monkeypatch.setenv("GH_TOKEN", "token")
+    prs = {
+        "branch_a": PRInfo(
+            1, "u1", "main", "a", "", "open", False, stack=_membership(position=1)
+        ),
+        "branch_b": PRInfo(
+            2, "u2", "main", "b", "", "open", False, stack=_membership(position=2)
+        ),
+    }
+    response = httpx.Response(
+        404,
+        request=httpx.Request("GET", "https://api.github.com/stacks"),
+    )
+    client = MagicMock(spec=GitHubClient)
+    client.get_pr_for_branch.side_effect = prs.get
+    client.list_stacks.side_effect = httpx.HTTPStatusError(
+        "missing",
+        request=response.request,
+        response=response,
+    )
+    client.__enter__.return_value = client
+    client.__exit__.return_value = False
+
+    with (
+        patch("shortcake.commands.submit.GitHubClient", return_value=client),
+        patch("shortcake.commands.submit.push_branch") as push,
+        pytest.raises(SubmitError, match="bases were left unchanged"),
+    ):
+        _submit(repo_with_stack, submit_stack=True)
+
+    push.assert_not_called()
+
+
+def test_submit_uses_body_fallback_when_stack_probe_is_unavailable(
+    repo_with_stack: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    setup_origin_remote(repo_with_stack)
+    monkeypatch.setenv("GH_TOKEN", "token")
+    prs = {
+        "branch_a": PRInfo(1, "u1", "main", "a", "", "open", False),
+        "branch_b": PRInfo(2, "u2", "branch_a", "b", "", "open", False),
+    }
+    response = httpx.Response(
+        404,
+        request=httpx.Request("GET", "https://api.github.com/stacks"),
+    )
+    client = MagicMock(spec=GitHubClient)
+    client.get_pr_for_branch.side_effect = prs.get
+    client.list_stacks.side_effect = httpx.HTTPStatusError(
+        "missing",
+        request=response.request,
+        response=response,
+    )
+    client.__enter__.return_value = client
+    client.__exit__.return_value = False
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=client),
+    ):
+        result = _submit(repo_with_stack, submit_stack=True)
+
+    assert result.native_stack is not None
+    assert result.native_stack.action.value == "unavailable"
+    assert result.native_stack.message == (
+        "Stacked pull requests are not available for this repository yet. "
+        "The managed PR-body map was kept as a compatibility fallback."
+    )
+    assert any("body" in call.kwargs for call in client.update_pr.call_args_list)
+    captured = capsys.readouterr()
+    assert (
+        "GitHub stack: Stacked pull requests are not available for this repository "
+        "yet. "
+        "The managed PR-body map was kept as a compatibility fallback." in captured.err
+    )
+
+
+def test_submit_uses_body_fallback_for_multiple_remote_stacks(
+    repo_with_stack: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup_origin_remote(repo_with_stack)
+    monkeypatch.setenv("GH_TOKEN", "token")
+    prs = {
+        "branch_a": PRInfo(1, "u1", "main", "a", "", "open", False),
+        "branch_b": PRInfo(2, "u2", "branch_a", "b", "", "open", False),
+    }
+    first = _native_stack([(1, "branch_a", False)], number=7)
+    second = _native_stack([(2, "branch_b", False)], number=8)
+    client = MagicMock(spec=GitHubClient)
+    client.get_pr_for_branch.side_effect = prs.get
+    client.list_stacks.side_effect = [[first], [second]]
+    client.__enter__.return_value = client
+    client.__exit__.return_value = False
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=client),
+    ):
+        result = _submit(repo_with_stack)
+
+    assert result.native_stack is not None
+    assert result.native_stack.action.value == "fallback"
+    assert "multiple" in (result.native_stack.message or "")
+    assert "managed PR-body map was kept" in (result.native_stack.message or "")
+
+
+def test_submit_uses_body_fallback_for_fork(
+    repo_with_fork: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    setup_origin_remote(repo_with_fork)
+    monkeypatch.setenv("GH_TOKEN", "token")
+    created: dict[str, PRInfo] = {}
+
+    def create_pr(**kwargs: object) -> PRInfo:
+        branch = str(kwargs["head"])
+        pull_request = PRInfo(
+            len(created) + 1,
+            f"u{len(created) + 1}",
+            str(kwargs["base"]),
+            branch,
+            "",
+            "open",
+            False,
+        )
+        created[branch] = pull_request
+        return pull_request
+
+    client = MagicMock(spec=GitHubClient)
+    client.get_pr_for_branch.side_effect = created.get
+    client.has_merged_pr.return_value = False
+    client.create_pr.side_effect = create_pr
+    client.__enter__.return_value = client
+    client.__exit__.return_value = False
+
+    with (
+        patch("shortcake.commands.submit.push_branch", return_value=(True, None)),
+        patch("shortcake.commands.submit.GitHubClient", return_value=client),
+    ):
+        result = _submit(repo_with_fork, submit_stack=True)
+
+    assert result.native_stack is not None
+    assert result.native_stack.action.value == "fallback"
+    assert "Shortcake tree is non-linear" in (result.native_stack.message or "")
+    assert "managed PR-body map was kept" in (result.native_stack.message or "")
+    client.create_stack.assert_not_called()
 
 
 # CLI tests

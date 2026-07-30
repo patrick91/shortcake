@@ -118,14 +118,15 @@ Pushing 'add-password-reset'...
 Created 2 PR(s)
 ```
 
-Each PR description gets a stack map showing the order and which PR you're looking at, and
-`sc ls` now shows the PR numbers:
+For a linear stack, Shortcake registers the PR sequence with GitHub's native
+stack API, so GitHub renders the stack header and enables stack-wide merge and
+rebase actions. `sc ls` shows the PR numbers and native positions:
 
 ```console
-$ sc ls
-◉ add-password-reset #2 (current)
+$ sc ls --refresh
+◉ add-password-reset #2 stack #1 2/2 (current)
 │
-◯ add-login-form #1
+◯ add-login-form #1 stack #1 1/2
 │
 ◯ main
 ```
@@ -133,7 +134,10 @@ $ sc ls
 > `sc submit` normally needs a GitHub token (from `gh auth login`, or `GH_TOKEN`/`GITHUB_TOKEN`)
 > and an `origin` remote pointing at GitHub. `sc submit --stealth` only pushes branches, so it
 > does not need the GitHub API token. Submit restacks branches before pushing and uses
-> `--force-with-lease` so it won't clobber others' work.
+> `--force-with-lease` so it won't clobber others' work. GitHub native stacks require a
+> linear sequence of branches in one repository. Non-linear Shortcake trees,
+> repositories where stacked pull requests are not available yet, and stacks outside
+> GitHub's limits keep the managed PR-body map as a compatibility fallback.
 
 That's the core loop: **`create` → `ls` → `submit`**. The rest of the CLI is there when you
 need to move, split, restack, or repair branches.
@@ -148,6 +152,21 @@ branching with any Git tooling — there's nothing else to keep in sync.
 Already started a branch the normal way? `sc adopt` brings an existing branch into a stack
 instead of recreating it.
 
+The commit trailers remain Shortcake's local source of truth. On submit,
+GitHub's native stack resource is the remote representation: Shortcake creates
+it, appends new top PRs, and safely recreates it for whole-stack
+reorders/removals. A scoped submit will not dismantle a stack containing
+unselected PRs. Migrating an existing PR-body stack is atomic too: when a
+scoped submit leaves open legacy layers out, Shortcake keeps the body map and
+points to `sc submit --stack` to migrate the whole stack.
+
+To bring a stack created on GitHub onto a new machine, run `sc checkout <PR>`.
+When that PR belongs to a native stack, Shortcake fetches every open branch,
+preserves correctly tracked local work, and writes the matching trailers before
+checking out the requested branch. It will not overwrite a divergent branch
+that needs re-parenting. If GitHub rebases a stack server-side, run
+`sc pull` before continuing local work; remote branch refs win by default.
+
 ## Commands
 
 | | |
@@ -156,7 +175,7 @@ instead of recreating it.
 | **Edit the stack** | `modify` · `fold` · `reorder` · `move` · `split` (move files into a new stacked branch) |
 | **Restack** | `restack` (rebase children when a parent changes) · `continue` · `abort` (resume/abandon after a conflict) |
 | **Navigate & inspect** | `up` · `down` · `top` · `bottom` · `checkout` (alias `co`) · `ls` · `log` |
-| **GitHub & remote** | `submit` (open/update stacked PRs) · `sync` · `pull` · `review` |
+| **GitHub & remote** | `submit` (open/update and register native stacks) · `sync` · `pull` · `review` |
 | **Web UI** | `ui` |
 
 Run `sc <command> --help` for the options on any command.

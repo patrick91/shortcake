@@ -9,9 +9,15 @@ import pytest
 import respx
 from typer.testing import CliRunner
 
+from shortcake._github import GitHubClient
+from shortcake._native_stack_checkout import (
+    NativeStackCheckoutError,
+    NativeStackCheckoutResult,
+)
 from shortcake.cli import app
 from shortcake.commands.checkout import (
     CheckoutError,
+    CheckoutResult,
     _checkout,
     _create_branch_from_remote,
     _fetch_branch,
@@ -141,6 +147,44 @@ def test_checkout_from_remote_create_branch_fails(temp_repo: Repo) -> None:
 # Tests for _checkout with PR numbers
 
 
+def _stack_membership() -> dict[str, object]:
+    return {
+        "id": 9007,
+        "number": 7,
+        "size": 2,
+        "position": 2,
+        "base": {"ref": "main", "sha": "a" * 40},
+    }
+
+
+def _native_stack_response() -> dict[str, object]:
+    return {
+        "id": 9007,
+        "number": 7,
+        "node_id": "STACK_7",
+        "url": "https://api.github.com/repos/owner/repo/stacks/7",
+        "base": {"ref": "main"},
+        "open": True,
+        "created_at": "2026-07-30T00:00:00Z",
+        "pull_requests": [
+            {
+                "number": 41,
+                "state": "open",
+                "draft": False,
+                "merged_at": None,
+                "head": {"ref": "lower", "sha": "b" * 40},
+            },
+            {
+                "number": 42,
+                "state": "open",
+                "draft": False,
+                "merged_at": None,
+                "head": {"ref": "upper", "sha": "c" * 40},
+            },
+        ],
+    }
+
+
 @respx.mock
 def test_checkout_by_pr_number(
     temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
@@ -176,6 +220,180 @@ def test_checkout_by_pr_number(
 
     assert result.branch == "pr-feature"
     assert result.pr_number == 42
+
+
+@respx.mock
+def test_checkout_by_pr_number_materializes_native_stack(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    respx.get("https://api.github.com/repos/owner/repo/pulls/42").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "number": 42,
+                "html_url": "https://github.com/owner/repo/pull/42",
+                "base": {"ref": "lower"},
+                "head": {"ref": "upper"},
+                "title": "Upper",
+                "body": "",
+                "state": "open",
+                "draft": False,
+                "stack": _stack_membership(),
+            },
+        )
+    )
+    respx.get(
+        "https://api.github.com/repos/owner/repo/stacks",
+        params={"pull_request": 42},
+    ).mock(return_value=httpx.Response(200, json=[_native_stack_response()]))
+    stack_result = NativeStackCheckoutResult(
+        stack_number=7,
+        branches=["lower", "upper"],
+        created_branches=["lower", "upper"],
+        rewritten_branches=["lower", "upper"],
+    )
+
+    with patch(
+        "shortcake.commands.checkout.checkout_native_stack",
+        return_value=stack_result,
+    ) as materialize:
+        result = _checkout(temp_repo, "42", force=True)
+
+    assert result == CheckoutResult(
+        branch="upper",
+        from_remote=True,
+        pr_number=42,
+        native_stack_number=7,
+        stack_branches=["lower", "upper"],
+    )
+    materialize.assert_called_once()
+    assert materialize.call_args.kwargs == {"force": True}
+
+
+@respx.mock
+def test_checkout_native_membership_without_stack_falls_back_to_pr_branch(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    set_ref(temp_repo, "refs/heads/upper", str(temp_repo.head.target).encode())
+    respx.get("https://api.github.com/repos/owner/repo/pulls/42").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "number": 42,
+                "html_url": "https://github.com/owner/repo/pull/42",
+                "base": {"ref": "lower"},
+                "head": {"ref": "upper"},
+                "title": "Upper",
+                "body": "",
+                "state": "open",
+                "draft": False,
+                "stack": _stack_membership(),
+            },
+        )
+    )
+    respx.get(
+        "https://api.github.com/repos/owner/repo/stacks",
+        params={"pull_request": 42},
+    ).mock(return_value=httpx.Response(200, json=[]))
+
+    result = _checkout(temp_repo, "42")
+
+    assert result.branch == "upper"
+    assert result.native_stack_number is None
+
+
+@respx.mock
+def test_checkout_native_stack_selects_top_for_closed_requested_pr(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    respx.get("https://api.github.com/repos/owner/repo/pulls/40").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "number": 40,
+                "html_url": "https://github.com/owner/repo/pull/40",
+                "base": {"ref": "main"},
+                "head": {"ref": "merged-lower"},
+                "title": "Merged lower",
+                "body": "",
+                "state": "closed",
+                "draft": False,
+                "stack": _stack_membership(),
+            },
+        )
+    )
+    respx.get(
+        "https://api.github.com/repos/owner/repo/stacks",
+        params={"pull_request": 40},
+    ).mock(return_value=httpx.Response(200, json=[_native_stack_response()]))
+
+    with patch(
+        "shortcake.commands.checkout.checkout_native_stack",
+        return_value=NativeStackCheckoutResult(7, ["lower", "upper"]),
+    ):
+        result = _checkout(temp_repo, "40")
+
+    assert result.branch == "upper"
+
+
+@respx.mock
+def test_checkout_native_stack_error_is_checkout_error(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    respx.get("https://api.github.com/repos/owner/repo/pulls/42").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "number": 42,
+                "html_url": "https://github.com/owner/repo/pull/42",
+                "base": {"ref": "lower"},
+                "head": {"ref": "upper"},
+                "title": "Upper",
+                "body": "",
+                "state": "open",
+                "draft": False,
+                "stack": _stack_membership(),
+            },
+        )
+    )
+    respx.get(
+        "https://api.github.com/repos/owner/repo/stacks",
+        params={"pull_request": 42},
+    ).mock(return_value=httpx.Response(200, json=[_native_stack_response()]))
+
+    with (
+        patch(
+            "shortcake.commands.checkout.checkout_native_stack",
+            side_effect=NativeStackCheckoutError("local branch diverged"),
+        ),
+        pytest.raises(CheckoutError, match="local branch diverged"),
+    ):
+        _checkout(temp_repo, "42")
+
+
+def test_checkout_by_pr_number_network_error(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    client = MagicMock(spec=GitHubClient)
+    client.get_pr_by_number.side_effect = httpx.RequestError("offline")
+    client.__enter__.return_value = client
+    client.__exit__.return_value = False
+
+    with (
+        patch("shortcake.commands.checkout.GitHubClient", return_value=client),
+        pytest.raises(CheckoutError, match="Network error: offline"),
+    ):
+        _checkout(temp_repo, "42")
 
 
 @respx.mock
@@ -436,6 +654,53 @@ def test_checkout_cli_pr_output(
 
     assert result.exit_code == 0
     assert "Checked out PR #42 (pr-feature)" in result.output
+
+
+def test_checkout_cli_native_stack_output_and_force(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(Path(temp_repo.workdir))
+    with patch(
+        "shortcake.commands.checkout._checkout",
+        return_value=CheckoutResult(
+            branch="upper",
+            from_remote=True,
+            pr_number=42,
+            native_stack_number=7,
+            stack_branches=["lower", "upper"],
+        ),
+    ) as run_checkout:
+        result = runner.invoke(app, ["checkout", "42", "--force"])
+
+    assert result.exit_code == 0
+    assert (
+        "Checked out PR #42 (upper) with GitHub stack #7 (2 branches)" in result.output
+    )
+    run_checkout.assert_called_once()
+    called_repo, called_target = run_checkout.call_args.args
+    assert Path(called_repo.workdir).resolve() == Path(temp_repo.workdir).resolve()
+    assert called_target == "42"
+    assert run_checkout.call_args.kwargs == {"force": True}
+
+
+def test_checkout_cli_native_stack_conflict_exits_one(
+    temp_repo: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(Path(temp_repo.workdir))
+    with patch(
+        "shortcake.commands.checkout._checkout",
+        return_value=CheckoutResult(
+            branch="upper",
+            pr_number=42,
+            native_stack_number=7,
+            stack_branches=["lower", "upper"],
+            conflict_branch="lower",
+        ),
+    ):
+        result = runner.invoke(app, ["checkout", "42"])
+
+    assert result.exit_code == 1
+    assert "Checked out PR" not in result.output
 
 
 @respx.mock

@@ -57,11 +57,14 @@ def _abort(repo: Repo) -> AbortResult:
                 err=True,
             )
 
-    # Clean up state
-    state.delete(repo)
-
     # Return to original branch
     git.switch_branch(repo, state.original_branch, force=True)
+
+    for branch in state.created_branches:
+        git.delete_branch(repo, branch)
+
+    # Clean up state
+    state.delete(repo)
 
     return AbortResult(restored_branches=restored)
 

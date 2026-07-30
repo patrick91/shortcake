@@ -605,6 +605,24 @@ def test_render_pr_number() -> None:
     assert "◉ feature #123 (current)" in output
 
 
+def test_render_and_serialize_native_stack_membership() -> None:
+    child = BranchNode(
+        name="feature",
+        pr_number=123,
+        native_stack_number=7,
+        native_stack_position=2,
+        native_stack_size=3,
+    )
+    tree = StackTree(roots=[child])
+
+    assert "feature #123 [dim]stack #7 2/3[/]" in tree.render()
+    assert child.to_data()["pr"]["stack"] == {
+        "number": 7,
+        "position": 2,
+        "size": 3,
+    }
+
+
 def test_render_pr_draft() -> None:
     """Test rendering branch with draft PR."""
     child = BranchNode(name="feature", is_current=True, pr_number=456, pr_is_draft=True)

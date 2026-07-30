@@ -7,7 +7,7 @@ The `sc submit` command pushes the current branch and its downstack ancestors, t
 1. Pushes branches from the bottom of the stack through the current branch, or the whole stack with `--stack`, to origin
 2. Creates PRs for branches that don't have them
 3. Updates PR bases when parents change
-4. Adds stack visualization to PR descriptions
+4. Registers linear sequences as native GitHub stacks (with a PR-body fallback)
 
 ## Prerequisites
 
@@ -160,7 +160,13 @@ Submitting 2 branches to test/repo
 ✓ 2 PRs created
 
   1 upstack branch not submitted · sc submit --stack for the whole stack
+GitHub stack #1 created.
 ```
+
+If the PRs already use Shortcake's managed body map, migration to GitHub's
+native representation is atomic. Submitting from the middle keeps the complete
+body map and asks you to run `sc submit --stack`; selecting the whole stack
+migrates every open layer together.
 
 ## Submitting a Stack of PRs
 
@@ -195,6 +201,9 @@ Submitting 2 branches to test/repo
 
   Top of stack  #2
   https://github.com/test/repo/pull/2
+GitHub stack #1 created.
+$ # github: show-stacks
+stack #1: #1, #2
 ```
 
 ## Skipping Merged PRs
@@ -333,20 +342,23 @@ Submitting 2 branches to test/repo
 
   Top of stack  #2
   https://github.com/test/repo/pull/2
+GitHub stack #1 created.
 $ sc ls
-◉ feature-b #2 (current)
+◉ feature-b #2 stack #1 2/2 (current)
 │ Feature B
 │
-◯ feature-a #1
+◯ feature-a #1 stack #1 1/2
 │ Feature A
 │
 ◯ main
   Initial commit
 ```
 
-## Stack Visualization
+## Stack Visualization Fallback
 
-When submitting a stack, each PR description is automatically updated with a stack visualization:
+GitHub renders a native stack header for linear stacks. If stacked pull requests
+are not available for the repository yet, the Shortcake tree is non-linear, or its
+size is unsupported, Shortcake falls back to a managed PR-body visualization:
 
 ```markdown
 <!-- shortcake:start -->
@@ -408,6 +420,7 @@ Submitting 2 branches to test/repo
 
   Top of stack  #2
   https://github.com/test/repo/pull/2
+GitHub stack #1 created.
 ```
 
 ## Force Push

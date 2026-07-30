@@ -159,11 +159,16 @@ def _continue(
 
         restacked.append(step.branch)
 
-    # Success - clean up state
-    state.delete(repo)
+    # Imported stacks finish on the branch selected by the requested PR.
+    # Other restack operations return to the branch where they started.
+    final_branch = state.completion_branch or state.original_branch
+    try:
+        git.switch_branch(repo, final_branch, force=True)
+    except ValueError as error:
+        raise ContinueError(str(error)) from None
 
-    # Return to original branch
-    git.switch_branch(repo, state.original_branch, force=True)
+    # Success - clean up state after the final checkout is durable.
+    state.delete(repo)
 
     return ContinueResult(restacked_branches=restacked, skipped_empty=any_skipped_empty)
 

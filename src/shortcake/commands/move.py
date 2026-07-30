@@ -38,6 +38,7 @@ class MoveResult:
     new_parent: str
     restacked_children: list[str] = field(default_factory=list)
     conflict_branch: str | None = None
+    native_stack_pending: bool = False
 
 
 def _sync_prs_after_move(
@@ -45,24 +46,24 @@ def _sync_prs_after_move(
     branch: str,
     old_parent: str,
     new_parent: str,
-) -> None:
+) -> bool:
     """Best-effort PR base/body sync after a successful move."""
     if not git.has_remote(repo, "origin"):
-        return
+        return False
 
     token = get_github_token()
     if not token:
-        return
+        return False
 
     repo_info = get_repo_info(repo)
     if not repo_info:
-        return
+        return False
 
     owner, repo_name = repo_info
 
     try:
         with GitHubClient(token, owner, repo_name) as gh:
-            _sync_pr_descriptions_for_branches(
+            return _sync_pr_descriptions_for_branches(
                 repo,
                 gh,
                 owner,
@@ -71,7 +72,7 @@ def _sync_prs_after_move(
             )
     except (httpx.HTTPStatusError, httpx.RequestError):
         # Keep move as a local-first operation even if GitHub sync fails.
-        pass
+        return False
 
 
 def _move(
@@ -242,13 +243,14 @@ def _move(
     # Return to original branch
     git.switch_branch(repo, current_branch, force=True)
 
-    _sync_prs_after_move(repo, branch, old_parent, parent)
+    native_stack_pending = _sync_prs_after_move(repo, branch, old_parent, parent)
 
     return MoveResult(
         branch=branch,
         old_parent=old_parent,
         new_parent=parent,
         restacked_children=restacked_children,
+        native_stack_pending=native_stack_pending,
     )
 
 
@@ -286,3 +288,8 @@ def move(
         )
         if result.restacked_children:
             typer.echo(f"Restacked {len(result.restacked_children)} child branch(es).")
+        if result.native_stack_pending:
+            typer.echo(
+                "GitHub's native stack still has the old order. "
+                "Run 'sc submit --stack' to recreate it."
+            )
