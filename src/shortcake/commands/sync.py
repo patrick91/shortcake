@@ -12,6 +12,15 @@ from shortcake._cache import update_pr_cache
 from shortcake._exceptions import ShortcakeError
 from shortcake._git._core import Repo
 from shortcake._github import GitHubClient, get_github_token, get_repo_info
+from shortcake._output import ShortcakeRichToolkit, get_rich_toolkit
+from shortcake.commands._sync_review import (
+    CLOSED,
+    MERGED,
+    SQUASH_MERGED,
+    StaleBranch,
+    pick_cleanup,
+    selected_branches,
+)
 from shortcake.commands.restack import (
     RestackResult,
     _restack,
@@ -29,20 +38,6 @@ class SyncError(ShortcakeError):
 def _stdin_is_interactive() -> bool:
     """Whether stdin can answer prompts (a real terminal)."""
     return sys.stdin.isatty()
-
-
-def _confirm_delete(branch: str, question: str) -> bool:
-    """Ask before deleting a branch; never block when stdin isn't a terminal.
-
-    In non-interactive runs (scripts, agents, CI) the branch is kept and a
-    hint points at --yes, instead of a prompt that would hang or abort.
-    """
-    if not _stdin_is_interactive():
-        typer.echo(f"Keeping '{branch}' (non-interactive; use --yes to delete)")
-        return False
-
-    response = typer.prompt(question, default="n")
-    return response.lower() in ("y", "yes")
 
 
 @dataclass
@@ -164,15 +159,6 @@ def _other_worktrees_for_branch(repo: Repo, branch: str) -> list[Path]:
     return sorted(paths, key=str)  # type: ignore[invalid-return-type]
 
 
-def _show_dry_run_worktree_removals(repo: Repo, branch: str) -> None:
-    """Show worktrees that would be removed with a branch."""
-    for path in _other_worktrees_for_branch(repo, branch):
-        typer.echo(
-            f"Would remove worktree '{git.format_worktree_path(path)}' "
-            f"for branch '{branch}'"
-        )
-
-
 def _remove_branch_worktrees(repo: Repo, branch: str, result: SyncResult) -> bool:
     """Remove all clean non-current worktrees for branch."""
     all_removed = True
@@ -258,6 +244,8 @@ class _GitHubBranchStatus:
 
     merged: list[str] = field(default_factory=list)
     closed: list[str] = field(default_factory=list)
+    pr_numbers: dict[str, int] = field(default_factory=dict)
+    """Branch -> PR number, so the review can name the PR it came from."""
 
 
 def _detect_github_stale_branches(
@@ -295,6 +283,7 @@ def _detect_github_stale_branches(
                     if not closed_num:
                         continue
                     pr_url = f"https://github.com/{owner}/{repo_name}/pull/{closed_num}"
+                    result.pr_numbers[branch] = closed_num
                     if is_merged:
                         result.merged.append(branch)
                         update_pr_cache(
@@ -311,6 +300,89 @@ def _detect_github_stale_branches(
         pass
 
     return result
+
+
+def _collect_stale(
+    repo: Repo, trunk: str, tracked_branches: list[str]
+) -> list[StaleBranch]:
+    """Every deletion candidate, gathered before anything is asked or deleted.
+
+    The old flow interleaved detection with three separate `[y/n]` loops, so
+    you answered about one branch without seeing the others. Gathering first is
+    what makes a single review possible.
+    """
+    local_merged = [
+        b for b in git.get_merged_branches(repo, tracked_branches, trunk) if b != trunk
+    ]
+    github = _detect_github_stale_branches(repo, tracked_branches, local_merged)
+
+    def build(branch: str, reason: str) -> StaleBranch:
+        return StaleBranch(
+            branch=branch,
+            reason=reason,
+            pr=github.pr_numbers.get(branch),
+            worktrees=[
+                git.format_worktree_path(path)
+                for path in _other_worktrees_for_branch(repo, branch)
+            ],
+            # Trustworthy only because fetch prunes; a stale remote-tracking
+            # ref would report a deleted branch as still pushed.
+            pushed=git.get_remote_ref(repo, f"origin/{branch}") is not None,
+        )
+
+    stale = [
+        build(b, MERGED) for b in _topological_sort_for_deletion(repo, local_merged)
+    ]
+    stale += [
+        build(b, SQUASH_MERGED)
+        for b in _topological_sort_for_deletion(repo, github.merged)
+    ]
+    stale += [
+        build(b, CLOSED) for b in _topological_sort_for_deletion(repo, github.closed)
+    ]
+    return stale
+
+
+def _movers_for(repo: Repo, going: list[str]) -> list[str]:
+    """Surviving tracked branches whose parent is being deleted."""
+    doomed = set(going)
+    all_local = set(git.get_all_local_branches(repo))
+    branch_heads = {b: git.get_branch_head(repo, b) for b in all_local}
+    out = []
+    for branch in git.get_tracked_branches(repo):
+        if branch in doomed:
+            continue
+        parent = git.get_branch_parent(repo, branch, all_local, branch_heads)
+        if parent in doomed:
+            out.append(branch)
+    return out
+
+
+def _ask_cleanup(
+    repo: Repo,
+    toolkit: ShortcakeRichToolkit,
+    stale: list[StaleBranch],
+    trunk: str,
+    trunk_note: str | None,
+) -> list[str]:
+    """Run the review and return the branches to delete."""
+    repo_info = get_repo_info(repo)
+    target = "/".join(repo_info) if repo_info else None
+    scope = pick_cleanup(
+        toolkit.console,
+        stale,
+        _movers_for(repo, [s.branch for s in stale]),
+        trunk=trunk,
+        target=target,
+        trunk_note=trunk_note,
+    )
+    if scope == "cancel":
+        raise SyncCancelled
+    return selected_branches(stale, scope)
+
+
+class SyncCancelled(Exception):
+    """The user chose Cancel in the review."""
 
 
 def _resolve_deleted_parent(repo: Repo, parent: str) -> str | None:
@@ -367,6 +439,7 @@ def _sync(
     force: bool = False,
     dry_run: bool = False,
     prompt_fn: Callable[[str, str], bool] | None = None,
+    toolkit: ShortcakeRichToolkit | None = None,
 ) -> SyncResult:
     """
     Sync with remote: update trunk, clean up merged branches, restack.
@@ -376,6 +449,7 @@ def _sync(
         force: Skip delete confirmations
         dry_run: Preview what would happen
         prompt_fn: Function to prompt user (for testing)
+        toolkit: Output toolkit; built if not supplied
 
     Returns:
         SyncResult with details of what was done
@@ -394,114 +468,73 @@ def _sync(
 
     current_branch = git.get_current_branch(repo)
     result = SyncResult(trunk_updated=False)
+    toolkit = toolkit or get_rich_toolkit()
 
     # 1. Fetch and fast-forward trunk
-    typer.echo(f"Pulling {trunk} from remote...")
+    toolkit.echo(f"Pulling {trunk} from remote...")
     success, new_sha = git.fetch_and_fast_forward_trunk(repo, trunk)
 
+    trunk_note: str | None = None
     if not success:
-        typer.echo(f"Warning: Could not fast-forward {trunk} from remote.", err=True)
+        toolkit.echo(f"Warning: Could not fast-forward {trunk} from remote.", err=True)
     elif new_sha:
         result.trunk_updated = True
         result.trunk_new_sha = new_sha
-        typer.echo(f"{trunk} fast-forwarded to {new_sha}...")
+        trunk_note = f"fast-forwarded to {new_sha}"
+        toolkit.echo(f"{trunk} fast-forwarded to {new_sha}...")
 
     # 2. Detect merged branches
-    typer.echo("Checking for merged branches...")
+    # _collect_stale makes one GitHub call per branch, so say something first
+    # rather than sitting silent through it.
+    toolkit.echo("Checking for merged branches...")
     tracked_branches = git.get_tracked_branches(repo)
-    merged_branches = [
-        b for b in git.get_merged_branches(repo, tracked_branches, trunk) if b != trunk
-    ]
+    stale = _collect_stale(repo, trunk, tracked_branches)
 
-    # All branches to skip reparenting into (merged + closed)
-    all_removing: set[str] = set(merged_branches)
+    # Reparenting skips anything that is going away, whichever scope is chosen.
+    all_removing: set[str] = {item.branch for item in stale}
 
-    if merged_branches:
-        # Sort for deletion (leaves first)
-        sorted_merged = _topological_sort_for_deletion(repo, merged_branches)
-
-        # 3. Prompt and delete merged branches
-        for branch in sorted_merged:
-            if dry_run:
-                typer.echo(f"Would delete merged branch '{branch}'")
-                _show_dry_run_worktree_removals(repo, branch)
-                continue
-
-            should_delete = force
-            if not force and prompt_fn:
-                should_delete = prompt_fn(branch, trunk)
-            elif not force:
-                should_delete = _confirm_delete(
-                    branch, f"'{branch}' is merged into {trunk}. Delete it? [y/n]"
+    if dry_run:
+        for item in stale:
+            toolkit.echo(f"Would delete {item.reason} branch '{item.branch}'")
+            for path in item.worktrees:
+                toolkit.echo(
+                    f"Would remove worktree '{path}' for branch '{item.branch}'"
                 )
-
-            if should_delete:
-                delete_result = _delete_and_reparent(
-                    repo, branch, trunk, current_branch, all_removing, result
+    elif stale:
+        if force:
+            going = [item.branch for item in stale]
+        elif prompt_fn:
+            going = [
+                item.branch
+                for item in stale
+                if prompt_fn(item.branch, trunk if item.reason != CLOSED else "closed")
+            ]
+        elif not _stdin_is_interactive() or not toolkit.console.is_terminal:
+            # A pipe or CI cannot answer, so nothing is deleted and the hint
+            # points at --yes rather than hanging on a prompt.
+            for item in stale:
+                toolkit.echo(
+                    f"Keeping '{item.branch}' (non-interactive; use --yes to delete)"
                 )
-                current_branch = delete_result.current_branch
-                if delete_result.deleted:
-                    result.deleted_branches.append(branch)
-                    typer.echo(f"Deleted branch {branch}")
+            going = []
+        else:
+            going = _ask_cleanup(repo, toolkit, stale, trunk, trunk_note)
 
-    # 3b. Check GitHub API for merged/closed PRs that local git missed
-    github_status = _detect_github_stale_branches(
-        repo, tracked_branches, merged_branches
-    )
-    all_removing.update(github_status.merged)
-    all_removing.update(github_status.closed)
-
-    # Handle GitHub-detected merged branches (e.g. squash merges)
-    if github_status.merged:
-        sorted_gh_merged = _topological_sort_for_deletion(repo, github_status.merged)
-        for branch in sorted_gh_merged:
-            if dry_run:
-                typer.echo(f"Would delete merged branch '{branch}'")
-                _show_dry_run_worktree_removals(repo, branch)
-                continue
-
-            should_delete = force
-            if not force and prompt_fn:
-                should_delete = prompt_fn(branch, trunk)
-            elif not force:
-                should_delete = _confirm_delete(
-                    branch, f"'{branch}' is merged into {trunk}. Delete it? [y/n]"
-                )
-
-            if should_delete:
-                delete_result = _delete_and_reparent(
-                    repo, branch, trunk, current_branch, all_removing, result
-                )
-                current_branch = delete_result.current_branch
-                if delete_result.deleted:
-                    result.deleted_branches.append(branch)
-                    typer.echo(f"Deleted branch {branch}")
-
-    # Handle closed (not merged) PR branches
-    if github_status.closed:
-        sorted_closed = _topological_sort_for_deletion(repo, github_status.closed)
-        for branch in sorted_closed:
-            if dry_run:
-                typer.echo(f"Would delete closed branch '{branch}'")
-                _show_dry_run_worktree_removals(repo, branch)
-                continue
-
-            should_delete = force
-            if not force and prompt_fn:
-                should_delete = prompt_fn(branch, "closed")
-            elif not force:
-                should_delete = _confirm_delete(
-                    branch, f"'{branch}' has a closed PR. Delete it? [y/n]"
-                )
-
-            if should_delete:
-                delete_result = _delete_and_reparent(
-                    repo, branch, trunk, current_branch, all_removing, result
-                )
-                current_branch = delete_result.current_branch
-                if delete_result.deleted:
+        # Only what is actually being deleted should be skipped when
+        # reparenting; a kept branch is still a valid parent.
+        all_removing = set(going)
+        for branch in going:
+            delete_result = _delete_and_reparent(
+                repo, branch, trunk, current_branch, all_removing, result
+            )
+            current_branch = delete_result.current_branch
+            if delete_result.deleted:
+                item = next(s for s in stale if s.branch == branch)
+                if item.reason == CLOSED:
                     result.closed_branches.append(branch)
-                    typer.echo(f"Deleted branch {branch}")
+                else:
+                    result.deleted_branches.append(branch)
+                toolkit.echo(f"Deleted branch {branch}")
 
     # 3c. Reparent branches whose parent was deleted (merged elsewhere)
     # Re-fetch tracked branches since some may have been deleted above
@@ -518,7 +551,7 @@ def _sync(
             resolved_parent = _resolve_existing_parent(repo, parent, all_local)
             if resolved_parent:
                 if dry_run:
-                    typer.echo(
+                    toolkit.echo(
                         f"Would reparent '{branch}' from "
                         f"'{parent}' to '{resolved_parent}'"
                     )
@@ -527,12 +560,12 @@ def _sync(
                     _restore_current_branch(repo, current_branch)
                     if success:
                         result.reparented_branches[branch] = resolved_parent
-                        typer.echo(
+                        toolkit.echo(
                             f"Reparented '{branch}' to '{resolved_parent}' "
                             f"('{parent}' was merged)"
                         )
                     else:
-                        typer.echo(
+                        toolkit.echo(
                             f"Warning: Could not reparent '{branch}' to "
                             f"'{resolved_parent}' due to conflicts. "
                             f"Run 'sc restack' manually after resolving.",
@@ -549,9 +582,9 @@ def _sync(
                 result.restack_result = restack_result
                 if restack_result.restacked_branches:
                     for branch in restack_result.restacked_branches:
-                        typer.echo(f"Restacked {branch}.")
+                        toolkit.echo(f"Restacked {branch}.")
             except Exception as e:  # pragma: no cover
-                typer.echo(f"Warning: Could not restack: {e}", err=True)
+                toolkit.echo(f"Warning: Could not restack: {e}", err=True)
 
     return result
 
@@ -570,8 +603,12 @@ def sync(
     """Sync with remote: update trunk, clean up merged branches, restack."""
     repo = git.open_repo()
 
+    toolkit = get_rich_toolkit()
     try:
-        result = _sync(repo, force=yes, dry_run=dry_run)
+        result = _sync(repo, force=yes, dry_run=dry_run, toolkit=toolkit)
+    except SyncCancelled:
+        toolkit.echo("Cancelled · nothing deleted")
+        return
     except SyncError as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1) from None

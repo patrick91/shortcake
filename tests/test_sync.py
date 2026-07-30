@@ -13,6 +13,7 @@ from shortcake._git._stack import (
     is_merged,
     is_squash_merged,
 )
+from shortcake._output import get_rich_toolkit
 from shortcake._trailers import Trailers
 from shortcake.cli import app
 from shortcake.commands.restack import RestackResult
@@ -787,12 +788,14 @@ def test_cli_sync_uncommitted_changes(
 def test_cli_sync_user_declines(
     repo_with_merged_branch: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test CLI sync when user declines deletion."""
+    """Choosing "Keep everything" in the review deletes nothing."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: True)
+    monkeypatch.setattr("shortcake.commands.sync.pick_cleanup", lambda *a, **k: "none")
+    monkeypatch.setattr(type(get_rich_toolkit().console), "is_terminal", True)
     git.switch_branch(repo_with_merged_branch, "main")
 
-    result = runner.invoke(app, ["sync"], input="n\n")
+    result = runner.invoke(app, ["sync"])
 
     assert result.exit_code == 0
     # Branch should still exist
@@ -805,9 +808,13 @@ def test_cli_sync_user_accepts(
     """Test CLI sync when user accepts deletion."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: True)
+    monkeypatch.setattr("shortcake.commands.sync.pick_cleanup", lambda *a, **k: "all")
+    monkeypatch.setattr(type(get_rich_toolkit().console), "is_terminal", True)
+    monkeypatch.setattr("shortcake.commands.sync.pick_cleanup", lambda *a, **k: "all")
+    monkeypatch.setattr(type(get_rich_toolkit().console), "is_terminal", True)
     git.switch_branch(repo_with_merged_branch, "main")
 
-    result = runner.invoke(app, ["sync"], input="y\n")
+    result = runner.invoke(app, ["sync"])
 
     assert result.exit_code == 0
     assert "Deleted branch feature" in result.output
@@ -1438,6 +1445,8 @@ def test_cli_sync_github_merged_user_accepts(
     """Test CLI sync prompts user for GitHub-detected merged branches."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: True)
+    monkeypatch.setattr("shortcake.commands.sync.pick_cleanup", lambda *a, **k: "all")
+    monkeypatch.setattr(type(get_rich_toolkit().console), "is_terminal", True)
     git.switch_branch(repo_with_stack, "main")
 
     github_status = _GitHubBranchStatus(merged=["branch_a"], closed=[])
@@ -1457,6 +1466,8 @@ def test_cli_sync_github_closed_user_accepts(
     """Test CLI sync prompts user for GitHub-detected closed branches."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: True)
+    monkeypatch.setattr("shortcake.commands.sync.pick_cleanup", lambda *a, **k: "all")
+    monkeypatch.setattr(type(get_rich_toolkit().console), "is_terminal", True)
     git.switch_branch(repo_with_stack, "main")
 
     github_status = _GitHubBranchStatus(merged=[], closed=["branch_a"])
@@ -1984,3 +1995,39 @@ def test_sync_keeps_merged_branch_when_reparent_fails(
     assert git.get_branch_parent(repo_with_merged_branch, "child", all_branches) == (
         "feature"
     )
+
+
+def test_cli_sync_cancel_in_review_deletes_nothing(
+    repo_with_merged_branch: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancel is a real option: nothing is deleted and sync says so."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: True)
+    monkeypatch.setattr(
+        "shortcake.commands.sync.pick_cleanup", lambda *a, **k: "cancel"
+    )
+    monkeypatch.setattr(type(get_rich_toolkit().console), "is_terminal", True)
+    git.switch_branch(repo_with_merged_branch, "main")
+
+    result = runner.invoke(app, ["sync"])
+
+    assert result.exit_code == 0
+    assert "Cancelled" in result.output
+    assert git.branch_exists(repo_with_merged_branch, "feature")
+
+
+def test_cli_sync_safe_only_keeps_the_unrecoverable_branch(
+    repo_with_merged_branch: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ "Safe only" deletes what is recoverable and leaves the rest alone."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: True)
+    monkeypatch.setattr("shortcake.commands.sync.pick_cleanup", lambda *a, **k: "safe")
+    monkeypatch.setattr(type(get_rich_toolkit().console), "is_terminal", True)
+    git.switch_branch(repo_with_merged_branch, "main")
+
+    result = runner.invoke(app, ["sync"])
+
+    assert result.exit_code == 0
+    # 'feature' is merged, so it counts as safe and goes
+    assert not git.branch_exists(repo_with_merged_branch, "feature")
