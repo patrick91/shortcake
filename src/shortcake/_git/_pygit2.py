@@ -34,11 +34,18 @@ def get_remote_raw_url(repo: Repo, remote_name: str = "origin") -> str | None:
 def fetch_remote(repo: Repo, remote_name: str = "origin") -> bool:
     """Fetch a remote and report whether it succeeded.
 
+    Prunes: a plain fetch leaves ``refs/remotes/<remote>/<branch>`` in place
+    after the branch is deleted on the remote, so the ref lingers indefinitely
+    and anything reading it — ``get_remote_ref``, merged-branch detection —
+    believes a branch still exists upstream when it does not. Pruning only
+    removes remote-tracking refs whose branch is gone; local branches are
+    untouched.
+
     Tries pygit2 first, falls back to git CLI if pygit2 fails (e.g. SSH
     auth not available to libgit2).
     """
     try:
-        repo.remotes[remote_name].fetch()
+        repo.remotes[remote_name].fetch(prune=pygit2.enums.FetchPrune.PRUNE)
         return True
     except (KeyError, pygit2.GitError):
         pass
@@ -47,7 +54,7 @@ def fetch_remote(repo: Repo, remote_name: str = "origin") -> bool:
     repo_path = repo.workdir or repo.path
     try:
         subprocess.run(
-            ["git", "fetch", remote_name],
+            ["git", "fetch", "--prune", remote_name],
             cwd=repo_path,
             check=True,
             capture_output=True,
