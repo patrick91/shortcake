@@ -28,6 +28,7 @@ Sync · main
   pulling main from origin…
   checking 1 branch…
 
+
 ✓ main already up to date · 1 branch checked, nothing to clean up
 ```
 
@@ -44,6 +45,7 @@ Sync · main
 
   pulling main from origin…
   checking 1 branch…
+
 Cleaning up 1 branch
 
   ● add-feature  deleted
@@ -66,6 +68,7 @@ Sync · main
 
   pulling main from origin…
   checking 1 branch…
+
 Would delete merged branch 'new-feature'
 ✓ main already up to date · 1 branch checked, nothing to clean up
 $ sc sync --yes
@@ -73,6 +76,7 @@ Sync · main
 
   pulling main from origin…
   checking 1 branch…
+
 Cleaning up 1 branch
 
   ● new-feature  deleted
@@ -97,6 +101,7 @@ Sync · main
 
   pulling main from origin…
   checking 1 branch…
+
 Cleaning up 1 branch
 
   ● squash-feature  deleted
@@ -122,6 +127,7 @@ Sync · main
 
   pulling main from origin…
   checking 1 branch…
+
 ✓ main already up to date · 1 branch checked, nothing to clean up
 ```
 
@@ -145,6 +151,7 @@ Sync · main
 
   pulling main from origin…
   checking 2 branches…
+
 Cleaning up 1 branch
 
   ● feature-a   deleted
@@ -182,6 +189,7 @@ Sync · main
 
   pulling main from origin…
   checking 1 branch…
+
 Cleaning up 1 branch
 
   ● trunk-safe-feature  deleted
@@ -214,6 +222,7 @@ Sync · test/repo · main
 
   pulling main from origin…
   checking 1 branch…
+
 Cleaning up 1 branch
 
   ● gh-feature  deleted

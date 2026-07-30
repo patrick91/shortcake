@@ -524,6 +524,7 @@ def _sync(
     # behind when it stops, so a block per phase stacked them up.
     pulling = f"pulling {trunk} from origin…"
     if streaming:
+        # No Live to draw one, so the gap under the header is printed here.
         toolkit.echo()
         toolkit.echo(f"  {pulling}")
         success, new_sha, tracked_branches, stale = pull_and_scan(
@@ -534,6 +535,9 @@ def _sync(
             success, new_sha, tracked_branches, stale = pull_and_scan(
                 lambda message: setattr(progress, "message", message)
             )
+    # A transient Live erases everything it drew, so the gap before whatever
+    # comes next has to be printed here.
+    toolkit.echo()
 
     trunk_note: str | None = None
     if not success:

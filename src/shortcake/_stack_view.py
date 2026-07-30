@@ -476,8 +476,10 @@ class Working(Live):
         line = Text("  ")
         line.append(SPINNER[frame % len(SPINNER)], style=Style(color="cyan"))
         line.append(f" {self.message}", style=DIM)
-        # A leading blank so the gap under a caller's header is there while
-        # this runs, not only afterwards when Live's stop-newline supplies one.
+        # A leading blank so there is a gap under the caller's header while
+        # this runs. It costs nothing afterwards: a transient Live erases
+        # everything it drew, leaving *no* blank line behind — so a caller that
+        # wants one after this block has to print it.
         return Group(Text(""), line)
 
 
