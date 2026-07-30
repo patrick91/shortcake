@@ -25,6 +25,7 @@ When everything is up to date, sync reports nothing to do:
 $ sc sync
 Sync · main
 
+  pulling main from origin…
   checking 1 branch…
 
 ✓ main already up to date · 1 branch checked, nothing to clean up
@@ -41,8 +42,12 @@ $ echo "post merge" > post.txt && git add post.txt && git commit -m "Post merge 
 $ sc sync --yes
 Sync · main
 
+  pulling main from origin…
   checking 1 branch…
-Deleted branch add-feature
+Cleaning up 1 branch
+
+  ● add-feature  deleted
+
 ✓ main already up to date · 1 branch deleted
 ```
 
@@ -59,14 +64,19 @@ $ echo "another post merge" > post2.txt && git add post2.txt && git commit -m "A
 $ sc sync --dry-run
 Sync · main
 
+  pulling main from origin…
   checking 1 branch…
 Would delete merged branch 'new-feature'
 ✓ main already up to date · 1 branch checked, nothing to clean up
 $ sc sync --yes
 Sync · main
 
+  pulling main from origin…
   checking 1 branch…
-Deleted branch new-feature
+Cleaning up 1 branch
+
+  ● new-feature  deleted
+
 ✓ main already up to date · 1 branch deleted
 ```
 
@@ -85,8 +95,12 @@ $ echo "squash feature" > squash.py && git add squash.py && git commit -m "squas
 $ sc sync --yes
 Sync · main
 
+  pulling main from origin…
   checking 1 branch…
-Deleted branch squash-feature
+Cleaning up 1 branch
+
+  ● squash-feature  deleted
+
 ✓ main already up to date · 1 branch deleted
 ```
 
@@ -106,6 +120,7 @@ $ echo "independent main change" > shared.txt && git add shared.txt && git commi
 $ sc sync --yes
 Sync · main
 
+  pulling main from origin…
   checking 1 branch…
 ✓ main already up to date · 1 branch checked, nothing to clean up
 ```
@@ -128,9 +143,13 @@ $ git checkout feature-b
 $ sc sync --yes
 Sync · main
 
+  pulling main from origin…
   checking 2 branches…
-Reparented feature-b to main
-Deleted branch feature-a
+Cleaning up 1 branch
+
+  ● feature-a   deleted
+  ● feature-b   reparented onto main
+
 
 ✓ main already up to date · 1 branch deleted · 1 reparented
 ```
@@ -161,8 +180,12 @@ $ echo "post" > post.txt && git add post.txt && git commit -m "Post merge" > /de
 $ sc sync --yes
 Sync · main
 
+  pulling main from origin…
   checking 1 branch…
-Deleted branch trunk-safe-feature
+Cleaning up 1 branch
+
+  ● trunk-safe-feature  deleted
+
 ✓ main already up to date · 1 branch deleted
 ```
 
@@ -189,8 +212,12 @@ $ # github: merge-pr 50
 $ sc sync --yes
 Sync · test/repo · main
 
+  pulling main from origin…
   checking 1 branch…
-Deleted branch gh-feature
+Cleaning up 1 branch
+
+  ● gh-feature  deleted
+
 ✓ main already up to date · 1 branch deleted
 ```
 

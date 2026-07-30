@@ -36,6 +36,9 @@ from tests._git_helpers import (
     Repo,
     add_paths,
     commit,
+    commit_files,
+    create_branch,
+    get_branch_head,
     get_ref,
     init_repo,
     remove_paths,
@@ -43,9 +46,25 @@ from tests._git_helpers import (
     run_git,
     set_ref,
     switch_branch,
+    update_branch,
 )
 
 runner = CliRunner()
+
+
+def _row(output: str, branch: str) -> str:
+    """The cleanup row for a branch, with styling stripped.
+
+    Deletions render in the stack view now, so they read as
+    "● <branch>  deleted" rather than "Deleted branch <branch>".
+    """
+    clean = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", output)
+    for line in clean.splitlines():
+        parts = line.split()
+        # the row *for* this branch, not one that merely mentions it
+        if len(parts) >= 2 and parts[1] == branch:
+            return " ".join(parts)
+    return ""
 
 
 # Unit tests for helper functions
@@ -769,7 +788,7 @@ def test_cli_sync_force_deletes(
     result = runner.invoke(app, ["sync", "--yes"])
 
     assert result.exit_code == 0
-    assert "Deleted branch feature" in result.output
+    assert "deleted" in _row(result.output, "feature")
 
 
 def test_cli_sync_uncommitted_changes(
@@ -819,7 +838,7 @@ def test_cli_sync_user_accepts(
     result = runner.invoke(app, ["sync"])
 
     assert result.exit_code == 0
-    assert "Deleted branch feature" in result.output
+    assert "deleted" in _row(result.output, "feature")
 
 
 # Additional tests for coverage
@@ -946,8 +965,8 @@ def test_cli_sync_with_restack(
     result = runner.invoke(app, ["sync", "--yes"])
 
     assert result.exit_code == 0
-    assert "Deleted branch branch_a" in result.output
-    assert "Reparented branch_b to main" in result.output
+    assert "deleted" in _row(result.output, "branch_a")
+    assert "reparented onto main" in _row(result.output, "branch_b")
 
 
 def test_sync_fetch_failure(
@@ -1459,7 +1478,7 @@ def test_cli_sync_github_merged_user_accepts(
         result = runner.invoke(app, ["sync"], input="y\n")
 
     assert result.exit_code == 0
-    assert "Deleted branch branch_a" in result.output
+    assert "deleted" in _row(result.output, "branch_a")
 
 
 def test_cli_sync_github_closed_user_accepts(
@@ -1480,7 +1499,7 @@ def test_cli_sync_github_closed_user_accepts(
         result = runner.invoke(app, ["sync"], input="y\n")
 
     assert result.exit_code == 0
-    assert "Deleted branch branch_a" in result.output
+    assert "deleted" in _row(result.output, "branch_a")
 
 
 # Helpers for GitHub mocking
@@ -1947,7 +1966,7 @@ def test_cli_sync_non_interactive_yes_still_deletes(
     result = runner.invoke(app, ["sync", "--yes"])
 
     assert result.exit_code == 0
-    assert "Deleted branch feature" in result.output
+    assert "deleted" in _row(result.output, "feature")
 
 
 def test_stdin_is_interactive_reads_stdin(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -2056,23 +2075,62 @@ def test_cli_sync_summary_counts_removed_worktrees(
     assert "1 worktree removed" in result.output
 
 
-def test_cli_sync_header_is_followed_by_exactly_one_blank_line(
+def test_cli_sync_prints_exactly_one_header(
     repo_with_stack_behind: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Regression: two blank lines sat under the header on a terminal.
+    """Regression: sync printed a header and the review drew a second one.
 
-    rich's Live emits a newline when it stops, before restoring the cursor for
-    a transient display, so the erased spinner leaves one behind. Printing our
-    own as well gave two.
+    Asserts the count rather than the surrounding blank lines: how many blanks
+    a transient spinner leaves behind depends on the terminal applying its
+    erase sequences, which a captured run does not do.
     """
     monkeypatch.chdir(tmp_path)
     with patch.object(type(get_rich_toolkit().console), "is_terminal", True):
         output = runner.invoke(app, ["sync"]).output
 
     clean = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", output)
-    # a real terminal erases the spinner frames; drop them as it would
-    lines = [line for line in clean.splitlines() if "checking" not in line]
-    header = next(i for i, line in enumerate(lines) if line.startswith("Sync ·"))
+    assert sum(line.startswith("Sync ·") for line in clean.splitlines()) == 1
 
-    assert not lines[header + 1].strip(), "expected a blank line under the header"
-    assert lines[header + 2].strip(), "expected only one blank line under the header"
+
+def test_cli_sync_deleting_two_branches_reparents_each_child_once(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two deletions in one run: a child reparented by the first must not be
+    re-reported when the second is processed."""
+    monkeypatch.chdir(tmp_path)
+
+    parent = "main"
+    for name in ("first", "second"):
+        create_branch(
+            temp_repo, name, get_branch_head(temp_repo, parent), checkout=True
+        )
+        commit_files(
+            temp_repo,
+            {tmp_path / f"{name}.txt": name},
+            Trailers(parent_branch=parent).apply_to(f"feat: {name}"),
+        )
+        parent = name
+
+    # a surviving branch on top of the two that will be deleted
+    create_branch(
+        temp_repo, "keeper", get_branch_head(temp_repo, "second"), checkout=True
+    )
+    commit_files(
+        temp_repo,
+        {tmp_path / "keeper.txt": "keeper"},
+        Trailers(parent_branch="second").apply_to("feat: keeper"),
+    )
+
+    # fold both into main so they read as merged
+    update_branch(temp_repo, "main", get_branch_head(temp_repo, "second"))
+    switch_branch(temp_repo, "main")
+    commit_files(temp_repo, {tmp_path / "after.txt": "after"}, "chore: after merge")
+
+    result = runner.invoke(app, ["sync", "--yes"])
+
+    assert result.exit_code == 0
+    assert "deleted" in _row(result.output, "first")
+    assert "deleted" in _row(result.output, "second")
+    assert "2 branches deleted" in result.output
+    # keeper was reparented twice; the row must name where it ended up
+    assert _row(result.output, "keeper").endswith("reparented onto main")

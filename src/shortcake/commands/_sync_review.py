@@ -157,23 +157,19 @@ def render_review(
     cursor: int,
     *,
     trunk: str,
-    target: str | None,
-    trunk_note: str | None,
 ) -> RenderableType:
-    head = Text("Sync · ")
-    if target:
-        head.append(f"{target} · ")
-    head.append(trunk, style=Style(bold=True))
-    if trunk_note:
-        head.append("   ")
-        head.append(trunk_note, style=DIM)
-
-    parts: list[RenderableType] = [head, Text("")]
+    # No header here: sync prints one before the review opens, and drawing a
+    # second put two of them on screen.
+    parts: list[RenderableType] = []
     parts.extend(breakdown(stale, movers, trunk))
     parts.append(Text(""))
 
     lossy = [s for s in stale if is_lossy(s)]
-    question = "Delete the local copies?"
+    # Agree in number with the option beside it: "Delete the local copies?"
+    # sitting above "Delete it" read as a mismatch.
+    question = (
+        "Delete the local copy?" if len(stale) == 1 else "Delete the local copies?"
+    )
     if lossy:
         noun = "branch" if len(lossy) == 1 else "branches"
         question += f" {len(lossy)} {noun} would be gone for good."
@@ -198,24 +194,13 @@ def pick_cleanup(
     movers: list[str],
     *,
     trunk: str,
-    target: str | None = None,
-    trunk_note: str | None = None,
 ) -> str:
     """Ask once. Returns ``all``, ``safe``, ``none`` or ``cancel``."""
     options = review_options(stale)
     cursor = 0
     with Live(console=console, auto_refresh=False, transient=True) as live:
         while True:
-            live.update(
-                render_review(
-                    stale,
-                    movers,
-                    cursor,
-                    trunk=trunk,
-                    target=target,
-                    trunk_note=trunk_note,
-                )
-            )
+            live.update(render_review(stale, movers, cursor, trunk=trunk))
             live.refresh()
             try:
                 key = getchar()

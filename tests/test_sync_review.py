@@ -105,9 +105,7 @@ def test_breakdown_names_what_each_action_applies_to() -> None:
     """No bare counts: "reparent 1" left you asking reparent what, onto what."""
     stale = [merged("alpha", worktrees=["~/wt/alpha"]), closed("gamma")]
     text = plain(breakdown(stale, ["beta"], "main")[0])
-    lines = plain(
-        render_review(stale, ["beta"], 0, trunk="main", target=None, trunk_note=None)
-    )
+    lines = plain(render_review(stale, ["beta"], 0, trunk="main"))
 
     assert "Delete 2 local branches" in text or "Delete 2 local branches" in lines
     assert "alpha" in lines and "gamma" in lines
@@ -118,60 +116,32 @@ def test_breakdown_names_what_each_action_applies_to() -> None:
 
 
 def test_breakdown_omits_sections_that_do_not_apply() -> None:
-    lines = plain(
-        render_review([merged("a")], [], 0, trunk="main", target=None, trunk_note=None)
-    )
+    lines = plain(render_review([merged("a")], [], 0, trunk="main"))
     assert "Remove" not in lines
     assert "rebased" not in lines
 
 
 def test_review_escalates_the_question_only_when_work_would_be_lost() -> None:
-    safe = plain(
-        render_review([merged("a")], [], 0, trunk="main", target=None, trunk_note=None)
-    )
-    assert "Delete the local copies?" in safe
+    safe = plain(render_review([merged("a")], [], 0, trunk="main"))
+    assert "Delete the local copy?" in safe  # one branch
     assert "gone for good" not in safe
 
     risky = plain(
-        render_review(
-            [merged("a"), closed("c", pushed=False)],
-            [],
-            0,
-            trunk="main",
-            target=None,
-            trunk_note=None,
-        )
+        render_review([merged("a"), closed("c", pushed=False)], [], 0, trunk="main")
     )
     assert "1 branch would be gone for good." in risky
     assert "⚠ not on origin" in risky
 
 
-def test_review_header_states_the_repo_and_the_trunk_result() -> None:
-    lines = plain(
-        render_review(
-            [merged("a")],
-            [],
-            0,
-            trunk="main",
-            target="owner/repo",
-            trunk_note="fast-forwarded to abc1234",
-        )
-    )
-    assert "owner/repo" in lines
-    assert "fast-forwarded to abc1234" in lines
+def test_review_draws_no_header_of_its_own() -> None:
+    """Regression: sync prints one before the review, so this drew a second."""
+    lines = plain(render_review([merged("a")], [], 0, trunk="main"))
+    assert "Sync ·" not in lines
 
 
 def test_plural_agreement_in_the_reparent_note() -> None:
-    one = plain(
-        render_review(
-            [merged("a")], ["b"], 0, trunk="main", target=None, trunk_note=None
-        )
-    )
-    many = plain(
-        render_review(
-            [merged("a")], ["b", "c"], 0, trunk="main", target=None, trunk_note=None
-        )
-    )
+    one = plain(render_review([merged("a")], ["b"], 0, trunk="main"))
+    many = plain(render_review([merged("a")], ["b", "c"], 0, trunk="main"))
     assert "1 branch above is rebased onto its new parent." in one
     assert "2 branches above are rebased onto their new parents." in many
 
