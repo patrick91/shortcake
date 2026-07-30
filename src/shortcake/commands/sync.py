@@ -15,6 +15,7 @@ from shortcake._exceptions import ShortcakeError
 from shortcake._git._core import Repo
 from shortcake._github import GitHubClient, get_github_token, get_repo_info
 from shortcake._output import ShortcakeRichToolkit, get_rich_toolkit
+from shortcake._stack_view import Working
 from shortcake.commands._sync_review import (
     CLOSED,
     MERGED,
@@ -483,9 +484,8 @@ def _sync(
     # Piped output has no way to overwrite, so it streams the steps; a terminal
     # shows them transiently and keeps only the outcome.
     streaming = not toolkit.console.is_terminal
-    if streaming:
-        toolkit.echo(header)
-        toolkit.echo()
+    toolkit.echo(header)
+    toolkit.echo()
 
     success, new_sha = git.fetch_and_fast_forward_trunk(repo, trunk)
 
@@ -514,7 +514,7 @@ def _sync(
         toolkit.echo(scanning)
         stale = _collect_stale(repo, trunk, tracked_branches)
     else:
-        with toolkit.progress(f"{header}\n\n{scanning}", transient=True):
+        with Working(toolkit.console, scanning.strip()):
             stale = _collect_stale(repo, trunk, tracked_branches)
 
     # Reparenting skips anything that is going away, whichever scope is chosen.
@@ -647,9 +647,6 @@ def sync(
     # Always report, whatever happened. Printing only in the pure no-op case
     # meant a trunk fast-forward with nothing else to do vanished entirely.
     deleted = len(result.deleted_branches) + len(result.closed_branches)
-    restacked = (
-        len(result.restack_result.restacked_branches) if result.restack_result else 0
-    )
 
     bits = []
     if deleted:
@@ -660,8 +657,6 @@ def sync(
     if result.removed_worktrees:
         noun = "worktree" if len(result.removed_worktrees) == 1 else "worktrees"
         bits.append(f"{len(result.removed_worktrees)} {noun} removed")
-    if restacked:
-        bits.append(f"{restacked} restacked")
 
     line = Text("✓ ", style=Style(color="green"))
     subject = f"{result.trunk} " if result.trunk else ""
