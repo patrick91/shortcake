@@ -1794,3 +1794,79 @@ def test_cli_create_positional_name(
     assert result.exit_code == 0
     today = date.today().isoformat()
     assert f"Created branch '{today}-my-custom-name' from 'main'" in result.output
+
+
+# -- lazy command loading ----------------------------------------------
+
+
+def test_every_registered_command_resolves() -> None:
+    """A typo in the name -> module map would only surface at runtime."""
+    from shortcake.cli import COMMANDS, SUB_APPS
+
+    for name in {*COMMANDS, *SUB_APPS}:
+        result = CliRunner().invoke(app, [name, "--help"])
+        assert result.exit_code == 0, f"{name} failed to load: {result.output}"
+
+
+def test_help_lists_every_command() -> None:
+    from shortcake.cli import COMMANDS, SUB_APPS
+
+    result = CliRunner().invoke(app, ["--help"])
+    assert result.exit_code == 0
+    for name in {*COMMANDS, *SUB_APPS}:
+        assert name in result.output
+
+
+def test_unknown_command_is_rejected() -> None:
+    result = CliRunner().invoke(app, ["nope"])
+    assert result.exit_code != 0
+    assert "No such command" in result.output
+
+
+def test_checkout_alias_shares_its_module() -> None:
+    """`co` is an alias for `checkout`, so both resolve from one module."""
+    from shortcake.cli import COMMANDS
+
+    assert COMMANDS["co"][0] == COMMANDS["checkout"][0]
+    assert COMMANDS["co"][1] != COMMANDS["checkout"][1]
+
+
+def test_running_one_command_does_not_import_the_others() -> None:
+    """The point of the change: `sc up` must not pay for GitHub commands.
+
+    A subprocess, because this test session has already imported everything.
+    """
+    import subprocess
+    import sys
+
+    script = (
+        "import sys;"
+        "from typer.testing import CliRunner;"
+        "from shortcake.cli import app;"
+        "CliRunner().invoke(app, ['up', '--help']);"
+        "print(','.join(sorted(m for m in ('httpx', 'yaml') if m in sys.modules)))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "", (
+        f"a GitHub-only dependency was imported for `up`: {result.stdout!r}"
+    )
+
+
+def test_a_command_still_loads_its_own_dependencies() -> None:
+    """Laziness must not stop a command importing what it actually needs."""
+    import subprocess
+    import sys
+
+    script = (
+        "import sys;"
+        "from typer.testing import CliRunner;"
+        "from shortcake.cli import app;"
+        "CliRunner().invoke(app, ['submit', '--help']);"
+        "print('httpx' in sys.modules)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "True"
