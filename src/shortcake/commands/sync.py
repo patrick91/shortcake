@@ -485,7 +485,11 @@ def _sync(
     # shows them transiently and keeps only the outcome.
     streaming = not toolkit.console.is_terminal
     toolkit.echo(header)
-    toolkit.echo()
+    if streaming:
+        # On a terminal the transient spinner below supplies this blank:
+        # rich's Live emits a newline on stop (live.py, before restoring the
+        # cursor), so adding one here left two in a row once it erased itself.
+        toolkit.echo()
 
     success, new_sha = git.fetch_and_fast_forward_trunk(repo, trunk)
 
@@ -605,7 +609,11 @@ def _sync(
         all_branches = set(git.get_all_local_branches(repo))
         if git.get_branch_parent(repo, current_branch, all_branches) is not None:
             try:
-                toolkit.echo()  # separate the restack block from the scan lines
+                # Only space this off when something was actually printed
+                # since the header. On a terminal the scan is transient, so
+                # an unconditional blank left two in a row.
+                if streaming or result.deleted_branches or result.closed_branches:
+                    toolkit.echo()
                 restack_result = _restack(repo, toolkit=toolkit)
                 result.restack_result = restack_result
                 # no echo here: the restack view prints its own

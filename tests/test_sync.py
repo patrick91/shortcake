@@ -1,5 +1,6 @@
 """Tests for sync command."""
 
+import re
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -2053,3 +2054,25 @@ def test_cli_sync_summary_counts_removed_worktrees(
 
     assert result.exit_code == 0
     assert "1 worktree removed" in result.output
+
+
+def test_cli_sync_header_is_followed_by_exactly_one_blank_line(
+    repo_with_stack_behind: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: two blank lines sat under the header on a terminal.
+
+    rich's Live emits a newline when it stops, before restoring the cursor for
+    a transient display, so the erased spinner leaves one behind. Printing our
+    own as well gave two.
+    """
+    monkeypatch.chdir(tmp_path)
+    with patch.object(type(get_rich_toolkit().console), "is_terminal", True):
+        output = runner.invoke(app, ["sync"]).output
+
+    clean = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", output)
+    # a real terminal erases the spinner frames; drop them as it would
+    lines = [line for line in clean.splitlines() if "checking" not in line]
+    header = next(i for i, line in enumerate(lines) if line.startswith("Sync ·"))
+
+    assert not lines[header + 1].strip(), "expected a blank line under the header"
+    assert lines[header + 2].strip(), "expected only one blank line under the header"
