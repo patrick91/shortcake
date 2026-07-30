@@ -6,6 +6,8 @@ from typing import Annotated
 
 import httpx
 import typer
+from rich.style import Style
+from rich.text import Text
 
 from shortcake import _git as git
 from shortcake._cache import update_pr_cache
@@ -61,6 +63,10 @@ class SyncResult:
     removed_worktrees: list[WorktreeCleanup] = field(default_factory=list)
     skipped_worktrees: list[WorktreeCleanup] = field(default_factory=list)
     restack_result: RestackResult | None = None
+    trunk: str = ""
+    trunk_note: str | None = None
+    """How the trunk ended up: "already up to date" or "fast-forwarded to X"."""
+    branches_checked: int = 0
 
 
 @dataclass(frozen=True)
@@ -471,7 +477,16 @@ def _sync(
     toolkit = toolkit or get_rich_toolkit()
 
     # 1. Fetch and fast-forward trunk
-    toolkit.echo(f"Pulling {trunk} from remote...")
+    repo_info = get_repo_info(repo)
+    target = "/".join(repo_info) if repo_info else None
+    header = "Sync · " + (f"{target} · " if target else "") + trunk
+    # Piped output has no way to overwrite, so it streams the steps; a terminal
+    # shows them transiently and keeps only the outcome.
+    streaming = not toolkit.console.is_terminal
+    if streaming:
+        toolkit.echo(header)
+        toolkit.echo()
+
     success, new_sha = git.fetch_and_fast_forward_trunk(repo, trunk)
 
     trunk_note: str | None = None
@@ -481,14 +496,26 @@ def _sync(
         result.trunk_updated = True
         result.trunk_new_sha = new_sha
         trunk_note = f"fast-forwarded to {new_sha}"
-        toolkit.echo(f"{trunk} fast-forwarded to {new_sha}...")
+    else:
+        trunk_note = "already up to date"
+    result.trunk = trunk
+    result.trunk_note = trunk_note
+    # No echo for the trunk result: it is instant, and the summary repeats it.
+    # Only the per-branch scan below is slow enough to need saying out loud.
 
     # 2. Detect merged branches
-    # _collect_stale makes one GitHub call per branch, so say something first
-    # rather than sitting silent through it.
-    toolkit.echo("Checking for merged branches...")
     tracked_branches = git.get_tracked_branches(repo)
-    stale = _collect_stale(repo, trunk, tracked_branches)
+    result.branches_checked = len(tracked_branches)
+    # _collect_stale makes one GitHub call per branch, so a terminal gets a
+    # transient spinner rather than sitting silent through it.
+    noun = "branch" if len(tracked_branches) == 1 else "branches"
+    scanning = f"  checking {len(tracked_branches)} {noun}…"
+    if streaming:
+        toolkit.echo(scanning)
+        stale = _collect_stale(repo, trunk, tracked_branches)
+    else:
+        with toolkit.progress(f"{header}\n\n{scanning}", transient=True):
+            stale = _collect_stale(repo, trunk, tracked_branches)
 
     # Reparenting skips anything that is going away, whichever scope is chosen.
     all_removing: set[str] = {item.branch for item in stale}
@@ -578,11 +605,11 @@ def _sync(
         all_branches = set(git.get_all_local_branches(repo))
         if git.get_branch_parent(repo, current_branch, all_branches) is not None:
             try:
-                restack_result = _restack(repo)
+                toolkit.echo()  # separate the restack block from the scan lines
+                restack_result = _restack(repo, toolkit=toolkit)
                 result.restack_result = restack_result
-                if restack_result.restacked_branches:
-                    for branch in restack_result.restacked_branches:
-                        toolkit.echo(f"Restacked {branch}.")
+                # no echo here: the restack view prints its own
+                # "✓ N branches restacked" footer
             except Exception as e:  # pragma: no cover
                 toolkit.echo(f"Warning: Could not restack: {e}", err=True)
 
@@ -617,15 +644,34 @@ def sync(
         raise typer.Exit(1)
 
     # Summary
-    no_deletions = (
-        not result.deleted_branches
-        and not result.closed_branches
-        and not result.trunk_updated
-        and not result.removed_worktrees
-        and not result.skipped_worktrees
+    # Always report, whatever happened. Printing only in the pure no-op case
+    # meant a trunk fast-forward with nothing else to do vanished entirely.
+    deleted = len(result.deleted_branches) + len(result.closed_branches)
+    restacked = (
+        len(result.restack_result.restacked_branches) if result.restack_result else 0
     )
-    no_restacks = (
-        not result.restack_result or not result.restack_result.restacked_branches
-    )
-    if no_deletions and no_restacks:
-        typer.echo("Everything up to date.")
+
+    bits = []
+    if deleted:
+        noun = "branch" if deleted == 1 else "branches"
+        bits.append(f"{deleted} {noun} deleted")
+    if result.reparented_branches:
+        bits.append(f"{len(result.reparented_branches)} reparented")
+    if result.removed_worktrees:
+        noun = "worktree" if len(result.removed_worktrees) == 1 else "worktrees"
+        bits.append(f"{len(result.removed_worktrees)} {noun} removed")
+    if restacked:
+        bits.append(f"{restacked} restacked")
+
+    line = Text("✓ ", style=Style(color="green"))
+    subject = f"{result.trunk} " if result.trunk else ""
+    line.append(f"{subject}{result.trunk_note or 'up to date'}")
+    if bits:
+        line.append(" · " + " · ".join(bits))
+    elif result.branches_checked:
+        noun = "branch" if result.branches_checked == 1 else "branches"
+        line.append(
+            f" · {result.branches_checked} {noun} checked, nothing to clean up",
+            style=Style(color="bright_black"),
+        )
+    toolkit.print(line)

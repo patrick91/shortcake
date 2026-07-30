@@ -1,5 +1,6 @@
 """Tests for sync command."""
 
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -725,7 +726,7 @@ def test_cli_sync_nothing_to_do(
     result = runner.invoke(app, ["sync"])
 
     assert result.exit_code == 0
-    assert "Everything up to date" in result.output
+    assert "nothing to clean up" in result.output
 
 
 def test_cli_sync_dry_run(
@@ -988,7 +989,7 @@ def test_sync_restack_output(
 
     assert result.exit_code == 0
     # Should show restack messages
-    assert "Restacked" in result.output or "Rebasing" in result.output
+    assert "restacked" in result.output
 
 
 def test_cli_sync_conflict_exit(
@@ -2031,3 +2032,24 @@ def test_cli_sync_safe_only_keeps_the_unrecoverable_branch(
     assert result.exit_code == 0
     # 'feature' is merged, so it counts as safe and goes
     assert not git.branch_exists(repo_with_merged_branch, "feature")
+
+
+def test_cli_sync_summary_counts_removed_worktrees(
+    repo_with_merged_branch: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A removed worktree is reported in the closing summary."""
+    monkeypatch.chdir(tmp_path)
+    git.switch_branch(repo_with_merged_branch, "main")
+
+    worktree = tmp_path / "wt-feature"
+    subprocess.run(
+        ["git", "worktree", "add", str(worktree), "feature"],
+        cwd=repo_with_merged_branch.workdir,
+        capture_output=True,
+        check=True,
+    )
+
+    result = runner.invoke(app, ["sync", "--yes"])
+
+    assert result.exit_code == 0
+    assert "1 worktree removed" in result.output

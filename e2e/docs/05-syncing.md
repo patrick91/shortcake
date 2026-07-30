@@ -23,9 +23,11 @@ When everything is up to date, sync reports nothing to do:
 
 ```console
 $ sc sync
-Pulling main from remote...
-Checking for merged branches...
-Everything up to date.
+Sync · main
+
+  checking 1 branch…
+
+✓ main already up to date · 1 branch checked, nothing to clean up
 ```
 
 ### Sync with Merged Branches
@@ -37,9 +39,11 @@ $ # Simulate merge by fast-forwarding main to feature
 $ git checkout main && git merge add-feature --ff-only > /dev/null
 $ echo "post merge" > post.txt && git add post.txt && git commit -m "Post merge commit" > /dev/null
 $ sc sync --yes
-Pulling main from remote...
-Checking for merged branches...
+Sync · main
+
+  checking 1 branch…
 Deleted branch add-feature
+✓ main already up to date · 1 branch deleted
 ```
 
 ### Dry Run Mode
@@ -53,14 +57,17 @@ Created branch 'new-feature' from 'main'
 $ git checkout main && git merge new-feature --ff-only > /dev/null
 $ echo "another post merge" > post2.txt && git add post2.txt && git commit -m "Another post merge" > /dev/null
 $ sc sync --dry-run
-Pulling main from remote...
-Checking for merged branches...
+Sync · main
+
+  checking 1 branch…
 Would delete merged branch 'new-feature'
-Everything up to date.
+✓ main already up to date · 1 branch checked, nothing to clean up
 $ sc sync --yes
-Pulling main from remote...
-Checking for merged branches...
+Sync · main
+
+  checking 1 branch…
 Deleted branch new-feature
+✓ main already up to date · 1 branch deleted
 ```
 
 ### Sync with Squash-Merged Branches
@@ -76,9 +83,11 @@ $ # Simulate squash merge: apply same change on main as a new commit
 $ git checkout main > /dev/null
 $ echo "squash feature" > squash.py && git add squash.py && git commit -m "squash: add squash feature" > /dev/null
 $ sc sync --yes
-Pulling main from remote...
-Checking for merged branches...
+Sync · main
+
+  checking 1 branch…
 Deleted branch squash-feature
+✓ main already up to date · 1 branch deleted
 ```
 
 ### Sync Does Not Delete Branches with Independent Changes
@@ -95,9 +104,10 @@ $ # Independently modify same file on main with different content
 $ git checkout main > /dev/null
 $ echo "independent main change" > shared.txt && git add shared.txt && git commit -m "chore: independent change" > /dev/null
 $ sc sync --yes
-Pulling main from remote...
-Checking for merged branches...
-Everything up to date.
+Sync · main
+
+  checking 1 branch…
+✓ main already up to date · 1 branch checked, nothing to clean up
 ```
 
 ### Sync with Stacked Branches and Reparenting
@@ -116,10 +126,13 @@ $ git checkout main && git merge feature-a --ff-only > /dev/null
 $ echo "after merge" > post.txt && git add post.txt && git commit -m "After merge" > /dev/null
 $ git checkout feature-b
 $ sc sync --yes
-Pulling main from remote...
-Checking for merged branches...
+Sync · main
+
+  checking 2 branches…
 Reparented feature-b to main
 Deleted branch feature-a
+
+✓ main already up to date · 1 branch deleted · 1 reparented
 ```
 
 After reparenting, the stack shows feature-b directly above main:
@@ -146,9 +159,11 @@ Created branch 'trunk-safe-feature' from 'main'
 $ git checkout main > /dev/null 2>&1 && git merge trunk-safe-feature --ff-only > /dev/null
 $ echo "post" > post.txt && git add post.txt && git commit -m "Post merge" > /dev/null
 $ sc sync --yes
-Pulling main from remote...
-Checking for merged branches...
+Sync · main
+
+  checking 1 branch…
 Deleted branch trunk-safe-feature
+✓ main already up to date · 1 branch deleted
 ```
 
 Main still exists and is not deleted:
@@ -172,9 +187,11 @@ $ git push -u origin gh-feature > /dev/null 2>&1
 $ # github: add-pr gh-feature 50 main
 $ # github: merge-pr 50
 $ sc sync --yes
-Pulling main from remote...
-Checking for merged branches...
+Sync · test/repo · main
+
+  checking 1 branch…
 Deleted branch gh-feature
+✓ main already up to date · 1 branch deleted
 ```
 
 ### Sync with Closed (Not Merged) PRs

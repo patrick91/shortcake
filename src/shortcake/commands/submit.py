@@ -739,9 +739,8 @@ def _submit(
                     f"Conflict while restacking '{restack_result.conflict_branch}'. "
                     "Resolve conflicts and run 'sc continue', then re-run 'sc submit'."
                 )
-            if restack_result.restacked_branches:
-                for branch in restack_result.restacked_branches:
-                    toolkit.echo(f"Restacked {branch}.")
+            # no echo here: the restack view prints its own
+            # "✓ N branches restacked" footer
         except RestackError as e:
             raise SubmitError(str(e)) from None
 
