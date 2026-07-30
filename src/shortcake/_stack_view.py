@@ -456,9 +456,19 @@ class Working(Live):
     """
 
     def __init__(self, console: Console, message: str) -> None:
+        #: Reassign to describe a later phase. One block spanning several waits
+        #: leaves one blank line behind; a block per wait leaves one each.
         self.message = message
         self.started_at = time.monotonic()
         super().__init__(console=console, refresh_per_second=8, transient=True)
+
+    def __enter__(self) -> Working:
+        # Force the first frame. Live only renders on enter when it already
+        # has a renderable, so a wait that finished quickly drew nothing and
+        # skipped the newline it emits on stop — leaving the blank line after
+        # this block dependent on how long the work happened to take.
+        self.start(refresh=True)
+        return self
 
     def get_renderable(self) -> RenderableType:
         elapsed = time.monotonic() - self.started_at
@@ -466,7 +476,11 @@ class Working(Live):
         line = Text("  ")
         line.append(SPINNER[frame % len(SPINNER)], style=Style(color="cyan"))
         line.append(f" {self.message}", style=DIM)
-        return line
+        # A leading blank so there is a gap under the caller's header while
+        # this runs. It costs nothing afterwards: a transient Live erases
+        # everything it drew, leaving *no* blank line behind — so a caller that
+        # wants one after this block has to print it.
+        return Group(Text(""), line)
 
 
 class LiveStackView(Progress):

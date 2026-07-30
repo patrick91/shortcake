@@ -15,7 +15,7 @@ from shortcake._exceptions import ShortcakeError
 from shortcake._git._core import Repo
 from shortcake._github import GitHubClient, get_github_token, get_repo_info
 from shortcake._output import ShortcakeRichToolkit, get_rich_toolkit
-from shortcake._stack_view import Working
+from shortcake._stack_view import DIM, RowState, StackRow, Working
 from shortcake.commands._sync_review import (
     CLOSED,
     MERGED,
@@ -174,7 +174,6 @@ def _remove_branch_worktrees(repo: Repo, branch: str, result: SyncResult) -> boo
         success, error = git.remove_worktree(repo, path)
         if success:
             result.removed_worktrees.append(WorktreeCleanup(branch, display_path))
-            typer.echo(f"Removed worktree {display_path}")
             continue
 
         all_removed = False
@@ -221,7 +220,6 @@ def _delete_and_reparent(
             success = _reparent_branch(repo, child, grandparent)
             if success:
                 result.reparented_branches[child] = grandparent
-                typer.echo(f"Reparented {child} to {grandparent}")
             else:
                 failed_children.append(child)
 
@@ -365,23 +363,50 @@ def _movers_for(repo: Repo, going: list[str]) -> list[str]:
     return out
 
 
+def _rows_for_cleanup(
+    repo: Repo, trunk: str, going: list[str], movers: list[str]
+) -> tuple[list[StackRow], dict[str, StackRow]]:
+    """The branches this cleanup touches, in stack order.
+
+    Built once from the tree as it is *before* anything is deleted, so rows
+    keep their place while their state changes rather than the tree reshaping
+    under the cursor.
+    """
+    involved = [*going, *movers]
+    all_local = set(git.get_all_local_branches(repo))
+    branch_heads = {b: git.get_branch_head(repo, b) for b in all_local}
+    parents = {
+        branch: git.get_branch_parent(repo, branch, all_local, branch_heads)
+        for branch in involved
+    }
+    known = set(involved)
+
+    rows = [StackRow(trunk, state=RowState.BASE, label=Text("(base)", style=DIM))]
+    for branch in involved:
+        parent = parents.get(branch)
+        rows.append(
+            StackRow(
+                branch,
+                parent=parent if parent in known else trunk,
+                state=RowState.PENDING,
+                label=Text(""),
+            )
+        )
+    return rows, {row.branch: row for row in rows}
+
+
 def _ask_cleanup(
     repo: Repo,
     toolkit: ShortcakeRichToolkit,
     stale: list[StaleBranch],
     trunk: str,
-    trunk_note: str | None,
 ) -> list[str]:
     """Run the review and return the branches to delete."""
-    repo_info = get_repo_info(repo)
-    target = "/".join(repo_info) if repo_info else None
     scope = pick_cleanup(
         toolkit.console,
         stale,
         _movers_for(repo, [s.branch for s in stale]),
         trunk=trunk,
-        target=target,
-        trunk_note=trunk_note,
     )
     if scope == "cancel":
         raise SyncCancelled
@@ -485,13 +510,34 @@ def _sync(
     # shows them transiently and keeps only the outcome.
     streaming = not toolkit.console.is_terminal
     toolkit.echo(header)
-    if streaming:
-        # On a terminal the transient spinner below supplies this blank:
-        # rich's Live emits a newline on stop (live.py, before restoring the
-        # cursor), so adding one here left two in a row once it erased itself.
-        toolkit.echo()
 
-    success, new_sha = git.fetch_and_fast_forward_trunk(repo, trunk)
+    def pull_and_scan(
+        say: Callable[[str], None],
+    ) -> tuple[bool, str | None, list[str], list[StaleBranch]]:
+        ok, sha = git.fetch_and_fast_forward_trunk(repo, trunk)
+        tracked = git.get_tracked_branches(repo)
+        noun = "branch" if len(tracked) == 1 else "branches"
+        say(f"checking {len(tracked)} {noun}…")
+        return ok, sha, tracked, _collect_stale(repo, trunk, tracked)
+
+    # One spinner across both waits: each transient Live leaves a blank line
+    # behind when it stops, so a block per phase stacked them up.
+    pulling = f"pulling {trunk} from origin…"
+    if streaming:
+        # No Live to draw one, so the gap under the header is printed here.
+        toolkit.echo()
+        toolkit.echo(f"  {pulling}")
+        success, new_sha, tracked_branches, stale = pull_and_scan(
+            lambda message: toolkit.echo(f"  {message}")
+        )
+    else:
+        with Working(toolkit.console, pulling) as progress:
+            success, new_sha, tracked_branches, stale = pull_and_scan(
+                lambda message: setattr(progress, "message", message)
+            )
+    # A transient Live erases everything it drew, so the gap before whatever
+    # comes next has to be printed here.
+    toolkit.echo()
 
     trunk_note: str | None = None
     if not success:
@@ -504,22 +550,7 @@ def _sync(
         trunk_note = "already up to date"
     result.trunk = trunk
     result.trunk_note = trunk_note
-    # No echo for the trunk result: it is instant, and the summary repeats it.
-    # Only the per-branch scan below is slow enough to need saying out loud.
-
-    # 2. Detect merged branches
-    tracked_branches = git.get_tracked_branches(repo)
     result.branches_checked = len(tracked_branches)
-    # _collect_stale makes one GitHub call per branch, so a terminal gets a
-    # transient spinner rather than sitting silent through it.
-    noun = "branch" if len(tracked_branches) == 1 else "branches"
-    scanning = f"  checking {len(tracked_branches)} {noun}…"
-    if streaming:
-        toolkit.echo(scanning)
-        stale = _collect_stale(repo, trunk, tracked_branches)
-    else:
-        with Working(toolkit.console, scanning.strip()):
-            stale = _collect_stale(repo, trunk, tracked_branches)
 
     # Reparenting skips anything that is going away, whichever scope is chosen.
     all_removing: set[str] = {item.branch for item in stale}
@@ -549,23 +580,58 @@ def _sync(
                 )
             going = []
         else:
-            going = _ask_cleanup(repo, toolkit, stale, trunk, trunk_note)
+            going = _ask_cleanup(repo, toolkit, stale, trunk)
 
         # Only what is actually being deleted should be skipped when
         # reparenting; a kept branch is still a valid parent.
         all_removing = set(going)
-        for branch in going:
-            delete_result = _delete_and_reparent(
-                repo, branch, trunk, current_branch, all_removing, result
-            )
-            current_branch = delete_result.current_branch
-            if delete_result.deleted:
-                item = next(s for s in stale if s.branch == branch)
-                if item.reason == CLOSED:
-                    result.closed_branches.append(branch)
+        if going:
+            movers = _movers_for(repo, going)
+            rows, by_branch = _rows_for_cleanup(repo, trunk, going, movers)
+            noun = "branch" if len(going) == 1 else "branches"
+            view, _ = toolkit.stack_view(rows, f"Cleaning up {len(going)} {noun}")
+            view.__enter__()
+
+            for branch in going:
+                row = by_branch[branch]
+                row.state = RowState.ACTIVE
+                row.label = Text("deleting…", style=Style(color="cyan"))
+                view.sync()
+
+                delete_result = _delete_and_reparent(
+                    repo, branch, trunk, current_branch, all_removing, result
+                )
+                current_branch = delete_result.current_branch
+
+                # Label movers as we go, but leave them PENDING: deleting a
+                # chain moves the same child more than once, and the
+                # append-only view prints a row the moment it looks finished.
+                # Marking them done here published the first target, naming a
+                # branch that was itself deleted a moment later.
+                for child, parent in result.reparented_branches.items():
+                    by_branch[child].label = Text(
+                        f"reparented onto {parent}", style=Style(color="green")
+                    )
+
+                if delete_result.deleted:
+                    item = next(s for s in stale if s.branch == branch)
+                    if item.reason == CLOSED:
+                        result.closed_branches.append(branch)
+                    else:
+                        result.deleted_branches.append(branch)
+                    row.state = RowState.DONE
+                    row.label = Text("deleted", style=Style(color="green"))
                 else:
-                    result.deleted_branches.append(branch)
-                toolkit.echo(f"Deleted branch {branch}")
+                    row.state = RowState.FAILED
+                    row.label = Text("kept", style=Style(color="red"))
+                view.sync()
+
+            # Nothing can move them now, so they are finished.
+            for child in result.reparented_branches:
+                by_branch[child].state = RowState.DONE
+            view.finish([])
+            view.sync()
+            view.__exit__(None, None, None)
 
     # 3c. Reparent branches whose parent was deleted (merged elsewhere)
     # Re-fetch tracked branches since some may have been deleted above
