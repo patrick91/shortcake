@@ -1,5 +1,7 @@
 """Tests for sync command."""
 
+import re
+import subprocess
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +15,7 @@ from shortcake._git._stack import (
     is_merged,
     is_squash_merged,
 )
+from shortcake._output import get_rich_toolkit
 from shortcake._trailers import Trailers
 from shortcake.cli import app
 from shortcake.commands.restack import RestackResult
@@ -724,7 +727,7 @@ def test_cli_sync_nothing_to_do(
     result = runner.invoke(app, ["sync"])
 
     assert result.exit_code == 0
-    assert "Everything up to date" in result.output
+    assert "nothing to clean up" in result.output
 
 
 def test_cli_sync_dry_run(
@@ -787,12 +790,14 @@ def test_cli_sync_uncommitted_changes(
 def test_cli_sync_user_declines(
     repo_with_merged_branch: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test CLI sync when user declines deletion."""
+    """Choosing "Keep everything" in the review deletes nothing."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: True)
+    monkeypatch.setattr("shortcake.commands.sync.pick_cleanup", lambda *a, **k: "none")
+    monkeypatch.setattr(type(get_rich_toolkit().console), "is_terminal", True)
     git.switch_branch(repo_with_merged_branch, "main")
 
-    result = runner.invoke(app, ["sync"], input="n\n")
+    result = runner.invoke(app, ["sync"])
 
     assert result.exit_code == 0
     # Branch should still exist
@@ -805,9 +810,13 @@ def test_cli_sync_user_accepts(
     """Test CLI sync when user accepts deletion."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: True)
+    monkeypatch.setattr("shortcake.commands.sync.pick_cleanup", lambda *a, **k: "all")
+    monkeypatch.setattr(type(get_rich_toolkit().console), "is_terminal", True)
+    monkeypatch.setattr("shortcake.commands.sync.pick_cleanup", lambda *a, **k: "all")
+    monkeypatch.setattr(type(get_rich_toolkit().console), "is_terminal", True)
     git.switch_branch(repo_with_merged_branch, "main")
 
-    result = runner.invoke(app, ["sync"], input="y\n")
+    result = runner.invoke(app, ["sync"])
 
     assert result.exit_code == 0
     assert "Deleted branch feature" in result.output
@@ -981,7 +990,7 @@ def test_sync_restack_output(
 
     assert result.exit_code == 0
     # Should show restack messages
-    assert "Restacked" in result.output or "Rebasing" in result.output
+    assert "restacked" in result.output
 
 
 def test_cli_sync_conflict_exit(
@@ -1438,6 +1447,8 @@ def test_cli_sync_github_merged_user_accepts(
     """Test CLI sync prompts user for GitHub-detected merged branches."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: True)
+    monkeypatch.setattr("shortcake.commands.sync.pick_cleanup", lambda *a, **k: "all")
+    monkeypatch.setattr(type(get_rich_toolkit().console), "is_terminal", True)
     git.switch_branch(repo_with_stack, "main")
 
     github_status = _GitHubBranchStatus(merged=["branch_a"], closed=[])
@@ -1457,6 +1468,8 @@ def test_cli_sync_github_closed_user_accepts(
     """Test CLI sync prompts user for GitHub-detected closed branches."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: True)
+    monkeypatch.setattr("shortcake.commands.sync.pick_cleanup", lambda *a, **k: "all")
+    monkeypatch.setattr(type(get_rich_toolkit().console), "is_terminal", True)
     git.switch_branch(repo_with_stack, "main")
 
     github_status = _GitHubBranchStatus(merged=[], closed=["branch_a"])
@@ -1984,3 +1997,82 @@ def test_sync_keeps_merged_branch_when_reparent_fails(
     assert git.get_branch_parent(repo_with_merged_branch, "child", all_branches) == (
         "feature"
     )
+
+
+def test_cli_sync_cancel_in_review_deletes_nothing(
+    repo_with_merged_branch: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cancel is a real option: nothing is deleted and sync says so."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: True)
+    monkeypatch.setattr(
+        "shortcake.commands.sync.pick_cleanup", lambda *a, **k: "cancel"
+    )
+    monkeypatch.setattr(type(get_rich_toolkit().console), "is_terminal", True)
+    git.switch_branch(repo_with_merged_branch, "main")
+
+    result = runner.invoke(app, ["sync"])
+
+    assert result.exit_code == 0
+    assert "Cancelled" in result.output
+    assert git.branch_exists(repo_with_merged_branch, "feature")
+
+
+def test_cli_sync_safe_only_keeps_the_unrecoverable_branch(
+    repo_with_merged_branch: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ "Safe only" deletes what is recoverable and leaves the rest alone."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("shortcake.commands.sync._stdin_is_interactive", lambda: True)
+    monkeypatch.setattr("shortcake.commands.sync.pick_cleanup", lambda *a, **k: "safe")
+    monkeypatch.setattr(type(get_rich_toolkit().console), "is_terminal", True)
+    git.switch_branch(repo_with_merged_branch, "main")
+
+    result = runner.invoke(app, ["sync"])
+
+    assert result.exit_code == 0
+    # 'feature' is merged, so it counts as safe and goes
+    assert not git.branch_exists(repo_with_merged_branch, "feature")
+
+
+def test_cli_sync_summary_counts_removed_worktrees(
+    repo_with_merged_branch: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A removed worktree is reported in the closing summary."""
+    monkeypatch.chdir(tmp_path)
+    git.switch_branch(repo_with_merged_branch, "main")
+
+    worktree = tmp_path / "wt-feature"
+    subprocess.run(
+        ["git", "worktree", "add", str(worktree), "feature"],
+        cwd=repo_with_merged_branch.workdir,
+        capture_output=True,
+        check=True,
+    )
+
+    result = runner.invoke(app, ["sync", "--yes"])
+
+    assert result.exit_code == 0
+    assert "1 worktree removed" in result.output
+
+
+def test_cli_sync_header_is_followed_by_exactly_one_blank_line(
+    repo_with_stack_behind: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: two blank lines sat under the header on a terminal.
+
+    rich's Live emits a newline when it stops, before restoring the cursor for
+    a transient display, so the erased spinner leaves one behind. Printing our
+    own as well gave two.
+    """
+    monkeypatch.chdir(tmp_path)
+    with patch.object(type(get_rich_toolkit().console), "is_terminal", True):
+        output = runner.invoke(app, ["sync"]).output
+
+    clean = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", output)
+    # a real terminal erases the spinner frames; drop them as it would
+    lines = [line for line in clean.splitlines() if "checking" not in line]
+    header = next(i for i, line in enumerate(lines) if line.startswith("Sync ·"))
+
+    assert not lines[header + 1].strip(), "expected a blank line under the header"
+    assert lines[header + 2].strip(), "expected only one blank line under the header"

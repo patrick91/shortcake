@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 from rich.console import Console, Group, RenderableType
+from rich.live import Live
 from rich.style import Style
 from rich.text import Text
 from rich_toolkit.progress import Progress
@@ -444,6 +445,28 @@ class StackRenderer:
         return Group(  # pragma: no cover
             *self.progress_parts(frame, "minimal", self.console.height)
         )
+
+
+class Working(Live):
+    """A transient spinner line while a blocking call runs.
+
+    rich-toolkit's own progress animates by fading the title's colour rather
+    than drawing a glyph, which does not read as a loader. This uses the same
+    marker the stack view spins, so waiting looks the same everywhere.
+    """
+
+    def __init__(self, console: Console, message: str) -> None:
+        self.message = message
+        self.started_at = time.monotonic()
+        super().__init__(console=console, refresh_per_second=8, transient=True)
+
+    def get_renderable(self) -> RenderableType:
+        elapsed = time.monotonic() - self.started_at
+        frame = int(elapsed / (SPINNER_INTERVAL_MS / 1000))
+        line = Text("  ")
+        line.append(SPINNER[frame % len(SPINNER)], style=Style(color="cyan"))
+        line.append(f" {self.message}", style=DIM)
+        return line
 
 
 class LiveStackView(Progress):

@@ -399,7 +399,6 @@ Restacking 1 branch
   ● feature-b   rebased
 
 ✓ 1 branch restacked
-Restacked feature-b.
 Submitting 2 branches to test/repo
 
   ● feature-a   #1
