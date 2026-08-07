@@ -25,6 +25,117 @@ class PRInfo:
     state: str  # "open", "closed", "merged"
     is_draft: bool
     head_ref: str | None = None  # Branch name (head ref)
+    stack: "PullRequestStackMembership | None" = None
+
+
+@dataclass(frozen=True)
+class PullRequestStackMembership:
+    """Native GitHub stack membership included on pull request resources."""
+
+    id: int
+    number: int
+    size: int
+    position: int
+    base_ref: str
+    base_sha: str
+
+
+@dataclass(frozen=True)
+class NativeStackPullRequest:
+    """A pull request entry in GitHub's native stack resource."""
+
+    number: int
+    state: str
+    is_draft: bool
+    merged_at: str | None
+    head_ref: str
+    head_sha: str
+
+    @property
+    def is_open(self) -> bool:
+        return self.state == "open" and self.merged_at is None
+
+
+@dataclass(frozen=True)
+class NativeStack:
+    """A native GitHub pull request stack."""
+
+    id: int
+    number: int
+    node_id: str
+    url: str
+    base_ref: str
+    is_open: bool
+    created_at: str
+    pull_requests: tuple[NativeStackPullRequest, ...]
+
+    @property
+    def pr_numbers(self) -> list[int]:
+        return [pr.number for pr in self.pull_requests]
+
+    @property
+    def open_pr_numbers(self) -> list[int]:
+        return [pr.number for pr in self.pull_requests if pr.is_open]
+
+
+def _parse_pull_request_stack(
+    data: dict[str, object] | None,
+) -> PullRequestStackMembership | None:
+    if not data:
+        return None
+
+    base = data["base"]
+    if not isinstance(base, dict):  # pragma: no cover - GitHub schema guarantee
+        return None
+
+    return PullRequestStackMembership(
+        id=int(data["id"]),
+        number=int(data["number"]),
+        size=int(data["size"]),
+        position=int(data["position"]),
+        base_ref=str(base["ref"]),
+        base_sha=str(base["sha"]),
+    )
+
+
+def _parse_native_stack(data: dict[str, object]) -> NativeStack:
+    base = data["base"]
+    if not isinstance(base, dict):  # pragma: no cover - GitHub schema guarantee
+        raise TypeError("Native stack base must be an object")
+
+    raw_pull_requests = data["pull_requests"]
+    if not isinstance(raw_pull_requests, list):  # pragma: no cover
+        raise TypeError("Native stack pull_requests must be a list")
+
+    pull_requests: list[NativeStackPullRequest] = []
+    for raw_pr in raw_pull_requests:
+        if not isinstance(raw_pr, dict):  # pragma: no cover
+            raise TypeError("Native stack pull request must be an object")
+        head = raw_pr["head"]
+        if not isinstance(head, dict):  # pragma: no cover
+            raise TypeError("Native stack pull request head must be an object")
+        merged_at = raw_pr.get("merged_at")
+        pull_requests.append(
+            NativeStackPullRequest(
+                number=int(raw_pr["number"]),
+                state=str(raw_pr["state"]),
+                is_draft=bool(raw_pr["draft"]),
+                merged_at=str(merged_at) if merged_at is not None else None,
+                head_ref=str(head["ref"]),
+                head_sha=str(head["sha"]),
+            )
+        )
+
+    return NativeStack(
+        id=int(data["id"]),
+        number=int(data["number"]),
+        node_id=str(data["node_id"]),
+        url=str(data["url"]),
+        base_ref=str(base["ref"]),
+        is_open=bool(data["open"]),
+        created_at=str(data["created_at"]),
+        pull_requests=tuple(pull_requests),
+    )
 
 
 @dataclass
@@ -36,6 +147,9 @@ class BranchGitHubInfo:
     pr_is_draft: bool
     pr_state: str | None  # "open" | "merged" | None (no PR)
     check_status: str | None  # "success" | "failure" | "pending" | None
+    native_stack_number: int | None = None
+    native_stack_position: int | None = None
+    native_stack_size: int | None = None
 
 
 def get_github_token() -> str | None:
@@ -201,6 +315,8 @@ class GitHubClient:
             body=pr["body"] or "",
             state=pr["state"],
             is_draft=pr.get("draft", False),
+            head_ref=pr.get("head", {}).get("ref"),
+            stack=_parse_pull_request_stack(pr.get("stack")),
         )
 
     def get_pr_by_number(self, pr_number: int) -> PRInfo | None:
@@ -226,6 +342,7 @@ class GitHubClient:
             state=pr["state"],
             is_draft=pr.get("draft", False),
             head_ref=pr["head"]["ref"],
+            stack=_parse_pull_request_stack(pr.get("stack")),
         )
 
     def get_check_status(self, branch: str) -> str | None:
@@ -275,6 +392,9 @@ class GitHubClient:
                 pr_is_draft=pr.is_draft,
                 pr_state="open",
                 check_status=check_status,
+                native_stack_number=pr.stack.number if pr.stack else None,
+                native_stack_position=pr.stack.position if pr.stack else None,
+                native_stack_size=pr.stack.size if pr.stack else None,
             )
 
         merged_number = self.get_merged_pr_number(branch)
@@ -390,7 +510,65 @@ class GitHubClient:
             body=pr["body"] or "",
             state=pr["state"],
             is_draft=pr.get("draft", False),
+            head_ref=pr.get("head", {}).get("ref"),
+            stack=_parse_pull_request_stack(pr.get("stack")),
         )
+
+    def list_stacks(self, pull_request: int | None = None) -> list[NativeStack]:
+        """List native GitHub stacks, optionally filtering by PR number.
+
+        GitHub returns 404 while stacked pull requests are unavailable for a
+        repository; callers use that response for capability detection.
+        """
+        params = {"pull_request": pull_request} if pull_request is not None else None
+        response = self.client.get(
+            f"/repos/{self.owner}/{self.repo}/stacks",
+            params=params,
+        )
+        response.raise_for_status()
+        return [_parse_native_stack(stack) for stack in response.json()]
+
+    def get_stack(self, stack_number: int) -> NativeStack | None:
+        """Get a native stack, returning None when it no longer exists."""
+        response = self.client.get(
+            f"/repos/{self.owner}/{self.repo}/stacks/{stack_number}",
+        )
+        if response.status_code == 404:
+            return None
+        response.raise_for_status()
+        return _parse_native_stack(response.json())
+
+    def create_stack(self, pull_requests: list[int]) -> NativeStack:
+        """Create a native stack from PR numbers ordered bottom-to-top."""
+        response = self.client.post(
+            f"/repos/{self.owner}/{self.repo}/stacks",
+            json={"pull_requests": pull_requests},
+        )
+        response.raise_for_status()
+        return _parse_native_stack(response.json())
+
+    def add_to_stack(self, stack_number: int, pull_requests: list[int]) -> NativeStack:
+        """Append PR numbers to the top of a native stack."""
+        response = self.client.post(
+            f"/repos/{self.owner}/{self.repo}/stacks/{stack_number}/add",
+            json={"pull_requests": pull_requests},
+        )
+        response.raise_for_status()
+        return _parse_native_stack(response.json())
+
+    def unstack(self, stack_number: int) -> NativeStack | None:
+        """Remove every unmerged PR from a native stack.
+
+        GitHub returns 204 when that dissolves the stack, otherwise it returns
+        the remaining stack containing merged or queued PRs.
+        """
+        response = self.client.post(
+            f"/repos/{self.owner}/{self.repo}/stacks/{stack_number}/unstack",
+        )
+        response.raise_for_status()
+        if response.status_code == 204:
+            return None
+        return _parse_native_stack(response.json())
 
     def update_pr(
         self,

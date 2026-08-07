@@ -16,6 +16,9 @@ class CachedPRInfo:
     is_merged: bool = False
     is_closed: bool = False
     url: str | None = None
+    native_stack_number: int | None = None
+    native_stack_position: int | None = None
+    native_stack_size: int | None = None
 
 
 def _get_cache_path(repo: Repo) -> Path:
@@ -71,6 +74,9 @@ def update_pr_cache(
     is_merged: bool = False,
     is_closed: bool = False,
     url: str | None = None,
+    native_stack_number: int | None = None,
+    native_stack_position: int | None = None,
+    native_stack_size: int | None = None,
 ) -> None:
     """Update cache for a single branch.
 
@@ -89,6 +95,9 @@ def update_pr_cache(
         is_merged=is_merged,
         is_closed=is_closed,
         url=url,
+        native_stack_number=native_stack_number,
+        native_stack_position=native_stack_position,
+        native_stack_size=native_stack_size,
     )
     save_pr_cache(repo, cache)
 

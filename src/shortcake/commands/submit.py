@@ -14,15 +14,25 @@ from rich.style import Style
 from rich.text import Text
 
 from shortcake import _git as git
-from shortcake._cache import update_pr_cache
+from shortcake._cache import load_pr_cache, update_pr_cache
 from shortcake._exceptions import ShortcakeError
 from shortcake._git._core import Repo
 from shortcake._github import GitHubClient, get_github_token, get_repo_info, push_branch
+from shortcake._native_stack import (
+    NATIVE_STACK_MINIMUM_MESSAGE,
+    NativeStackAction,
+    NativeStackPreparationAction,
+    NativeStackSyncResult,
+    fallback_native_stack,
+    prepare_native_stack_restructure,
+    reconcile_native_stack,
+)
 from shortcake._output import ShortcakeRichToolkit, get_rich_toolkit
 from shortcake._pr_stack import (
     _parse_all_prs_from_body,
     _parse_merged_prs_from_body,
     _parse_stack_order_from_body,
+    _remove_stack_pr_descriptions,
     _sync_pr_descriptions_for_branches,
     _sync_stack_pr_descriptions,
 )
@@ -54,6 +64,7 @@ class BranchPlan:
     existing_pr_number: int | None = None
     existing_pr_url: str | None = None
     existing_pr_base: str | None = None
+    native_stack_number: int | None = None
     parent: str | None = None
 
 
@@ -75,6 +86,7 @@ class SubmitResult:
     branch_results: list[BranchSubmitResult] = field(default_factory=list)
     stack_branches: list[str] = field(default_factory=list)
     planned: list[BranchPlan] = field(default_factory=list)
+    native_stack: NativeStackSyncResult | None = None
 
 
 class SubmitError(ShortcakeError):
@@ -510,6 +522,46 @@ def _submit_footer(
     return lines
 
 
+def _report_native_stack(
+    toolkit: ShortcakeRichToolkit,
+    native: NativeStackSyncResult,
+) -> None:
+    """Render the native GitHub stack outcome after branch submission."""
+    if native.synced:
+        action = {
+            NativeStackAction.CREATED: "created",
+            NativeStackAction.UPDATED: "updated",
+            NativeStackAction.RECREATED: "recreated",
+            NativeStackAction.UNCHANGED: "already up to date",
+        }[native.action]
+        toolkit.echo(f"GitHub stack #{native.stack_number} {action}.")
+        return
+
+    if (
+        native.action == NativeStackAction.FALLBACK
+        and native.message == NATIVE_STACK_MINIMUM_MESSAGE
+    ):
+        return
+
+    if native.message:
+        toolkit.echo(f"GitHub stack: {native.message}", err=True)
+
+
+def _with_pr_body_fallback(
+    native: NativeStackSyncResult,
+) -> NativeStackSyncResult:
+    """Add the submit fallback consequence to an unsuccessful native outcome."""
+    assert native.message is not None
+    reason = native.message.rstrip(".")
+    return NativeStackSyncResult(
+        action=native.action,
+        stack_number=native.stack_number,
+        message=(
+            f"{reason}. The managed PR-body map was kept as a compatibility fallback."
+        ),
+    )
+
+
 def _get_submit_github_details(repo: Repo) -> tuple[str, str, str]:
     """Return the token, owner, and repository used for submission."""
     token = get_github_token()
@@ -580,6 +632,9 @@ def _build_branch_plans(
                         existing_pr_number=existing_pr.number,
                         existing_pr_url=existing_pr.url,
                         existing_pr_base=existing_pr.base,
+                        native_stack_number=(
+                            existing_pr.stack.number if existing_pr.stack else None
+                        ),
                         parent=parent,
                     )
                 )
@@ -942,7 +997,7 @@ def _submit(
                     except (httpx.HTTPStatusError, httpx.RequestError):
                         pass
 
-        # Dry run: show plan and return
+        # Dry run: show plan and return before any stack mutation.
         if dry_run:
             toolkit.echo(f"Would submit {len(stack_branches)} branch(es):")
             for plan in plans:
@@ -956,6 +1011,108 @@ def _submit(
                     toolkit.echo(f"  {plan.branch} (create new PR)")
             result.planned = plans
             return result
+
+        # GitHub's stack API is append-only. Inspect a native stack before
+        # changing PR bases so reorder/move/fold operations can unstack safely.
+        ordered_existing_prs = [
+            pr_numbers[branch]
+            for branch in stack_branches
+            if isinstance(pr_numbers.get(branch), int)
+        ]
+        cached_prs = load_pr_cache(repo)
+        owned_existing_prs = set(historical_prs.values()) | set(pr_numbers.values())
+        changing_bases = any(
+            plan.action == PRAction.UPDATED and plan.existing_pr_base != plan.parent
+            for plan in plans
+        )
+        native_preparation = prepare_native_stack_restructure(
+            gh,
+            ordered_existing_prs,
+            owned_existing_prs=owned_existing_prs,
+            needs_restructure=False,
+            allow_recreate=False,
+        )
+        remote_before_submit = native_preparation.remote_stack
+        if remote_before_submit is not None:
+            owned_existing_prs.update(
+                cached.number
+                for cached in cached_prs.values()
+                if cached.native_stack_number == remote_before_submit.number
+            )
+
+        # A full submit also owns removals. Appends do not need a rebuild, but
+        # any other difference between existing local PRs and the remote stack
+        # does. Scoped submits deliberately preserve remote upstack PRs.
+        full_linear_submit = (
+            submit_stack
+            and explicit_branches is None
+            and stack_branches == full_stack_branches
+            and not _stack_forks(repo, full_stack_branches)
+        )
+        if full_linear_submit and remote_before_submit is not None:
+            changing_bases = (
+                remote_before_submit.open_pr_numbers != ordered_existing_prs
+                or changing_bases
+            )
+
+        if changing_bases:
+            native_preparation = prepare_native_stack_restructure(
+                gh,
+                ordered_existing_prs,
+                owned_existing_prs=owned_existing_prs,
+                needs_restructure=True,
+                allow_recreate=full_linear_submit,
+            )
+            remote_before_submit = (
+                native_preparation.remote_stack or remote_before_submit
+            )
+            if not native_preparation.can_continue:
+                raise SubmitError(
+                    native_preparation.message
+                    or "The native GitHub stack could not be safely restructured."
+                )
+            if (
+                native_preparation.action == NativeStackPreparationAction.UNAVAILABLE
+                and any(plan.native_stack_number for plan in plans)
+            ):
+                raise SubmitError(
+                    "The PRs belong to a native GitHub stack, but its stack "
+                    "endpoint is unavailable; their bases were left unchanged."
+                )
+
+        if remote_before_submit is not None:
+            native_history = list(reversed(remote_before_submit.pull_requests))
+            if not historical_stack_order:
+                historical_stack_order = [pr.head_ref for pr in native_history]
+            for pull_request in remote_before_submit.pull_requests:
+                historical_prs.setdefault(pull_request.head_ref, pull_request.number)
+                if pull_request.merged_at is not None:
+                    historical_merged_prs.setdefault(
+                        pull_request.head_ref, pull_request.number
+                    )
+                else:
+                    pr_numbers.setdefault(pull_request.head_ref, pull_request.number)
+
+        # Migrating an existing body-mapped stack must be atomic. A scoped
+        # submit may leave open upstack PRs out of the selected sequence; do
+        # not create a smaller native stack and then remove their only complete
+        # stack overview. PRs already represented by the remote native stack
+        # are safe because GitHub still owns their visualization.
+        native_open_prs = (
+            set(remote_before_submit.open_pr_numbers)
+            if remote_before_submit is not None
+            else set()
+        )
+        selected_branches = set(stack_branches)
+        legacy_unselected_prs = list(
+            dict.fromkeys(
+                historical_prs[branch]
+                for branch in full_stack_branches
+                if branch not in selected_branches
+                and branch in historical_prs
+                and historical_prs[branch] not in native_open_prs
+            )
+        )
 
         # Phase 2: Execute plan - push and create/update PRs. The block is
         # already open showing the plan; it turns into progress in place, so
@@ -1104,15 +1261,110 @@ def _submit(
         view.sync()
         view.__exit__(None, None, None)
 
-        # Phase 3: Update PR bodies for the submitted stack.
-        with contextlib.suppress(httpx.HTTPStatusError, httpx.RequestError):
-            _sync_stack_pr_descriptions(
-                repo,
-                gh,
-                owner,
-                stack_branches,
-                pr_numbers=pr_numbers,
+        # Phase 3: Publish the linear PR sequence through GitHub's native stack
+        # API. Forks and unavailable/diverged APIs retain the body map fallback.
+        desired_prs = [
+            pr_numbers[branch]
+            for branch in stack_branches
+            if isinstance(pr_numbers.get(branch), int)
+        ]
+        submit_failed = any(branch.error for branch in result.branch_results)
+        if submit_failed:
+            result.native_stack = NativeStackSyncResult(
+                NativeStackAction.FAILED,
+                message="Native stack publishing was skipped after a branch failed.",
             )
+        elif _stack_forks(repo, full_stack_branches):
+            result.native_stack = fallback_native_stack(
+                "GitHub native stacks require a linear sequence, but this "
+                "Shortcake tree is non-linear."
+            )
+        elif native_preparation.action == NativeStackPreparationAction.UNAVAILABLE:
+            result.native_stack = NativeStackSyncResult(
+                NativeStackAction.UNAVAILABLE,
+                message=native_preparation.message,
+            )
+        elif native_preparation.action in {
+            NativeStackPreparationAction.BLOCKED,
+            NativeStackPreparationAction.FAILED,
+        }:
+            result.native_stack = fallback_native_stack(
+                native_preparation.message or "The native stack could not be inspected."
+            )
+        elif legacy_unselected_prs:
+            noun = "PR" if len(legacy_unselected_prs) == 1 else "PRs"
+            formatted_prs = ", ".join(f"#{number}" for number in legacy_unselected_prs)
+            result.native_stack = fallback_native_stack(
+                f"The existing Shortcake stack includes unselected {noun} "
+                f"{formatted_prs}; run 'sc submit --stack' to migrate the whole stack."
+            )
+        else:
+            result.native_stack = reconcile_native_stack(
+                gh,
+                desired_prs,
+                recreated=(
+                    native_preparation.action == NativeStackPreparationAction.UNSTACKED
+                ),
+            )
+
+        if (
+            not result.native_stack.synced
+            and result.native_stack.message != NATIVE_STACK_MINIMUM_MESSAGE
+        ):
+            result.native_stack = _with_pr_body_fallback(result.native_stack)
+
+        if result.native_stack.synced:
+            cleanup_branches = list(
+                dict.fromkeys([*stack_branches, *historical_stack_order])
+            )
+            cleanup_prs = []
+            for branch in cleanup_branches:
+                with contextlib.suppress(httpx.HTTPStatusError, httpx.RequestError):
+                    pull_request = gh.get_pr_for_branch(branch)
+                    if pull_request is not None:
+                        cleanup_prs.append(pull_request)
+                        update_pr_cache(
+                            repo,
+                            branch,
+                            pull_request.number,
+                            is_draft=pull_request.is_draft,
+                            url=pull_request.url,
+                            native_stack_number=(
+                                pull_request.stack.number
+                                if pull_request.stack
+                                else (
+                                    result.native_stack.stack_number
+                                    if isinstance(result.native_stack.stack_number, int)
+                                    else None
+                                )
+                            ),
+                            native_stack_position=(
+                                pull_request.stack.position
+                                if pull_request.stack
+                                else None
+                            ),
+                            native_stack_size=(
+                                pull_request.stack.size if pull_request.stack else None
+                            ),
+                        )
+            with contextlib.suppress(httpx.HTTPStatusError, httpx.RequestError):
+                _remove_stack_pr_descriptions(gh, cleanup_prs)
+        else:
+            with contextlib.suppress(httpx.HTTPStatusError, httpx.RequestError):
+                _sync_stack_pr_descriptions(
+                    repo,
+                    gh,
+                    owner,
+                    stack_branches,
+                    pr_numbers=(
+                        {**historical_prs, **pr_numbers}
+                        if legacy_unselected_prs
+                        else pr_numbers
+                    ),
+                    overview_branches=(
+                        full_stack_branches if legacy_unselected_prs else None
+                    ),
+                )
 
         # Phase 4: Update PRs of branches that moved away from this stack.
         # If the old stack section listed branches that are no longer in the
@@ -1137,6 +1389,8 @@ def _submit(
                     moved_away,
                     sync_bases=True,
                 )
+
+        _report_native_stack(toolkit, result.native_stack)
 
     return result
 
@@ -1282,6 +1536,11 @@ def submit(
                     }
                     for plan in result.planned
                 ],
+                "native_stack": (
+                    result.native_stack.to_data()
+                    if result.native_stack is not None
+                    else None
+                ),
             }
         )
         if any(r.error for r in result.branch_results):

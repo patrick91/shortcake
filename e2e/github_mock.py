@@ -29,11 +29,22 @@ class MockPR:
 
 
 @dataclass
+class MockStack:
+    """A mock native pull request stack."""
+
+    number: int
+    pull_requests: list[int]
+    base: str
+
+
+@dataclass
 class GitHubMockState:
     """State for the mock GitHub server."""
 
     prs: dict[int, MockPR] = field(default_factory=dict)
+    stacks: dict[int, MockStack] = field(default_factory=dict)
     next_pr_number: int = 1
+    next_stack_number: int = 1
     error_mode: str | None = None  # "auth", "rate_limit", or None
 
     def add_pr(
@@ -82,6 +93,29 @@ class GitHubMockState:
         """Find all PRs by head branch and state."""
         return [pr for pr in self.prs.values() if pr.head == head and pr.state == state]
 
+    def stack_for_pr(self, pr_number: int) -> MockStack | None:
+        """Return the native stack containing a PR."""
+        return next(
+            (
+                stack
+                for stack in self.stacks.values()
+                if pr_number in stack.pull_requests
+            ),
+            None,
+        )
+
+    def add_stack(self, pull_requests: list[int]) -> MockStack:
+        """Create a native stack from bottom-to-top PR numbers."""
+        number = self.next_stack_number
+        self.next_stack_number += 1
+        stack = MockStack(
+            number=number,
+            pull_requests=list(pull_requests),
+            base=self.prs[pull_requests[0]].base,
+        )
+        self.stacks[number] = stack
+        return stack
+
 
 def create_mock_handler(state: GitHubMockState, owner: str, repo: str):
     """Create a request handler with the given state."""
@@ -118,7 +152,7 @@ def create_mock_handler(state: GitHubMockState, owner: str, repo: str):
 
         def _pr_to_json(self, pr: MockPR) -> dict[str, Any]:
             """Convert PR to JSON response format."""
-            return {
+            result = {
                 "number": pr.number,
                 "html_url": f"https://github.com/{owner}/{repo}/pull/{pr.number}",
                 "base": {"ref": pr.base},
@@ -128,6 +162,47 @@ def create_mock_handler(state: GitHubMockState, owner: str, repo: str):
                 "state": pr.state,
                 "draft": pr.draft,
                 "merged_at": pr.merged_at,
+            }
+            stack = state.stack_for_pr(pr.number)
+            if stack is not None:
+                result["stack"] = {
+                    "id": stack.number,
+                    "number": stack.number,
+                    "size": len(stack.pull_requests),
+                    "position": stack.pull_requests.index(pr.number) + 1,
+                    "base": {"ref": stack.base, "sha": "0" * 40},
+                }
+            else:
+                result["stack"] = None
+            return result
+
+        def _stack_to_json(self, stack: MockStack) -> dict[str, Any]:
+            """Convert a native stack to GitHub's preview response shape."""
+            return {
+                "id": stack.number,
+                "number": stack.number,
+                "node_id": f"STACK_{stack.number}",
+                "url": (
+                    f"https://api.github.com/repos/{owner}/{repo}/stacks/{stack.number}"
+                ),
+                "base": {"ref": stack.base, "sha": "0" * 40},
+                "open": any(
+                    state.prs[number].state == "open" for number in stack.pull_requests
+                ),
+                "created_at": "2026-07-30T00:00:00Z",
+                "pull_requests": [
+                    {
+                        "number": number,
+                        "state": state.prs[number].state,
+                        "draft": state.prs[number].draft,
+                        "merged_at": state.prs[number].merged_at,
+                        "head": {
+                            "ref": state.prs[number].head,
+                            "sha": f"{number:040x}",
+                        },
+                    }
+                    for number in stack.pull_requests
+                ],
             }
 
         def do_GET(self) -> None:
@@ -139,6 +214,28 @@ def create_mock_handler(state: GitHubMockState, owner: str, repo: str):
             parsed = urlparse(self.path)
             path = parsed.path
             query_params = parse_qs(parsed.query)
+
+            stacks_list_match = re.match(rf"^/repos/{owner}/{repo}/stacks$", path)
+            if stacks_list_match:
+                pull_request = query_params.get("pull_request")
+                stacks = list(state.stacks.values())
+                if pull_request:
+                    number = int(pull_request[0])
+                    stacks = [
+                        stack for stack in stacks if number in stack.pull_requests
+                    ]
+                self._send_json([self._stack_to_json(stack) for stack in stacks])
+                return
+
+            stack_get_match = re.match(rf"^/repos/{owner}/{repo}/stacks/(\d+)$", path)
+            if stack_get_match:
+                stack_number = int(stack_get_match.group(1))
+                stack = state.stacks.get(stack_number)
+                if stack is None:
+                    self._send_error_response(404, "Not Found")
+                else:
+                    self._send_json(self._stack_to_json(stack))
+                return
 
             # GET /repos/{owner}/{repo}/pulls?head={owner}:{branch}&state={state}
             pulls_list_match = re.match(rf"^/repos/{owner}/{repo}/pulls$", path)
@@ -174,8 +271,55 @@ def create_mock_handler(state: GitHubMockState, owner: str, repo: str):
             if self._check_error_mode():
                 return
 
-            # POST /repos/{owner}/{repo}/pulls
             parsed = urlparse(self.path)
+            stack_create_match = re.match(
+                rf"^/repos/{owner}/{repo}/stacks$", parsed.path
+            )
+            if stack_create_match:
+                content_length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(content_length))
+                stack = state.add_stack(body["pull_requests"])
+                self._send_json(self._stack_to_json(stack), 201)
+                return
+
+            stack_add_match = re.match(
+                rf"^/repos/{owner}/{repo}/stacks/(\d+)/add$", parsed.path
+            )
+            if stack_add_match:
+                stack_number = int(stack_add_match.group(1))
+                stack = state.stacks.get(stack_number)
+                if stack is None:
+                    self._send_error_response(404, "Not Found")
+                    return
+                content_length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(content_length))
+                stack.pull_requests.extend(body["pull_requests"])
+                self._send_json(self._stack_to_json(stack))
+                return
+
+            stack_unstack_match = re.match(
+                rf"^/repos/{owner}/{repo}/stacks/(\d+)/unstack$", parsed.path
+            )
+            if stack_unstack_match:
+                stack_number = int(stack_unstack_match.group(1))
+                if stack_number not in state.stacks:
+                    self._send_error_response(404, "Not Found")
+                    return
+                stack = state.stacks[stack_number]
+                stack.pull_requests = [
+                    number
+                    for number in stack.pull_requests
+                    if state.prs[number].merged_at is not None
+                ]
+                if stack.pull_requests:
+                    self._send_json(self._stack_to_json(stack))
+                else:
+                    del state.stacks[stack_number]
+                    self.send_response(204)
+                    self.end_headers()
+                return
+
+            # POST /repos/{owner}/{repo}/pulls
             pulls_create_match = re.match(
                 rf"^/repos/{owner}/{repo}/pulls$", parsed.path
             )
@@ -284,6 +428,10 @@ class GitHubMockServer:
     def merge_pr(self, number: int) -> bool:
         """Mark a PR as merged."""
         return self.state.merge_pr(number)
+
+    def add_stack(self, pull_requests: list[int]) -> MockStack:
+        """Add a native stack to the mock state."""
+        return self.state.add_stack(pull_requests)
 
     def set_error_mode(self, mode: str | None) -> None:
         """Set error mode: 'auth', 'rate_limit', or None to clear."""

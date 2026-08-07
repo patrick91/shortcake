@@ -33,6 +33,9 @@ class BranchNode:
     pr_is_merged: bool = False
     pr_is_closed: bool = False
     pr_url: str | None = None
+    native_stack_number: int | None = None
+    native_stack_position: int | None = None
+    native_stack_size: int | None = None
     latest_commit_subject: str | None = None
     worktree_paths: list[str] = field(default_factory=list)
     needs_restack: bool = False
@@ -48,6 +51,12 @@ class BranchNode:
                 "merged": self.pr_is_merged,
                 "closed": self.pr_is_closed,
             }
+            if self.native_stack_number is not None:
+                pr["stack"] = {
+                    "number": self.native_stack_number,
+                    "position": self.native_stack_position,
+                    "size": self.native_stack_size,
+                }
         return {
             "name": self.name,
             "parent": self.parent_name,
@@ -219,6 +228,11 @@ class StackTree:
                     pr_suffix += " [dim]closed[/]"
                 elif node.pr_is_draft:
                     pr_suffix += " [dim]draft[/]"
+                if node.native_stack_number is not None:
+                    pr_suffix += (
+                        f" [dim]stack #{node.native_stack_number} "
+                        f"{node.native_stack_position}/{node.native_stack_size}[/]"
+                    )
 
             # Warning/status suffix
             suffix = " (current)" if node.is_current else ""

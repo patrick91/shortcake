@@ -16,6 +16,10 @@ def test_skill_prints_stacked_prs() -> None:
     assert "sc adopt X -p <parent>" in result.output
     assert "sc continue" in result.output
     assert "needs restack" in result.output
+    assert "native GitHub stack" in result.output
+    assert "sc co <pr-number>" in result.output
+    assert "run `sc pull`" in result.output
+    assert "sc pull --stack" not in result.output
 
 
 def test_skill_list_includes_all_bundled_skills() -> None:

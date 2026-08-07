@@ -102,7 +102,12 @@ trailer is "untracked" and most sc commands refuse to touch it.
 4. `sc restack` — rebases all descendants after a parent changed.
 5. `sc submit --dry-run` to preview, then `sc submit` — pushes the current
    branch and its downstack ancestors, then creates/updates their PRs in
-   dependency order. Use `sc submit --stack` to include upstack branches too.
+   dependency order and registers a linear sequence as a native GitHub stack.
+   Use `sc submit --stack` to include upstack branches too. A full-stack submit
+   can safely recreate GitHub's append-only stack after a local reorder; a
+   scoped submit refuses to dismantle unselected PRs. Existing PR-body stacks
+   also migrate atomically: use `sc submit --stack` to include every open layer
+   before switching their remote representation to GitHub.
 
 Pre-commit hooks: sc runs them itself and self-heals the "formatter rewrote
 files, exit 1" pattern by re-staging and re-running once. Do not run commands
@@ -121,11 +126,17 @@ sc owns the rebase state.
 non-interactive shells it never prompts: merged branches are kept and a hint
 suggests `--yes`. Run `sc sync --yes` to delete merged branches. After the
 release bot or teammates push to trunk, re-fetch before cutting new branches.
+If GitHub rebases a stack server-side, run `sc pull`; remote branch refs are the
+source of truth for that update.
 
 ## Navigation
 
 `sc up` / `sc down` (child/parent), `sc top` / `sc bottom`, `sc co <branch>`
-(also `sc co <pr-number>`).
+(also `sc co <pr-number>`). Checking out a PR in a native GitHub stack fetches
+all open stack branches and writes their order into local `Shortcake-Parent`
+trailers. Correctly tracked local work is preserved; a divergent branch that
+needs re-parenting is refused. `--force` only permits re-parenting an unchanged,
+already tracked branch.
 
 ## Untracked branches
 
@@ -133,11 +144,16 @@ release bot or teammates push to trunk, re-fetch before cutting new branches.
 (add `-f` to re-parent an already-tracked branch). Repos that forbid commits
 on trunk: create the branch with git first, commit there, then `sc adopt`.
 
-## PR bodies
+## GitHub stack representation
 
-`sc submit` maintains a stack overview between `<!-- shortcake:start -->` and
-`<!-- shortcake:end -->` markers in each submitted PR body. When editing bodies
-via `gh pr edit`, preserve those markers.
+For a linear stack, `sc submit` uses GitHub's native stack resource and removes
+the older Shortcake body map so GitHub does not render duplicate overviews.
+GitHub native stacks require every branch to live in one repository. Non-linear
+Shortcake trees, repositories where stacked pull requests are not available
+yet, and unsupported sizes fall back to a stack overview between
+`<!-- shortcake:start -->` and `<!-- shortcake:end -->`; preserve those markers
+when that fallback is present. A scoped submit keeps the complete legacy
+overview when unselected open PRs still depend on it.
 """
 
 _SKILLS = {

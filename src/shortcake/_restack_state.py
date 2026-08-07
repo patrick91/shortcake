@@ -22,9 +22,11 @@ class RestackState(BaseModel):
 
     version: int
     original_branch: str
+    completion_branch: str | None = None
     plan: list[RestackStep]
     current_index: int
     original_refs: dict[str, str] = {}
+    created_branches: list[str] = []
 
     @classmethod
     def load(cls, repo: Repo) -> "RestackState | None":

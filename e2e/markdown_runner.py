@@ -429,6 +429,15 @@ def run_command(cmd: str, env: TestEnv) -> str:
             env.github_mock.merge_pr(number)
         return ""
 
+    if cmd_stripped.startswith("# github: add-stack "):
+        numbers = [
+            int(number)
+            for number in cmd_stripped.replace("# github: add-stack ", "").split()
+        ]
+        if env.github_mock:
+            env.github_mock.add_stack(numbers)
+        return ""
+
     if cmd_stripped == "# github: error-auth":
         if env.github_mock:
             env.github_mock.set_error_mode("auth")
@@ -448,9 +457,22 @@ def run_command(cmd: str, env: TestEnv) -> str:
         # Reset mock GitHub state (clear PRs, reset PR counter, clear errors)
         if env.github_mock:
             env.github_mock.state.prs.clear()
+            env.github_mock.state.stacks.clear()
             env.github_mock.state.next_pr_number = 1
+            env.github_mock.state.next_stack_number = 1
             env.github_mock.state.error_mode = None
         return ""
+
+    if cmd_stripped == "# github: show-stacks":
+        if not env.github_mock:
+            return "No GitHub mock configured"
+        if not env.github_mock.state.stacks:
+            return "No native stacks"
+        return "\n".join(
+            f"stack #{stack.number}: "
+            + ", ".join(f"#{number}" for number in stack.pull_requests)
+            for stack in env.github_mock.state.stacks.values()
+        )
 
     if cmd_stripped == "# reset-to-main":
         # Reset to main branch, delete other branches, clean working tree

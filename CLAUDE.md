@@ -22,6 +22,7 @@ src/shortcake/
 ├── _trailers.py            # Shortcake-Parent trailer parsing & writing
 ├── _restack_state.py       # persisted restack plan (conflict recovery for continue/abort)
 ├── _pr_stack.py            # stack → PR mapping
+├── _native_stack_checkout.py # native GitHub stack → local trailers
 ├── _tree.py                # stack tree rendering
 ├── _editor.py _gitmoji.py _cache.py _constants.py _exceptions.py   # internal helpers
 ├── _web/                   # React 19 + Vite + Tailwind v4 web UI, served by `sc ui`
@@ -56,8 +57,9 @@ Registered in `cli.py`. `sc` and `shortcake` are both entry points.
   into a new stacked branch)
 - **Restack** — `restack` (rebase children when a parent changes), `continue`, `abort`
   (resume/abandon after a conflict)
-- **Navigate / inspect** — `up`, `down`, `top`, `bottom`, `checkout` (alias `co`), `ls`, `log`
-- **GitHub / remote** — `submit` (open/update stacked PRs), `sync`, `pull`, `review`
+- **Navigate / inspect** — `up`, `down`, `top`, `bottom`, `checkout` (alias `co`;
+  PR checkout materializes native stack trailers), `ls`, `log`
+- **GitHub / remote** — `submit` (open/update native stacked PRs), `sync`, `pull`, `review`
 - **Web UI** — `ui`
 
 ## Conventions

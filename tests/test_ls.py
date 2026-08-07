@@ -2,12 +2,13 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import pytest
 import respx
 from inline_snapshot import snapshot
 
 from shortcake import _git as git
 from shortcake.commands.adopt import _adopt
-from shortcake.commands.ls import _build_tree, _collect_nodes, _ls
+from shortcake.commands.ls import _build_tree, _collect_nodes, _fetch_pr_info, _ls
 from tests._git_helpers import (
     Repo,
     add_paths,
@@ -551,6 +552,47 @@ def test_ls_fetches_pr_info(repo_with_feature: Repo) -> None:
     feature_node = next(n for n in branch_nodes if n.name == "feature")
     assert feature_node.pr_number == 123
     assert feature_node.pr_is_draft is False
+
+
+@respx.mock
+def test_ls_fetches_native_stack_membership(
+    repo_with_feature: Repo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _adopt(repo_with_feature)
+    set_remote(repo_with_feature, "origin", "git@github.com:owner/repo.git")
+    monkeypatch.setenv("GH_TOKEN", "token")
+    respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "number": 123,
+                    "html_url": "https://github.com/owner/repo/pull/123",
+                    "base": {"ref": "main"},
+                    "title": "Feature PR",
+                    "body": "",
+                    "state": "open",
+                    "draft": False,
+                    "stack": {
+                        "id": 100,
+                        "number": 7,
+                        "size": 2,
+                        "position": 1,
+                        "base": {"ref": "main", "sha": "abc"},
+                    },
+                }
+            ],
+        )
+    )
+    tree, tracked = _build_tree(repo_with_feature)
+
+    assert _fetch_pr_info(repo_with_feature, tree, tracked, quiet=True) is None
+
+    feature = next(node for node in _collect_nodes(tree) if node.name == "feature")
+    assert feature.native_stack_number == 7
+    assert feature.native_stack_position == 1
+    assert feature.native_stack_size == 2
 
 
 @respx.mock

@@ -4,10 +4,12 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 
-from shortcake._github import GitHubClient, PRInfo
+from shortcake._github import GitHubClient, PRInfo, PullRequestStackMembership
 from shortcake._pr_stack import (
     STACK_END_MARKER,
     STACK_START_MARKER,
+    _remove_stack_pr_descriptions,
+    _remove_stack_section,
     _sync_pr_descriptions_for_branches,
     _sync_stack_pr_descriptions,
 )
@@ -26,6 +28,87 @@ def _make_mock_gh() -> MagicMock:
     mock.get_merged_pr_number.return_value = None
     mock.get_merged_pr_base.return_value = None
     return mock
+
+
+def _membership(position: int = 1) -> PullRequestStackMembership:
+    return PullRequestStackMembership(
+        id=100,
+        number=7,
+        size=2,
+        position=position,
+        base_ref="main",
+        base_sha="abc",
+    )
+
+
+def test_remove_managed_stack_section_preserves_user_body() -> None:
+    body = (
+        f"{STACK_START_MARKER}\n## Stack\n\n- #1 (`a`)\n"
+        f"{STACK_END_MARKER}\n\nUser body\n"
+    )
+
+    assert _remove_stack_section(body) == "User body\n"
+    assert _remove_stack_section("  User body  ") == "  User body  "
+
+
+def test_remove_stack_descriptions_updates_only_managed_bodies() -> None:
+    gh = _make_mock_gh()
+    managed = PRInfo(
+        1,
+        "url",
+        "main",
+        "title",
+        f"{STACK_START_MARKER}\nmap\n{STACK_END_MARKER}\n\nDescription",
+        "open",
+        False,
+    )
+    untouched = PRInfo(2, "url", "main", "title", "Description", "open", False)
+
+    _remove_stack_pr_descriptions(gh, [managed, untouched])
+
+    gh.update_pr.assert_called_once_with(1, body="Description")
+
+
+def test_native_stack_defers_base_sync_and_removes_body_map(
+    repo_with_stack: Repo,
+) -> None:
+    gh = _make_mock_gh()
+    pr_a = PRInfo(
+        1,
+        "url",
+        "wrong-base",
+        "title",
+        f"{STACK_START_MARKER}\nmap\n{STACK_END_MARKER}",
+        "open",
+        False,
+        stack=_membership(),
+    )
+    pr_b = PRInfo(
+        2,
+        "url",
+        "branch_a",
+        "title",
+        "",
+        "open",
+        False,
+        stack=_membership(2),
+    )
+    gh.get_pr_for_branch.side_effect = lambda branch: {
+        "branch_a": pr_a,
+        "branch_b": pr_b,
+    }.get(branch)
+
+    pending = _sync_stack_pr_descriptions(
+        repo_with_stack,
+        gh,
+        "owner",
+        ["branch_a", "branch_b"],
+        sync_bases=True,
+    )
+
+    assert pending is True
+    gh.update_pr.assert_called_once_with(1, body="")
+    assert not any("base" in call.kwargs for call in gh.update_pr.call_args_list)
 
 
 def test_sync_stack_pr_descriptions_empty_branches(

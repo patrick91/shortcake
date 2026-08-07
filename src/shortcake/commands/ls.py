@@ -136,12 +136,23 @@ def _fetch_pr_info(
                             node.pr_number = pr.number
                             node.pr_is_draft = pr.is_draft
                             node.pr_url = pr.url
+                            if pr.stack is not None:
+                                node.native_stack_number = pr.stack.number
+                                node.native_stack_position = pr.stack.position
+                                node.native_stack_size = pr.stack.size
                             update_pr_cache(
                                 repo,
                                 node.name,
                                 pr.number,
                                 is_draft=pr.is_draft,
                                 url=pr.url,
+                                native_stack_number=(
+                                    pr.stack.number if pr.stack else None
+                                ),
+                                native_stack_position=(
+                                    pr.stack.position if pr.stack else None
+                                ),
+                                native_stack_size=(pr.stack.size if pr.stack else None),
                             )
                         else:
                             closed_num, is_merged = gh.get_closed_pr_info(node.name)
@@ -187,6 +198,9 @@ def _apply_cached_pr_info(
             node.pr_is_merged = cached.is_merged
             node.pr_is_closed = cached.is_closed
             node.pr_url = cached.url
+            node.native_stack_number = cached.native_stack_number
+            node.native_stack_position = cached.native_stack_position
+            node.native_stack_size = cached.native_stack_size
 
 
 def ls(

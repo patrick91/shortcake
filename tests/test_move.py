@@ -13,7 +13,7 @@ from shortcake._pr_stack import STACK_END_MARKER, STACK_START_MARKER
 from shortcake._restack_state import RestackState
 from shortcake._trailers import Trailers
 from shortcake.cli import app
-from shortcake.commands.move import MoveError, _move
+from shortcake.commands.move import MoveError, MoveResult, _move
 from tests._git_helpers import (
     Repo,
     add_paths,
@@ -461,6 +461,27 @@ def test_move_cli_basic(
     result = runner.invoke(app, ["move", "--parent", "main"])
     assert result.exit_code == 0
     assert "Moved 'branch_b' from 'branch_a' to 'main'" in result.output
+
+
+def test_move_cli_reports_pending_native_stack(
+    repo_with_stack: Repo,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    with patch(
+        "shortcake.commands.move._move",
+        return_value=MoveResult(
+            branch="branch_b",
+            old_parent="branch_a",
+            new_parent="main",
+            native_stack_pending=True,
+        ),
+    ):
+        result = runner.invoke(app, ["move", "branch_b", "--parent", "main"])
+
+    assert result.exit_code == 0
+    assert "Run 'sc submit --stack' to recreate it." in result.output
 
 
 def test_move_cli_same_parent(

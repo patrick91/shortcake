@@ -134,6 +134,31 @@ def _update_pr_body_with_stack(
     return stack_section
 
 
+def _remove_stack_section(existing_body: str) -> str:
+    """Remove Shortcake's managed stack section without touching user content."""
+    if STACK_START_MARKER not in existing_body or STACK_END_MARKER not in existing_body:
+        return existing_body
+
+    pattern = (
+        re.escape(STACK_START_MARKER)
+        + r".*?"
+        + re.escape(STACK_END_MARKER)
+        + r"(?:\r?\n){0,2}"
+    )
+    return re.sub(pattern, "", existing_body, count=1, flags=re.DOTALL)
+
+
+def _remove_stack_pr_descriptions(
+    gh: GitHubClient,
+    pull_requests: list[PRInfo],
+) -> None:
+    """Remove obsolete body maps after GitHub owns the stack visualization."""
+    for pull_request in pull_requests:
+        new_body = _remove_stack_section(pull_request.body)
+        if new_body != pull_request.body:
+            gh.update_pr(pull_request.number, body=new_body)
+
+
 def _sync_stack_pr_descriptions(
     repo: Repo,
     gh: GitHubClient,
@@ -141,11 +166,16 @@ def _sync_stack_pr_descriptions(
     stack_branches: list[str],
     *,
     pr_numbers: dict[str, int] | None = None,
+    overview_branches: list[str] | None = None,
     sync_bases: bool = False,
-) -> None:
-    """Update PR bases and stack sections for a single local stack."""
+) -> bool:
+    """Update selected PRs, returning whether native base changes were deferred.
+
+    ``overview_branches`` can retain a wider legacy stack map without updating
+    PRs outside ``stack_branches``.
+    """
     if not stack_branches:
-        return
+        return False
 
     all_branches = set(git.get_all_local_branches(repo))
     current_stack_set = set(stack_branches)
@@ -162,7 +192,18 @@ def _sync_stack_pr_descriptions(
             known_pr_numbers[branch] = existing_pr.number
 
     if not open_prs:
-        return
+        return False
+
+    native_stack_prs = [pr for pr in open_prs.values() if pr.stack is not None]
+    if native_stack_prs:
+        needs_restructure = False
+        if sync_bases:
+            for branch, existing_pr in open_prs.items():
+                parent = git.get_branch_parent(repo, branch, all_branches)
+                if parent is not None and parent != existing_pr.base:
+                    needs_restructure = True
+        _remove_stack_pr_descriptions(gh, native_stack_prs)
+        return needs_restructure
 
     if sync_bases:
         for branch, existing_pr in open_prs.items():
@@ -235,7 +276,7 @@ def _sync_stack_pr_descriptions(
         if isinstance(merged_num, int):
             merged_pr_numbers[branch] = merged_num
 
-    full_stack_branches = list(stack_branches)
+    full_stack_branches = list(overview_branches or stack_branches)
     if historical_stack_order:
         historical_bottom_to_top = list(reversed(historical_stack_order))
         historical_positions = {
@@ -276,6 +317,8 @@ def _sync_stack_pr_descriptions(
         new_body = _update_pr_body_with_stack(existing_pr.body, stack_section)
         gh.update_pr(existing_pr.number, body=new_body)
 
+    return False
+
 
 def _sync_pr_descriptions_for_branches(
     repo: Repo,
@@ -284,9 +327,10 @@ def _sync_pr_descriptions_for_branches(
     branches: list[str],
     *,
     sync_bases: bool = False,
-) -> None:
-    """Sync PR metadata for every unique stack touched by the given branches."""
+) -> bool:
+    """Sync touched PR stacks and report deferred native restructuring."""
     seen_stacks: set[tuple[str, ...]] = set()
+    native_restructure_needed = False
     for branch in branches:
         stack_branches = _get_stack_in_order(repo, branch)
         if not stack_branches:
@@ -297,10 +341,14 @@ def _sync_pr_descriptions_for_branches(
             continue
 
         seen_stacks.add(stack_key)
-        _sync_stack_pr_descriptions(
-            repo,
-            gh,
-            owner,
-            stack_branches,
-            sync_bases=sync_bases,
+        native_restructure_needed = (
+            _sync_stack_pr_descriptions(
+                repo,
+                gh,
+                owner,
+                stack_branches,
+                sync_bases=sync_bases,
+            )
+            or native_restructure_needed
         )
+    return native_restructure_needed
