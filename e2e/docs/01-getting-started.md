@@ -68,6 +68,23 @@ $ sc create -m "Empty placeholder" --allow-empty
 Created branch 'empty-placeholder' from 'add-user-authentication'
 ```
 
+## Detached HEAD
+
+When detached at the tip of one local branch, `sc create` uses that branch as
+the parent:
+
+```console
+$ git checkout --detach
+$ sc create -m "Detached work" --allow-empty
+Created branch 'detached-work' from 'empty-placeholder'
+$ git log -1 --format=%B | grep Shortcake-Parent
+Shortcake-Parent: empty-placeholder
+```
+
+If no branch points at `HEAD`, Shortcake uses the default branch and includes
+the detached commits in the new branch. Use `--parent` to choose another base or
+when more than one local branch points at the detached commit.
+
 ## Error Cases
 
 Cannot create without staged changes:
@@ -75,12 +92,4 @@ Cannot create without staged changes:
 ```console
 $ sc create -m "Should fail"
 Error: No staged changes. Use --allow-empty to create anyway.
-```
-
-Cannot create in detached HEAD state:
-
-```console
-$ git checkout --detach
-$ sc create -m "Should fail"
-Error: Cannot create in detached HEAD state
 ```

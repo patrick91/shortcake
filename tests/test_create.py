@@ -12,6 +12,8 @@ from shortcake._trailers import Trailers
 from shortcake.commands.adopt import _adopt
 from shortcake.commands.create import (
     BranchExistsError,
+    CreateError,
+    DetachedHeadError,
     EmptyBranchNameError,
     InsertError,
     _branch_has_merged_pr,
@@ -19,12 +21,21 @@ from shortcake.commands.create import (
     _create_insert_after,
     _create_insert_before,
     _resolve_available_branch_name,
+    _resolve_create_parent,
     _slugify,
     _slugify_branch_name,
     _validate_branch_name,
 )
 from shortcake.commands.ls import _ls
-from tests._git_helpers import Repo, add_paths, get_ref, set_ref, switch_branch
+from tests._git_helpers import (
+    Repo,
+    add_paths,
+    commit,
+    get_ref,
+    init_repo,
+    set_ref,
+    switch_branch,
+)
 
 # Slugify tests
 
@@ -311,13 +322,106 @@ def test_create_branch_exists(temp_repo: Repo) -> None:
     assert exc_info.value.branch == "feat-existing"
 
 
-def test_create_detached_head_asserts(temp_repo: Repo) -> None:
-    """Test that _create asserts if called in detached HEAD state."""
+def test_create_from_detached_head(temp_repo: Repo) -> None:
+    """Create uses the unique local branch at detached HEAD as its parent."""
     main_sha = get_ref(temp_repo, "refs/heads/main")
     set_ref(temp_repo, "HEAD", main_sha)
 
-    with pytest.raises(AssertionError):
-        _create(temp_repo, "feat: something", "feat-something")
+    result = _create(temp_repo, "feat: something", "feat-something")
+
+    assert result.parent == "main"
+    assert git.get_current_branch(temp_repo) == "feat-something"
+    head = git.get_branch_head(temp_repo, "feat-something")
+    message = git.get_commit_message(temp_repo, head)
+    assert Trailers.from_message(message).parent_branch == "main"
+
+
+def test_create_from_detached_commit_uses_default_parent(temp_repo: Repo) -> None:
+    """Detached commits become part of the new branch off the default parent."""
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", main_sha)
+    commit(temp_repo, "Detached commit")
+
+    result = _create(temp_repo, "New commit", "new-branch")
+
+    assert result.parent == "main"
+    parent_info = git.get_branch_parent_info(
+        temp_repo,
+        "new-branch",
+        set(git.get_all_local_branches(temp_repo)),
+    )
+    assert parent_info == ("main", main_sha)
+
+
+def test_resolve_detached_parent_requires_unambiguous_branch(temp_repo: Repo) -> None:
+    """Multiple branch tips at detached HEAD require an explicit parent."""
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/other", main_sha)
+    set_ref(temp_repo, "HEAD", main_sha)
+
+    with pytest.raises(DetachedHeadError, match="multiple local branches"):
+        _resolve_create_parent(temp_repo)
+
+    assert _resolve_create_parent(temp_repo, "other") == "other"
+
+
+def test_resolve_detached_parent_accepts_branch_with_shared_history(
+    repo_with_feature: Repo,
+) -> None:
+    """An explicit parent can differ from HEAD when it shares history."""
+    main_sha = get_ref(repo_with_feature, "refs/heads/main")
+    set_ref(repo_with_feature, "HEAD", main_sha)
+
+    assert _resolve_create_parent(repo_with_feature, "feature") == "feature"
+
+
+def test_resolve_detached_parent_rejects_missing_branch(temp_repo: Repo) -> None:
+    """An explicit detached parent must be a local branch."""
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", main_sha)
+
+    with pytest.raises(DetachedHeadError, match="not found"):
+        _resolve_create_parent(temp_repo, "missing")
+
+
+def test_resolve_detached_parent_requires_default_branch(tmp_path: Path) -> None:
+    """A detached commit needs an explicit parent when no default is known."""
+    repo = init_repo(tmp_path / "trunk-repo", default_branch="trunk")
+    (tmp_path / "trunk-repo" / "file.txt").write_text("initial\n")
+    add_paths(repo, tmp_path / "trunk-repo" / "file.txt")
+    commit(repo, "Initial commit")
+    set_ref(repo, "HEAD", git.get_head_sha(repo))
+    commit(repo, "Detached commit")
+
+    with pytest.raises(DetachedHeadError, match="no default branch"):
+        _resolve_create_parent(repo)
+
+
+def test_resolve_detached_parent_requires_shared_history(tmp_path: Path) -> None:
+    """The selected parent and detached commit must share history."""
+    repo = init_repo(tmp_path / "orphan-repo")
+    (tmp_path / "orphan-repo" / "file.txt").write_text("initial\n")
+    add_paths(repo, tmp_path / "orphan-repo" / "file.txt")
+    commit(repo, "Initial commit")
+    subprocess.run(
+        ["git", "switch", "--orphan", "orphan"],
+        cwd=repo.workdir,
+        capture_output=True,
+        check=True,
+    )
+    (tmp_path / "orphan-repo" / "orphan.txt").write_text("orphan\n")
+    add_paths(repo, tmp_path / "orphan-repo" / "orphan.txt")
+    orphan_sha = commit(repo, "Orphan commit")
+    set_ref(repo, "HEAD", orphan_sha)
+
+    with pytest.raises(DetachedHeadError, match="shares no history"):
+        _resolve_create_parent(repo, "main")
+
+
+def test_resolve_attached_parent_rejects_override(temp_repo: Repo) -> None:
+    """An attached checkout already defines its parent branch."""
+    with pytest.raises(CreateError, match="only be used in detached"):
+        _resolve_create_parent(temp_repo, "main")
 
 
 def test_validate_empty_slug(temp_repo: Repo) -> None:

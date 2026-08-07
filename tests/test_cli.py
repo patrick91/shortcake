@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from typer.testing import CliRunner
 
+from shortcake import _git as git
 from shortcake.cli import app
 from tests._git_helpers import (
     Repo,
@@ -197,21 +198,120 @@ def test_cli_create_suffixes_when_branch_has_merged_pr(
     assert f"Created branch '{base_name}-2'" in result.output
 
 
-def test_cli_create_error_detached_head(
+def test_cli_create_from_detached_head(
     temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Test CLI create error in detached HEAD state."""
+    """Test CLI create infers the unique branch at detached HEAD."""
     monkeypatch.chdir(tmp_path)
 
     # Detach HEAD
     main_sha = get_ref(temp_repo, "refs/heads/main")
     set_ref(temp_repo, "HEAD", main_sha)
+    (tmp_path / "feature.py").write_text("print('detached')\n")
+    add_paths(temp_repo, tmp_path / "feature.py")
 
     result = runner.invoke(app, ["create", "-m", "feat: something"])
 
+    assert result.exit_code == 0
+    assert f"Created branch '{_dated('feat-something')}' from 'main'" in result.output
+
+
+def test_cli_create_preserves_unreferenced_detached_commits(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Detached commits are included when create falls back to the default parent."""
+    monkeypatch.chdir(tmp_path)
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", main_sha)
+    (tmp_path / "detached.py").write_text("detached = True\n")
+    add_paths(temp_repo, tmp_path / "detached.py")
+    commit(temp_repo, "Detached commit")
+    (tmp_path / "feature.py").write_text("feature = True\n")
+    add_paths(temp_repo, tmp_path / "feature.py")
+
+    result = runner.invoke(app, ["create", "-m", "feat: preserve detached"])
+
+    branch = _dated("feat-preserve-detached")
+    assert result.exit_code == 0
+    assert f"Created branch '{branch}' from 'main'" in result.output
+    assert git.get_branch_parent_info(
+        temp_repo,
+        branch,
+        set(git.get_all_local_branches(temp_repo)),
+    ) == ("main", main_sha)
+
+
+def test_cli_create_detached_head_parent_disambiguates(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit parent disambiguates branch tips sharing detached HEAD."""
+    monkeypatch.chdir(tmp_path)
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/other", main_sha)
+    set_ref(temp_repo, "HEAD", main_sha)
+
+    result = runner.invoke(
+        app,
+        [
+            "create",
+            "-m",
+            "feat: something",
+            "--allow-empty",
+            "--parent",
+            "other",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert f"Created branch '{_dated('feat-something')}' from 'other'" in result.output
+
+
+def test_cli_create_detached_head_ambiguous_parent(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Detached create explains how to resolve an ambiguous parent."""
+    monkeypatch.chdir(tmp_path)
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "refs/heads/other", main_sha)
+    set_ref(temp_repo, "HEAD", main_sha)
+
+    result = runner.invoke(app, ["create", "-m", "feat: something", "--allow-empty"])
+
     assert result.exit_code == 1
-    assert "Error:" in result.output
-    assert "detached HEAD" in result.output
+    assert "multiple local branches" in result.output
+    assert "--parent" in result.output
+
+
+def test_cli_create_detached_head_rejects_insert(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Insert modes still require a current branch for their position."""
+    monkeypatch.chdir(tmp_path)
+    main_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", main_sha)
+
+    result = runner.invoke(
+        app,
+        ["create", "-m", "feat: something", "--allow-empty", "--before"],
+    )
+
+    assert result.exit_code == 1
+    assert "Cannot use --before or --after" in result.output
+
+
+def test_cli_create_parent_rejected_on_attached_head(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The parent override is reserved for detached checkouts."""
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["create", "-m", "feat: something", "--allow-empty", "--parent", "main"],
+    )
+
+    assert result.exit_code == 1
+    assert "--parent can only be used in detached HEAD state" in result.output
 
 
 def test_cli_help_includes_create(

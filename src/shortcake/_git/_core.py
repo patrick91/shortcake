@@ -75,6 +75,13 @@ def get_current_branch(repo: Repo) -> str | None:
     return repo.head.shorthand
 
 
+def get_head_sha(repo: Repo) -> bytes:
+    """Get the commit currently checked out at HEAD."""
+    if repo.head_is_unborn:
+        raise ValueError("HEAD has no commit")
+    return str(repo.head.target).encode()
+
+
 def get_branch_head(repo: Repo, branch: str) -> bytes:
     """Get SHA of branch head."""
     ref = repo.references.get(f"refs/heads/{branch}")
