@@ -989,7 +989,7 @@ wheels = [
 
 [[package]]
 name = "shortcake"
-version = "1.6.3"
+version = "1.6.4"
 source = { editable = "." }
 dependencies = [
     { name = "dulwich", extra = ["merge"] },

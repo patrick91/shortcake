@@ -1,6 +1,16 @@
 CHANGELOG
 =========
 
+1.6.4 - 2026-08-07
+------------------
+
+`sc create` also works from a detached checkout. It infers a unique local branch
+at `HEAD`, falls back to the default branch while retaining any detached commits,
+or accepts `--parent` when the intended base is ambiguous. Detached insert modes
+remain rejected because their position requires a current branch.
+
+This release was contributed by [@patrick91](https://github.com/patrick91) in [#140](https://github.com/patrick91/shortcake/pull/140)
+
 1.6.3 - 2026-08-07
 ------------------
 
