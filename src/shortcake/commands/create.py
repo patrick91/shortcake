@@ -39,6 +39,12 @@ class BranchExistsError(CreateError):
         super().__init__(f"Branch '{branch}' already exists")
 
 
+class DetachedHeadError(CreateError):
+    """Raised when a detached HEAD cannot be attributed to a parent branch."""
+
+    pass
+
+
 class InsertError(CreateError):
     """Error during insert-before or insert-after operation."""
 
@@ -137,22 +143,82 @@ def _validate_branch_name(repo: Repo, branch: str) -> None:
         raise BranchExistsError(branch)
 
 
-def _create(repo: Repo, message: str, branch_name: str) -> CreateResult:
-    """Create new tracked branch with commit.
+def _resolve_create_parent(repo: Repo, requested_parent: str | None = None) -> str:
+    """Resolve the parent branch for a create operation.
 
-    Assumes caller has verified we're not in detached HEAD state
-    and branch_name is valid.
+    Attached checkouts use their current branch. A detached checkout uses a
+    unique local branch at HEAD when possible, then falls back to the default
+    branch. ``requested_parent`` disambiguates or overrides those choices.
     """
     parent = git.get_current_branch(repo)
-    assert parent is not None  # Caller should check this
+    if parent is not None:
+        if requested_parent is not None:
+            raise CreateError("--parent can only be used in detached HEAD state")
+        return parent
 
-    head_sha = git.get_branch_head(repo, parent)
+    head_sha = git.get_head_sha(repo)
+    candidates = sorted(
+        branch
+        for branch in git.get_all_local_branches(repo)
+        if git.get_branch_head(repo, branch) == head_sha
+    )
+
+    if requested_parent is not None:
+        if not git.branch_exists(repo, requested_parent):
+            raise DetachedHeadError(f"Parent branch '{requested_parent}' not found")
+        resolved_parent = requested_parent
+    elif len(candidates) == 1:
+        resolved_parent = candidates[0]
+    elif len(candidates) > 1:
+        raise DetachedHeadError(
+            "Cannot create from detached HEAD: multiple local branches point at this "
+            f"commit ({', '.join(candidates)}). Use --parent to choose one"
+        )
+    elif (resolved_parent := git.get_default_branch(repo)) is None:
+        raise DetachedHeadError(
+            "Cannot create from detached HEAD: no default branch found. "
+            "Use --parent to choose one"
+        )
+
+    parent_head = git.get_branch_head(repo, resolved_parent)
+    if git.get_merge_base(repo, head_sha, parent_head) is None:
+        raise DetachedHeadError(
+            f"Detached HEAD shares no history with parent branch '{resolved_parent}'"
+        )
+
+    return resolved_parent
+
+
+def _create(
+    repo: Repo,
+    message: str,
+    branch_name: str,
+    parent: str | None = None,
+) -> CreateResult:
+    """Create a new tracked branch with a commit."""
+    detached = git.get_current_branch(repo) is None
+    if parent is None:
+        parent = _resolve_create_parent(repo)
+
+    head_sha = git.get_head_sha(repo)
+    parent_head = git.get_branch_head(repo, parent)
     git.create_branch(repo, branch_name, head_sha)
     git.set_head_to_branch(repo, branch_name)
 
-    trailers = Trailers(parent_branch=parent)
-    full_message = trailers.apply_to(message)
+    if detached and head_sha != parent_head:
+        full_message = message
+    else:
+        trailers = Trailers(parent_branch=parent)
+        full_message = trailers.apply_to(message)
     git.create_commit(repo, full_message, no_verify=True)
+
+    if detached and head_sha != parent_head:
+        # Detached HEAD may include commits that are not named by a branch.
+        # Adopt the complete range so its oldest commit carries the trailer and
+        # later restacks cannot accidentally drop those commits.
+        from shortcake.commands.adopt import _adopt
+
+        _adopt(repo, branch_name, parent, force=True)
 
     return CreateResult(branch=branch_name, parent=parent, message=message)
 
@@ -443,6 +509,14 @@ def create(
     gitmoji: Annotated[bool, typer.Option("--gitmoji", "--gm")] = False,
     no_verify: Annotated[bool, typer.Option("--no-verify", "-n")] = False,
     allow_empty: Annotated[bool, typer.Option("--allow-empty")] = False,
+    parent: Annotated[
+        str | None,
+        typer.Option(
+            "--parent",
+            "-p",
+            help="Parent branch to use when HEAD is detached.",
+        ),
+    ] = None,
     before: Annotated[
         bool,
         typer.Option(
@@ -471,10 +545,20 @@ def create(
 
     insert_mode = before or after
 
-    # Check we're on a branch
-    parent = git.get_current_branch(repo)
-    if parent is None:
-        toolkit.fail("detached_head", "Cannot create in detached HEAD state")
+    current_branch = git.get_current_branch(repo)
+
+    if current_branch is None and insert_mode:
+        toolkit.fail(
+            "detached_head",
+            "Cannot use --before or --after in detached HEAD state",
+        )
+
+    try:
+        resolved_parent = _resolve_create_parent(repo, parent)
+    except DetachedHeadError as e:
+        toolkit.fail("detached_head", str(e))
+    except CreateError as e:
+        toolkit.fail("invalid_options", str(e))
 
     # For insert mode, check additional preconditions
     if insert_mode:
@@ -558,7 +642,7 @@ def create(
         except InsertError as e:
             toolkit.fail("insert_failed", str(e))
     else:
-        result = _create(repo, message, branch_name)
+        result = _create(repo, message, branch_name, resolved_parent)
 
     if json_output:
         toolkit.success(

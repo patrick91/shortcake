@@ -63,6 +63,22 @@ def test_get_current_branch_detached_head(temp_repo: Repo) -> None:
     assert git.get_current_branch(temp_repo) is None
 
 
+def test_get_head_sha_in_detached_head(temp_repo: Repo) -> None:
+    """HEAD's commit remains available without a current branch."""
+    head_sha = get_ref(temp_repo, "refs/heads/main")
+    set_ref(temp_repo, "HEAD", head_sha)
+
+    assert git.get_head_sha(temp_repo) == head_sha
+
+
+def test_get_head_sha_unborn_repo(tmp_path: Path) -> None:
+    """An unborn repository has no commit to return for HEAD."""
+    repo = init_repo(tmp_path / "unborn")
+
+    with pytest.raises(ValueError, match="HEAD has no commit"):
+        git.get_head_sha(repo)
+
+
 def test_get_default_branch_from_origin_head(temp_repo: Repo) -> None:
     """Test getting default branch from origin/HEAD."""
     # Set up origin/HEAD pointing to main
