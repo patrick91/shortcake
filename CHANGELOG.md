@@ -1,6 +1,16 @@
 CHANGELOG
 =========
 
+1.6.5 - 2026-08-12
+------------------
+
+Improve the web diff review experience with file filtering, review progress,
+collapsible files, scroll-synced navigation, and a resizable file sidebar. Deep
+file trees now remain readable at narrow widths, and frontend dependencies are
+updated to their latest releases.
+
+This release was contributed by [@patrick91](https://github.com/patrick91) in [#141](https://github.com/patrick91/shortcake/pull/141)
+
 1.6.4 - 2026-08-07
 ------------------
 
