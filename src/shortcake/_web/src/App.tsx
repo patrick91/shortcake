@@ -233,6 +233,29 @@ type FileInfo = {
 
 const API_BASE = import.meta.env.VITE_SHORTCAKE_API_URL ?? '';
 const FILE_TREE_VIEWED_MARK = '\u2713';
+const DIFF_SIDEBAR_STORAGE_KEY = 'shortcake-diff-sidebar-width';
+const DEFAULT_DIFF_SIDEBAR_WIDTH = 280;
+const MIN_DIFF_SIDEBAR_WIDTH = 220;
+const MAX_DIFF_SIDEBAR_WIDTH = 560;
+const MIN_DIFF_PANE_WIDTH = 420;
+
+function maxDiffSidebarWidth(): number {
+  if (typeof window === 'undefined') return MAX_DIFF_SIDEBAR_WIDTH;
+  return Math.max(
+    MIN_DIFF_SIDEBAR_WIDTH,
+    Math.min(MAX_DIFF_SIDEBAR_WIDTH, window.innerWidth - MIN_DIFF_PANE_WIDTH),
+  );
+}
+
+function clampDiffSidebarWidth(width: number): number {
+  return Math.min(maxDiffSidebarWidth(), Math.max(MIN_DIFF_SIDEBAR_WIDTH, width));
+}
+
+function loadDiffSidebarWidth(): number {
+  if (typeof window === 'undefined') return DEFAULT_DIFF_SIDEBAR_WIDTH;
+  const storedWidth = Number.parseFloat(localStorage.getItem(DIFF_SIDEBAR_STORAGE_KEY) ?? '');
+  return clampDiffSidebarWidth(Number.isFinite(storedWidth) ? storedWidth : DEFAULT_DIFF_SIDEBAR_WIDTH);
+}
 
 function hashString(value: string): string {
   let h1 = 0xdeadbeef ^ value.length;
@@ -464,22 +487,46 @@ function orderPatchesForTree(patches: string[]): string[] {
 
 function buildChangedFilesTreeUnsafeCSS(): string {
   return `
+    :host {
+      container-type: inline-size;
+    }
     [data-type='item'] {
+      min-width: 0;
+      overflow: hidden;
       transition: color 100ms ease-in-out, background-color 100ms ease-in-out;
     }
     [data-type='item']:hover {
       color: var(--trees-selected-fg);
       background: var(--trees-bg-muted);
     }
+    [data-truncate-marker] {
+      background-color: var(--color-surface);
+      background-image: none;
+    }
+    [data-type='item']:hover [data-truncate-marker] {
+      background-color: var(--color-surface-hover);
+    }
+    [data-type='item'][data-item-selected='true'] [data-truncate-marker] {
+      background-color: color-mix(in srgb, var(--color-accent) 8%, var(--color-surface));
+    }
     [data-item-section='content'] {
+      flex: 1 1 auto;
       min-width: 0;
     }
     [data-item-section='decoration'] {
+      flex: none;
+      max-width: 88px;
+      margin-left: 6px;
       font-family: var(--trees-font-family);
       font-size: 0.6rem;
       font-weight: 500;
       letter-spacing: 0;
       color: var(--trees-fg-muted);
+    }
+    @container (width < 260px) {
+      [data-item-section='decoration'] {
+        display: none;
+      }
     }
     [data-type='item'][data-item-selected='true'] [data-item-section='decoration'] {
       color: var(--trees-selected-fg);
@@ -551,6 +598,7 @@ function ChangedFilesTree({
     [paths],
   );
   const fileOrderRef = useRef(fileOrder);
+  const isSyncingSelectionRef = useRef(false);
   const fileByPath = useMemo(
     () => new Map(fileInfos.map((file) => [file.path, file])),
     [fileInfos],
@@ -600,12 +648,24 @@ function ChangedFilesTree({
   }, []);
 
   const handleSelectionChange = useCallback((selectedPaths: readonly string[]) => {
+    if (isSyncingSelectionRef.current) return;
     const selectedPath = [...selectedPaths]
       .reverse()
       .find((path) => fileByPathRef.current.has(path));
     if (!selectedPath) return;
 
     const selectedIndex = fileInfos.findIndex((file) => file.path === selectedPath);
+    if (selectedIndex >= 0) onFileClick(selectedIndex);
+  }, [fileInfos, onFileClick]);
+
+  const handleTreeClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    const clickedItem = event.nativeEvent.composedPath().find(
+      (target): target is HTMLElement =>
+        target instanceof HTMLElement && target.dataset.itemType === 'file',
+    );
+    const path = clickedItem?.dataset.itemPath;
+    if (!path) return;
+    const selectedIndex = fileInfos.findIndex((file) => file.path === path);
     if (selectedIndex >= 0) onFileClick(selectedIndex);
   }, [fileInfos, onFileClick]);
 
@@ -644,18 +704,30 @@ function ChangedFilesTree({
 
   useEffect(() => {
     const selectedPaths = model.getSelectedPaths();
+    let frame: number | null = null;
 
     if (activePath) {
-      if (!selectedPaths.includes(activePath)) {
+      if (selectedPaths.length !== 1 || selectedPaths[0] !== activePath) {
+        isSyncingSelectionRef.current = true;
+        for (const path of selectedPaths) {
+          if (path !== activePath) model.getItem(path)?.deselect();
+        }
         model.getItem(activePath)?.select();
+        frame = window.requestAnimationFrame(() => {
+          isSyncingSelectionRef.current = false;
+        });
       }
       model.scrollToPath(activePath, { focus: false, offset: 'nearest' });
-      return;
+      return () => {
+        if (frame !== null) window.cancelAnimationFrame(frame);
+        isSyncingSelectionRef.current = false;
+      };
     }
 
     for (const path of selectedPaths) {
       model.getItem(path)?.deselect();
     }
+    return undefined;
   }, [activePath, model]);
 
   const treeStyle = useMemo(
@@ -675,12 +747,13 @@ function ChangedFilesTree({
       '--trees-icon-width-override': '14px',
       '--trees-item-margin-x-override': '2px',
       '--trees-item-padding-x-override': '10px',
-      '--trees-level-gap-override': '14px',
+      '--trees-item-row-gap-override': '3px',
+      '--trees-level-gap-override': '10px',
       '--trees-padding-inline-override': '0px',
       '--trees-search-bg-override': 'var(--color-surface-hover)',
       '--trees-search-fg-override': 'var(--color-text-primary)',
       '--trees-search-font-weight-override': '400',
-      '--trees-selected-bg-override': 'var(--color-accent-bg)',
+      '--trees-selected-bg-override': 'color-mix(in srgb, var(--color-accent) 8%, var(--color-surface))',
       '--trees-selected-fg-override': 'var(--color-text-primary)',
       '--trees-status-added-override': 'var(--color-stat-add)',
       '--trees-status-deleted-override': 'var(--color-stat-del)',
@@ -691,7 +764,10 @@ function ChangedFilesTree({
   );
 
   return (
-    <div className="h-full flex-1 min-h-0 overflow-hidden px-2.5 pt-2 pb-1.5">
+    <div
+      className="h-full flex-1 min-h-0 overflow-hidden px-2.5 pt-2 pb-1.5"
+      onClick={handleTreeClick}
+    >
       <PierreFileTree
         className="block h-full w-full"
         model={model}
@@ -1126,7 +1202,43 @@ function ReviewSummaryPanel({
   );
 }
 
-const DIFF_HEADER_HEIGHT = 'min-h-[44px]';
+function FileCollapseToggle({
+  isCollapsed,
+  onToggle,
+}: {
+  isCollapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="relative inline-flex size-6 shrink-0 appearance-none items-center justify-center rounded border-0 bg-transparent p-0 text-text-muted hover:bg-surface-active hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+      aria-label={isCollapsed ? 'Expand file' : 'Collapse file'}
+      aria-expanded={!isCollapsed}
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle();
+      }}
+    >
+      <svg
+        className={`size-3.5 transition-transform duration-150 ${isCollapsed ? '-rotate-90' : ''}`}
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="m4 6 4 4 4-4" />
+      </svg>
+      <span
+        className="pointer-fine:hidden absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2"
+        aria-hidden="true"
+      />
+    </button>
+  );
+}
 
 function ViewedToggle({
   isViewed,
@@ -1138,9 +1250,10 @@ function ViewedToggle({
   return (
     <button
       type="button"
-      className={`flex items-center gap-1.5 appearance-none border-0 bg-transparent px-1 py-0.5 rounded cursor-pointer select-none font-mono text-[0.7rem] transition-colors duration-100 ${
+      className={`relative flex items-center gap-1.5 appearance-none border-0 bg-transparent px-1 py-0.5 rounded cursor-pointer select-none font-mono text-[0.7rem] ${
         isViewed ? 'text-accent' : 'text-text-secondary hover:text-text-primary'
       }`}
+      aria-pressed={isViewed}
       onClick={(e) => { e.stopPropagation(); onToggle(); }}
     >
       <span
@@ -1153,38 +1266,11 @@ function ViewedToggle({
         {isViewed ? '\u2713' : ''}
       </span>
       Viewed
+      <span
+        className="pointer-fine:hidden absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2"
+        aria-hidden="true"
+      />
     </button>
-  );
-}
-
-function ViewedFileHeader({
-  fileInfo,
-  onToggle,
-}: {
-  fileInfo: FileInfo;
-  isViewed: boolean;
-  onToggle: (path: string) => void;
-}) {
-  return (
-    <div
-      className={`flex items-center gap-3 px-4 ${DIFF_HEADER_HEIGHT} border-b border-border-strong bg-surface-hover hover:bg-surface-active cursor-pointer select-none transition-colors duration-100`}
-      onClick={() => onToggle(fileInfo.path)}
-    >
-      <span className="font-mono text-[0.72rem] truncate text-text-muted">
-        {fileInfo.path}
-      </span>
-      <span className="ml-auto flex items-center gap-3 shrink-0">
-        <span className="flex gap-[5px] text-[0.6rem] opacity-70">
-          {fileInfo.additions > 0 && (
-            <span className="text-stat-add">+{fileInfo.additions}</span>
-          )}
-          {fileInfo.deletions > 0 && (
-            <span className="text-stat-del">-{fileInfo.deletions}</span>
-          )}
-        </span>
-        <ViewedToggle isViewed onToggle={() => onToggle(fileInfo.path)} />
-      </span>
-    </div>
   );
 }
 
@@ -1319,6 +1405,9 @@ const DiffFileSection = React.memo(function DiffFileSection({
   diffStyle,
   resolvedTheme,
   diffTheme,
+  isCollapsed,
+  isViewed,
+  onToggleCollapsed,
   onToggleViewed,
 }: {
   patch: string;
@@ -1335,6 +1424,9 @@ const DiffFileSection = React.memo(function DiffFileSection({
   diffStyle: DiffStyle;
   resolvedTheme?: 'dark' | 'light';
   diffTheme?: string;
+  isCollapsed?: boolean;
+  isViewed?: boolean;
+  onToggleCollapsed?: (path: string) => void;
   onToggleViewed?: (path: string) => void;
 }) {
 
@@ -1357,7 +1449,7 @@ const DiffFileSection = React.memo(function DiffFileSection({
     () => setLanguageOverride(getSingularPatch(patch), fileLanguage),
     [patch, fileLanguage],
   );
-  const shouldPreloadHighlightedDiff = fileLanguage !== 'text';
+  const shouldPreloadHighlightedDiff = fileLanguage !== 'text' && !isCollapsed;
 
   const options = useMemo<FileDiffProps<CommentMeta>['options']>(
     () => ({
@@ -1366,13 +1458,14 @@ const DiffFileSection = React.memo(function DiffFileSection({
       hunkSeparators: 'metadata',
       theme: activeTheme,
       themeType: rt,
+      collapsed: isCollapsed,
       overflow: 'scroll',
       lineDiffType: 'word',
       enableLineSelection: true,
       onLineSelectionEnd: handleSelectionEnd,
       unsafeCSS: buildDiffUnsafeCSS(rt),
     }),
-    [diffStyle, handleSelectionEnd, rt, activeTheme],
+    [diffStyle, handleSelectionEnd, rt, activeTheme, isCollapsed],
   );
   const preloadKey = shouldPreloadHighlightedDiff
     ? JSON.stringify([fileInfo.path, patch, diffStyle, activeTheme, rt])
@@ -1488,8 +1581,18 @@ const DiffFileSection = React.memo(function DiffFileSection({
 
   const renderHeaderMetadata = useCallback(() => {
     if (!onToggleViewed) return null;
-    return <ViewedToggle isViewed={false} onToggle={() => onToggleViewed(fileInfo.path)} />;
-  }, [onToggleViewed, fileInfo.path]);
+    return <ViewedToggle isViewed={isViewed ?? false} onToggle={() => onToggleViewed(fileInfo.path)} />;
+  }, [fileInfo.path, isViewed, onToggleViewed]);
+
+  const renderHeaderPrefix = useCallback(() => {
+    if (!onToggleCollapsed) return null;
+    return (
+      <FileCollapseToggle
+        isCollapsed={isCollapsed ?? false}
+        onToggle={() => onToggleCollapsed(fileInfo.path)}
+      />
+    );
+  }, [fileInfo.path, isCollapsed, onToggleCollapsed]);
 
   return (
     <FileDiff<CommentMeta>
@@ -1503,6 +1606,7 @@ const DiffFileSection = React.memo(function DiffFileSection({
       lineAnnotations={lineAnnotations}
       renderAnnotation={renderAnnotation}
       selectedLines={selectedLines}
+      renderHeaderPrefix={onToggleCollapsed ? renderHeaderPrefix : undefined}
       renderHeaderMetadata={onToggleViewed ? renderHeaderMetadata : undefined}
       prerenderedHTML={prerenderedDiffHTML}
       disableWorkerPool={shouldPreloadHighlightedDiff}
@@ -2908,6 +3012,154 @@ function GitBranchIcon() {
   );
 }
 
+function FileFilterMenu({
+  query,
+  files,
+  totalFiles,
+  viewedCount,
+  deletedCount,
+  hideViewed,
+  hideDeleted,
+  activePath,
+  onQueryChange,
+  onHideViewedChange,
+  onHideDeletedChange,
+  onClear,
+  onSelectFile,
+}: {
+  query: string;
+  files: FileInfo[];
+  totalFiles: number;
+  viewedCount: number;
+  deletedCount: number;
+  hideViewed: boolean;
+  hideDeleted: boolean;
+  activePath: string | null;
+  onQueryChange: (value: string) => void;
+  onHideViewedChange: (value: boolean) => void;
+  onHideDeletedChange: (value: boolean) => void;
+  onClear: () => void;
+  onSelectFile: (path: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const hasFilters = query.trim() !== '' || hideViewed || hideDeleted;
+  const buttonLabel = hasFilters ? `${files.length}/${totalFiles} files` : `${totalFiles} file${totalFiles === 1 ? '' : 's'}`;
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger
+        type="button"
+        className={`inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 font-mono text-[0.68rem] whitespace-nowrap focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+          hasFilters
+            ? 'border-accent/30 bg-accent/10 text-accent'
+            : 'border-border bg-surface-hover text-text-secondary hover:border-border-strong hover:text-text-primary'
+        }`}
+        aria-label={`Filter files, ${files.length} of ${totalFiles} shown`}
+      >
+        <svg className="size-3" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M2.5 3.25h11l-4.25 5v3.5l-2.5 1v-4.5l-4.25-5Z" />
+        </svg>
+        {buttonLabel}
+        <ChevronDownIcon />
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Positioner side="bottom" align="end" sideOffset={8} className="z-50">
+          <Popover.Popup
+            initialFocus={inputRef}
+            className="flex max-h-[min(32rem,70vh)] w-[340px] max-w-[calc(100vw-2rem)] origin-[var(--transform-origin)] flex-col overflow-hidden rounded-lg border border-border bg-surface shadow-lg outline-none transition-[opacity,transform] duration-150 data-starting-style:scale-[0.98] data-starting-style:opacity-0 data-ending-style:scale-[0.98] data-ending-style:opacity-0"
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-border px-3.5 py-2.5">
+              <span className="font-mono text-[0.68rem] font-medium text-text-primary">
+                Filter changed files
+              </span>
+              {hasFilters && (
+                <button
+                  type="button"
+                  className="appearance-none border-0 bg-transparent p-0 font-mono text-[0.65rem] text-accent hover:text-text-primary"
+                  onClick={onClear}
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+            <div className="border-b border-border p-2.5">
+              <input
+                ref={inputRef}
+                type="search"
+                className="w-full appearance-none rounded-md border border-border bg-surface-hover px-2.5 py-1.5 font-mono text-[0.72rem] text-text-primary outline-none placeholder:text-text-muted focus:border-accent/40 focus:ring-1 focus:ring-accent/10"
+                placeholder="Filter by file path…"
+                value={query}
+                onChange={(event) => onQueryChange(event.target.value)}
+              />
+              <div className="mt-2 grid gap-1">
+                <label className="flex min-h-8 cursor-pointer items-center gap-2 rounded px-2 font-mono text-[0.7rem] text-text-secondary hover:bg-surface-hover hover:text-text-primary">
+                  <input
+                    type="checkbox"
+                    className="size-3.5 accent-accent"
+                    checked={hideViewed}
+                    disabled={viewedCount === 0}
+                    onChange={(event) => onHideViewedChange(event.target.checked)}
+                  />
+                  Hide viewed files
+                  <span className="ml-auto tabular-nums text-text-muted">{viewedCount}</span>
+                </label>
+                <label className="flex min-h-8 cursor-pointer items-center gap-2 rounded px-2 font-mono text-[0.7rem] text-text-secondary hover:bg-surface-hover hover:text-text-primary">
+                  <input
+                    type="checkbox"
+                    className="size-3.5 accent-accent"
+                    checked={hideDeleted}
+                    disabled={deletedCount === 0}
+                    onChange={(event) => onHideDeletedChange(event.target.checked)}
+                  />
+                  Hide deleted files
+                  <span className="ml-auto tabular-nums text-text-muted">{deletedCount}</span>
+                </label>
+              </div>
+            </div>
+            <div className="min-h-0 overflow-y-auto p-1.5" aria-label="Matching changed files">
+              {files.length === 0 ? (
+                <p className="m-3 text-center font-mono text-[0.72rem] text-text-muted">
+                  No files match these filters.
+                </p>
+              ) : files.map((file) => (
+                <button
+                  key={file.path}
+                  type="button"
+                  className={`flex w-full min-w-0 items-center gap-2 rounded-md border-0 px-2.5 py-2 text-left font-mono hover:bg-surface-hover ${
+                    file.path === activePath ? 'bg-accent-bg text-text-primary' : 'bg-transparent text-text-secondary'
+                  }`}
+                  title={file.path}
+                  onClick={() => {
+                    onSelectFile(file.path);
+                    setOpen(false);
+                  }}
+                >
+                  <span
+                    className={`size-1.5 shrink-0 rounded-full ${
+                      file.status === 'added'
+                        ? 'bg-stat-add'
+                        : file.status === 'deleted'
+                          ? 'bg-stat-del'
+                          : 'bg-accent'
+                    }`}
+                    aria-hidden="true"
+                  />
+                  <span className="min-w-0 flex-1 truncate text-[0.7rem]">{file.path}</span>
+                  <span className="flex shrink-0 gap-1 text-[0.6rem] tabular-nums">
+                    {file.additions > 0 && <span className="text-stat-add">+{file.additions}</span>}
+                    {file.deletions > 0 && <span className="text-stat-del">-{file.deletions}</span>}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </Popover.Popup>
+        </Popover.Positioner>
+      </Popover.Portal>
+    </Popover.Root>
+  );
+}
+
 const WORKING_KEY = '__working__';
 
 function diffItemId(key: string): string {
@@ -3171,7 +3423,7 @@ function StackList({
       </div>
       <div
         aria-hidden
-        className={`pointer-events-none absolute inset-x-px bottom-0 h-8 bg-gradient-to-b from-transparent to-surface transition-opacity duration-200 ${scrolledToEnd ? 'opacity-0' : 'opacity-100'}`}
+        className={`pointer-events-none absolute inset-x-px bottom-0 h-8 bg-linear-to-b from-transparent to-surface transition-opacity duration-200 ${scrolledToEnd ? 'opacity-0' : 'opacity-100'}`}
       />
     </div>
   );
@@ -3457,16 +3709,25 @@ export default function App() {
   const [isPersistedUIStateLoaded, setIsPersistedUIStateLoaded] = useState(false);
   const [persistedViewedFiles, setPersistedViewedFiles] = useState<Record<string, Record<string, string>>>({});
   const [fileFilter, setFileFilter] = useState('');
+  const [diffSidebarWidth, setDiffSidebarWidth] = useState(loadDiffSidebarWidth);
+  const [isDiffSidebarResizing, setIsDiffSidebarResizing] = useState(false);
   const [activeFileIndex, setActiveFileIndex] = useState<number | null>(null);
   const diffContentRef = useRef<HTMLDivElement>(null);
+  const diffSidebarResizeStartRef = useRef<{ clientX: number; width: number } | null>(null);
   const fileRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const fileScrollCleanupRef = useRef<(() => void) | null>(null);
+  const scrollSpyFrameRef = useRef<number | null>(null);
+  const programmaticFileScrollTopRef = useRef<number | null>(null);
   const viewedScrollAnchorRef = useRef<{ index: number; offset: number } | null>(null);
   const [comments, setComments] = useState<DiffComment[]>([]);
   const [activeInput, setActiveInput] = useState<ActiveInput>(null);
   const [editingComment, setEditingComment] = useState<DiffComment | null>(null);
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [viewedFiles, setViewedFiles] = useState<Set<string>>(new Set());
+  const [manuallyCollapsedFiles, setManuallyCollapsedFiles] = useState<Set<string>>(new Set());
+  const [expandedViewedFiles, setExpandedViewedFiles] = useState<Set<string>>(new Set());
+  const [hideViewedFiles, setHideViewedFiles] = useState(false);
+  const [hideDeletedFiles, setHideDeletedFiles] = useState(false);
   const [expandedLargeFiles, setExpandedLargeFiles] = useState<Set<string>>(new Set());
   const [githubInfo, setGithubInfo] = useState<Record<string, GitHubBranchInfo>>({});
   const [isGithubInfoLoading, setIsGithubInfoLoading] = useState(true);
@@ -3522,6 +3783,65 @@ export default function App() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem(DIFF_SIDEBAR_STORAGE_KEY, String(Math.round(diffSidebarWidth)));
+  }, [diffSidebarWidth]);
+
+  useEffect(() => {
+    const handleWindowResize = () => {
+      setDiffSidebarWidth((width) => clampDiffSidebarWidth(width));
+    };
+    window.addEventListener('resize', handleWindowResize);
+    return () => window.removeEventListener('resize', handleWindowResize);
+  }, []);
+
+  useEffect(() => {
+    if (!isDiffSidebarResizing) return undefined;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    };
+  }, [isDiffSidebarResizing]);
+
+  const handleDiffSidebarResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    diffSidebarResizeStartRef.current = {
+      clientX: event.clientX,
+      width: diffSidebarWidth,
+    };
+    setIsDiffSidebarResizing(true);
+  }, [diffSidebarWidth]);
+
+  const handleDiffSidebarResizeMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    const start = diffSidebarResizeStartRef.current;
+    if (!start) return;
+    setDiffSidebarWidth(clampDiffSidebarWidth(start.width + event.clientX - start.clientX));
+  }, []);
+
+  const handleDiffSidebarResizeEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    diffSidebarResizeStartRef.current = null;
+    setIsDiffSidebarResizing(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  }, []);
+
+  const handleDiffSidebarResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    let nextWidth: number | null = null;
+    if (event.key === 'ArrowLeft') nextWidth = diffSidebarWidth - 16;
+    if (event.key === 'ArrowRight') nextWidth = diffSidebarWidth + 16;
+    if (event.key === 'Home') nextWidth = MIN_DIFF_SIDEBAR_WIDTH;
+    if (event.key === 'End') nextWidth = maxDiffSidebarWidth();
+    if (nextWidth === null) return;
+    event.preventDefault();
+    setDiffSidebarWidth(clampDiffSidebarWidth(nextWidth));
+  }, [diffSidebarWidth]);
 
   const expandLargeFile = useCallback((path: string) => {
     setExpandedLargeFiles((prev) => {
@@ -3695,6 +4015,9 @@ export default function App() {
     setFileFilter('');
     setActiveFileIndex(null);
     fileRefs.current = {};
+    setManuallyCollapsedFiles(new Set());
+    setExpandedViewedFiles(new Set());
+    setExpandedLargeFiles(new Set());
     setComments([]);
     setActiveInput(null);
     setEditingComment(null);
@@ -3719,6 +4042,41 @@ export default function App() {
     () => diffPatches.map((patch, i) => parseFileInfo(patch, i)),
     [diffPatches],
   );
+
+  const fileFilterTokens = useMemo(
+    () => fileFilter.trim().toLowerCase().split(/\s+/).filter(Boolean),
+    [fileFilter],
+  );
+
+  const treeFileInfos = useMemo(
+    () => fileInfos.filter((info) =>
+      !(hideViewedFiles && viewedFiles.has(info.path)) &&
+      !(hideDeletedFiles && info.status === 'deleted')
+    ),
+    [fileInfos, hideDeletedFiles, hideViewedFiles, viewedFiles],
+  );
+
+  const visibleDiffEntries = useMemo(
+    () => fileInfos.flatMap((info, index) => {
+      if (hideViewedFiles && viewedFiles.has(info.path)) return [];
+      if (hideDeletedFiles && info.status === 'deleted') return [];
+      const normalizedPath = info.path.toLowerCase();
+      if (!fileFilterTokens.every((token) => normalizedPath.includes(token))) return [];
+      const patch = diffPatches[index];
+      return patch ? [{ info, index, patch }] : [];
+    }),
+    [diffPatches, fileFilterTokens, fileInfos, hideDeletedFiles, hideViewedFiles, viewedFiles],
+  );
+
+  const activeFilePath = activeFileIndex == null ? null : fileInfos[activeFileIndex]?.path ?? null;
+  const activeTreeFileIndex = activeFilePath == null
+    ? null
+    : treeFileInfos.findIndex((info) => info.path === activeFilePath);
+  const hasActiveFileFilters =
+    fileFilterTokens.length > 0 || hideViewedFiles || hideDeletedFiles;
+  const reviewProgress = diffPatches.length === 0
+    ? 0
+    : Math.round((viewedFiles.size / diffPatches.length) * 100);
 
   const activeDiffVersion = useMemo(() => {
     if (selection?.type === 'branch') {
@@ -3802,7 +4160,7 @@ export default function App() {
     return map;
   }, [comments]);
 
-  const captureViewedScrollAnchor = useCallback((path: string, willCollapse: boolean) => {
+  const captureFileScrollAnchor = useCallback((path: string, willCollapse: boolean) => {
     const scroller = diffContentRef.current;
     if (!scroller) return;
 
@@ -3822,7 +4180,20 @@ export default function App() {
   const toggleViewed = useCallback((path: string) => {
     fileScrollCleanupRef.current?.();
     fileScrollCleanupRef.current = null;
-    captureViewedScrollAnchor(path, !viewedFiles.has(path));
+    const willMarkViewed = !viewedFiles.has(path);
+    captureFileScrollAnchor(path, willMarkViewed);
+    setManuallyCollapsedFiles((prev) => {
+      if (!prev.has(path)) return prev;
+      const next = new Set(prev);
+      next.delete(path);
+      return next;
+    });
+    setExpandedViewedFiles((prev) => {
+      if (!prev.has(path)) return prev;
+      const next = new Set(prev);
+      next.delete(path);
+      return next;
+    });
     setViewedFiles((prev) => {
       const next = new Set(prev);
       if (next.has(path)) next.delete(path);
@@ -3830,7 +4201,31 @@ export default function App() {
       persistViewedFiles(next);
       return next;
     });
-  }, [captureViewedScrollAnchor, persistViewedFiles, viewedFiles]);
+  }, [captureFileScrollAnchor, persistViewedFiles, viewedFiles]);
+
+  const toggleFileCollapsed = useCallback((path: string) => {
+    const isViewed = viewedFiles.has(path);
+    const isCollapsed = manuallyCollapsedFiles.has(path) ||
+      (isViewed && !expandedViewedFiles.has(path));
+    captureFileScrollAnchor(path, !isCollapsed);
+
+    if (isViewed) {
+      setExpandedViewedFiles((prev) => {
+        const next = new Set(prev);
+        if (isCollapsed) next.add(path);
+        else next.delete(path);
+        return next;
+      });
+      return;
+    }
+
+    setManuallyCollapsedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  }, [captureFileScrollAnchor, expandedViewedFiles, manuallyCollapsedFiles, viewedFiles]);
 
   useLayoutEffect(() => {
     const anchor = viewedScrollAnchorRef.current;
@@ -3846,7 +4241,7 @@ export default function App() {
     if (Math.abs(delta) > 0.5) {
       scroller.scrollTop += delta;
     }
-  }, [viewedFiles]);
+  }, [expandedViewedFiles, manuallyCollapsedFiles, viewedFiles]);
 
   const alignFileInDiffPane = useCallback((index: number): boolean => {
     const scroller = diffContentRef.current;
@@ -3855,8 +4250,10 @@ export default function App() {
 
     const scrollerRect = scroller.getBoundingClientRect();
     const targetRect = target.getBoundingClientRect();
+    const nextScrollTop = scroller.scrollTop + targetRect.top - scrollerRect.top;
+    programmaticFileScrollTopRef.current = nextScrollTop;
     scroller.scrollTo({
-      top: scroller.scrollTop + targetRect.top - scrollerRect.top,
+      top: nextScrollTop,
       behavior: 'auto',
     });
     return true;
@@ -3865,10 +4262,16 @@ export default function App() {
   const scrollToFile = useCallback((index: number) => {
     const info = fileInfos[index];
     if (info && viewedFiles.has(info.path)) {
-      setViewedFiles((prev) => {
+      setExpandedViewedFiles((prev) => {
+        const next = new Set(prev);
+        next.add(info.path);
+        return next;
+      });
+    }
+    if (info && manuallyCollapsedFiles.has(info.path)) {
+      setManuallyCollapsedFiles((prev) => {
         const next = new Set(prev);
         next.delete(info.path);
-        persistViewedFiles(next);
         return next;
       });
     }
@@ -3878,20 +4281,29 @@ export default function App() {
     fileScrollCleanupRef.current = null;
 
     requestAnimationFrame(() => {
-      if (!alignFileInDiffPane(index) || typeof ResizeObserver === 'undefined') {
+      const scroller = diffContentRef.current;
+      if (!scroller || !alignFileInDiffPane(index) || typeof ResizeObserver === 'undefined') {
         return;
       }
 
+      let lastAlignedScrollTop = scroller.scrollTop;
       let frameId: number | null = null;
       let timeoutId: number;
+      let cleanup: () => void;
       const observer = new ResizeObserver(() => {
         if (frameId !== null) cancelAnimationFrame(frameId);
         frameId = requestAnimationFrame(() => {
           frameId = null;
-          alignFileInDiffPane(index);
+          if (Math.abs(scroller.scrollTop - lastAlignedScrollTop) > 1) {
+            cleanup();
+            return;
+          }
+          if (alignFileInDiffPane(index)) {
+            lastAlignedScrollTop = scroller.scrollTop;
+          }
         });
       });
-      const cleanup = () => {
+      cleanup = () => {
         observer.disconnect();
         if (frameId !== null) cancelAnimationFrame(frameId);
         window.clearTimeout(timeoutId);
@@ -3907,11 +4319,75 @@ export default function App() {
       timeoutId = window.setTimeout(cleanup, 600);
       fileScrollCleanupRef.current = cleanup;
     });
-  }, [alignFileInDiffPane, fileInfos, persistViewedFiles, viewedFiles]);
+  }, [alignFileInDiffPane, fileInfos, manuallyCollapsedFiles, viewedFiles]);
+
+  const scrollToFilePath = useCallback((path: string) => {
+    const index = fileInfos.findIndex((info) => info.path === path);
+    if (index >= 0) scrollToFile(index);
+  }, [fileInfos, scrollToFile]);
+
+  const handleTreeFileClick = useCallback((index: number) => {
+    const path = treeFileInfos[index]?.path;
+    if (path) scrollToFilePath(path);
+  }, [scrollToFilePath, treeFileInfos]);
+
+  const syncActiveFileFromScroll = useCallback(() => {
+    const scroller = diffContentRef.current;
+    if (!scroller || visibleDiffEntries.length === 0) {
+      setActiveFileIndex(null);
+      return;
+    }
+
+    const threshold = scroller.getBoundingClientRect().top + 1;
+    const nextActive = visibleDiffEntries.find(({ index }) => {
+      const section = fileRefs.current[index];
+      return section ? section.getBoundingClientRect().bottom > threshold : false;
+    });
+    setActiveFileIndex((current) =>
+      current === (nextActive?.index ?? null) ? current : nextActive?.index ?? null
+    );
+  }, [visibleDiffEntries]);
+
+  const handleDiffScroll = useCallback(() => {
+    const expectedScrollTop = programmaticFileScrollTopRef.current;
+    const actualScrollTop = diffContentRef.current?.scrollTop;
+    const isProgrammaticScroll =
+      expectedScrollTop !== null &&
+      actualScrollTop !== undefined &&
+      Math.abs(expectedScrollTop - actualScrollTop) <= 1;
+    programmaticFileScrollTopRef.current = null;
+    if (!isProgrammaticScroll) {
+      fileScrollCleanupRef.current?.();
+      fileScrollCleanupRef.current = null;
+    }
+    if (scrollSpyFrameRef.current !== null) return;
+    scrollSpyFrameRef.current = window.requestAnimationFrame(() => {
+      scrollSpyFrameRef.current = null;
+      syncActiveFileFromScroll();
+    });
+  }, [syncActiveFileFromScroll]);
+
+  useLayoutEffect(() => {
+    const frame = window.requestAnimationFrame(syncActiveFileFromScroll);
+    return () => window.cancelAnimationFrame(frame);
+  }, [syncActiveFileFromScroll]);
+
+  useEffect(() => {
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(syncActiveFileFromScroll);
+    for (const { index } of visibleDiffEntries) {
+      const section = fileRefs.current[index];
+      if (section) observer.observe(section);
+    }
+    return () => observer.disconnect();
+  }, [syncActiveFileFromScroll, visibleDiffEntries]);
 
   useEffect(() => {
     return () => {
       fileScrollCleanupRef.current?.();
+      if (scrollSpyFrameRef.current !== null) {
+        window.cancelAnimationFrame(scrollSpyFrameRef.current);
+      }
     };
   }, []);
 
@@ -4223,7 +4699,7 @@ export default function App() {
       poolOptions={{ workerFactory: () => new DiffsWorker(), poolSize: 4 }}
       highlighterOptions={{}}
     >
-    <main className="relative h-screen animate-fade-in overflow-hidden flex flex-col">
+    <main className="relative isolate flex h-dvh flex-col overflow-hidden antialiased animate-fade-in">
       <section className="bg-surface overflow-hidden flex flex-col min-w-0 flex-1 min-h-0">
         <SettingsModal
           isOpen={showSettings}
@@ -4306,15 +4782,42 @@ export default function App() {
                 {copyFeedback ? 'Copied!' : `Copy ${comments.length} comment${comments.length === 1 ? '' : 's'}`}
               </button>
             )}
-            {!isRecapRoute && !isDiffLoading && diffPatches.length > 0 && viewedFiles.size > 0 && (
-              <span className="font-mono text-[0.68rem] text-accent bg-accent/10 border border-accent/20 px-2 py-[3px] rounded-full whitespace-nowrap">
-                {viewedFiles.size}/{diffPatches.length} viewed
-              </span>
+            {!isRecapRoute && !isDiffLoading && diffPatches.length > 0 && (
+              <div
+                className="hidden h-7 items-center gap-2 rounded-md border border-border bg-surface-hover px-2.5 sm:flex"
+                aria-label={`${viewedFiles.size} of ${diffPatches.length} files viewed`}
+              >
+                <span className="font-mono text-[0.65rem] tabular-nums text-text-secondary whitespace-nowrap">
+                  {viewedFiles.size}/{diffPatches.length} viewed
+                </span>
+                <span className="h-1.5 w-14 overflow-hidden rounded-full bg-surface-active" aria-hidden="true">
+                  <span
+                    className="block h-full w-(--review-progress) rounded-full bg-accent"
+                    style={{ '--review-progress': `${reviewProgress}%` } as React.CSSProperties}
+                  />
+                </span>
+              </div>
             )}
             {!isRecapRoute && !isDiffLoading && diffPatches.length > 0 && (
-              <span className="font-mono text-[0.68rem] text-text-secondary bg-surface-hover border border-border px-2 py-[3px] rounded-full whitespace-nowrap">
-                {diffPatches.length} file{diffPatches.length === 1 ? '' : 's'}
-              </span>
+              <FileFilterMenu
+                query={fileFilter}
+                files={visibleDiffEntries.map(({ info }) => info)}
+                totalFiles={fileInfos.length}
+                viewedCount={viewedFiles.size}
+                deletedCount={fileInfos.filter((info) => info.status === 'deleted').length}
+                hideViewed={hideViewedFiles}
+                hideDeleted={hideDeletedFiles}
+                activePath={activeFilePath}
+                onQueryChange={setFileFilter}
+                onHideViewedChange={setHideViewedFiles}
+                onHideDeletedChange={setHideDeletedFiles}
+                onClear={() => {
+                  setFileFilter('');
+                  setHideViewedFiles(false);
+                  setHideDeletedFiles(false);
+                }}
+                onSelectFile={scrollToFilePath}
+              />
             )}
             <div
               className="flex bg-surface-hover border border-border rounded-md p-0.5"
@@ -4398,14 +4901,19 @@ export default function App() {
         {!isRecapRoute && !isDiffLoading && activePatch && diffPatches.length > 0 && (
           <div className="flex flex-1 min-h-0">
             {isWideScreen && (
-            <aside className="w-[280px] min-w-[280px] border-r border-border flex flex-col overflow-hidden max-[1100px]:hidden">
+            <>
+            <aside
+              data-testid="diff-sidebar"
+              className="flex shrink-0 flex-col overflow-hidden max-[1100px]:hidden"
+              style={{ width: `${diffSidebarWidth}px` }}
+            >
               <div className="px-4 py-3 border-b border-border">
                 <div className="flex items-center justify-between">
                   <span className="text-[0.8rem] font-semibold text-text-primary">
                     Files changed
                   </span>
-                  <span className="text-[0.65rem] font-mono text-text-muted bg-surface-hover px-2 py-0.5 rounded-full">
-                    {fileInfos.length}
+                  <span className="text-[0.65rem] font-mono tabular-nums text-text-muted bg-surface-hover px-2 py-0.5 rounded-full">
+                    {hasActiveFileFilters ? `${visibleDiffEntries.length}/${fileInfos.length}` : fileInfos.length}
                   </span>
                 </div>
                 {fileInfos.length > 0 && (
@@ -4420,18 +4928,45 @@ export default function App() {
                 )}
               </div>
               <ChangedFilesTree
-                fileInfos={fileInfos}
+                fileInfos={treeFileInfos}
                 fileFilter={fileFilter}
-                activeFileIndex={activeFileIndex}
+                activeFileIndex={activeTreeFileIndex === -1 ? null : activeTreeFileIndex}
                 viewedFiles={viewedFiles}
                 resolvedTheme={resolvedTheme}
                 onFilterChange={setFileFilter}
-                onFileClick={scrollToFile}
+                onFileClick={handleTreeFileClick}
               />
             </aside>
+            <div
+              role="separator"
+              aria-label="Resize files sidebar"
+              aria-orientation="vertical"
+              aria-valuemin={MIN_DIFF_SIDEBAR_WIDTH}
+              aria-valuemax={maxDiffSidebarWidth()}
+              aria-valuenow={Math.round(diffSidebarWidth)}
+              tabIndex={0}
+              title="Drag to resize · Double-click to reset"
+              className={`group relative z-20 w-px shrink-0 touch-none cursor-col-resize bg-border outline-none transition-colors after:absolute after:inset-y-0 after:-left-1 after:w-[9px] hover:bg-accent/60 focus-visible:bg-accent max-[1100px]:hidden ${isDiffSidebarResizing ? 'bg-accent' : ''}`}
+              onDoubleClick={() => setDiffSidebarWidth(clampDiffSidebarWidth(DEFAULT_DIFF_SIDEBAR_WIDTH))}
+              onKeyDown={handleDiffSidebarResizeKeyDown}
+              onPointerDown={handleDiffSidebarResizeStart}
+              onPointerMove={handleDiffSidebarResizeMove}
+              onPointerUp={handleDiffSidebarResizeEnd}
+              onPointerCancel={handleDiffSidebarResizeEnd}
+            >
+              <span
+                aria-hidden="true"
+                className={`pointer-events-none absolute top-1/2 left-1/2 h-9 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent transition-opacity ${isDiffSidebarResizing ? 'opacity-100' : 'opacity-0 group-hover:opacity-70 group-focus-visible:opacity-100'}`}
+              />
+            </div>
+            </>
             )}
 
-            <div ref={diffContentRef} className="diff-content flex-1 min-w-0 overflow-auto">
+            <div
+              ref={diffContentRef}
+              className="diff-content flex-1 min-w-0 overflow-auto"
+              onScroll={handleDiffScroll}
+            >
               {reviewSummaries.size > 0 && (
                 <ReviewSummaryPanel
                   summaries={reviewSummaries}
@@ -4439,20 +4974,62 @@ export default function App() {
                   onClose={() => { setReviewSummaries(new Map()); setReviewFixPrompt(null); }}
                 />
               )}
-              {diffPatches.map((patch, index) => {
-                const info = fileInfos[index];
-                if (!info) return null;
+              {visibleDiffEntries.length === 0 && (
+                <div className="flex min-h-48 flex-col items-center justify-center gap-3 px-6 text-center">
+                  <p className="m-0 font-mono text-[0.78rem] text-text-secondary">
+                    No changed files match these filters.
+                  </p>
+                  <button
+                    type="button"
+                    className="h-7 rounded-md border border-border bg-surface-hover px-3 font-mono text-[0.7rem] text-text-secondary hover:border-border-strong hover:text-text-primary"
+                    onClick={() => {
+                      setFileFilter('');
+                      setHideViewedFiles(false);
+                      setHideDeletedFiles(false);
+                    }}
+                  >
+                    Clear filters
+                  </button>
+                </div>
+              )}
+              {visibleDiffEntries.map(({ patch, info, index }, visibleIndex) => {
                 const isViewed = viewedFiles.has(info.path);
+                const isCollapsed = manuallyCollapsedFiles.has(info.path) ||
+                  (isViewed && !expandedViewedFiles.has(info.path));
+                const isLastVisibleFile = visibleIndex === visibleDiffEntries.length - 1;
                 return (
                   <div
-                    className={index > 0 ? 'border-t-2 border-guide' : undefined}
-                    key={`${selection?.type === 'working' ? 'working' : diff?.branch}-${index}`}
+                    className={[
+                      visibleIndex > 0 ? 'border-t-2 border-guide' : '',
+                      isLastVisibleFile ? 'min-h-full' : '',
+                    ].filter(Boolean).join(' ') || undefined}
+                    key={`${selection?.type === 'working' ? 'working' : diff?.branch}-${info.path}`}
                     data-file-path={info.path}
                     data-file-index={index}
+                    data-file-collapsed={isCollapsed ? 'true' : 'false'}
                     ref={(el) => { fileRefs.current[index] = el; }}
                   >
-                    {isViewed ? (
-                      <ViewedFileHeader fileInfo={info} isViewed={isViewed} onToggle={toggleViewed} />
+                    {isCollapsed ? (
+                      <DiffFileSection
+                        patch={patch}
+                        fileInfo={info}
+                        fileComments={commentsByFile.get(info.path) ?? EMPTY_COMMENTS}
+                        activeInput={activeInput}
+                        editingComment={editingComment}
+                        onRangeSelected={handleRangeSelected}
+                        onStartEdit={handleStartEdit}
+                        onAddComment={handleAddComment}
+                        onUpdateComment={handleUpdateComment}
+                        onDeleteComment={handleDeleteComment}
+                        onCancelInput={handleCancelInput}
+                        diffStyle={diffStyle}
+                        resolvedTheme={resolvedTheme}
+                        diffTheme={activeDiffTheme}
+                        isCollapsed
+                        isViewed={isViewed}
+                        onToggleCollapsed={toggleFileCollapsed}
+                        onToggleViewed={toggleViewed}
+                      />
                     ) : info.additions + info.deletions >= LARGE_FILE_THRESHOLD && !expandedLargeFiles.has(info.path) ? (
                       <LargeFilePlaceholder fileInfo={info} onShow={() => expandLargeFile(info.path)} onToggleViewed={toggleViewed} />
                     ) : (
@@ -4472,6 +5049,9 @@ export default function App() {
                           diffStyle={diffStyle}
                           resolvedTheme={resolvedTheme}
                           diffTheme={activeDiffTheme}
+                          isCollapsed={false}
+                          isViewed={isViewed}
+                          onToggleCollapsed={toggleFileCollapsed}
                           onToggleViewed={toggleViewed}
                         />
                       )} />
