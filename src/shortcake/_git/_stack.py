@@ -11,6 +11,7 @@ from shortcake._git._core import (
     get_default_branch,
 )
 from shortcake._git._rebase import get_merge_base, is_ancestor
+from shortcake._git._remote import get_remote_ref
 from shortcake._trailers import Trailers
 
 
@@ -87,26 +88,30 @@ def get_branch_parent_info(
     if branch == get_default_branch(repo):
         return None
 
-    # Use precomputed head if available, otherwise fetch it
-    if branch_heads is not None:
-        branch_head = branch_heads[branch]
-    else:
-        branch_head = get_branch_head(repo, branch)
-
-    # Get heads of other branches to know where to stop.
+    # Get all branch heads so we can identify boundaries and same-commit aliases.
     # Use precomputed heads if provided (O(n) -> O(1) per call).
-    # NOTE: a branch parked at the exact same commit as another ref is
-    # genuinely ambiguous (the shared history can't say which ref owns it),
-    # so the walk deliberately stops there and reports untracked. Restack
-    # flows never leave sc-managed branches in that state — an emptied
-    # branch immediately gets its trailer restored (see _trailer_lost).
-    if branch_heads is not None:
-        other_branch_heads = {sha for b, sha in branch_heads.items() if b != branch}
-    else:
-        other_branch_heads: set[bytes] = set()
-        for other_branch in all_branches:
-            if other_branch != branch:
-                other_branch_heads.add(get_branch_head(repo, other_branch))
+    if branch_heads is None:
+        branch_heads = {b: get_branch_head(repo, b) for b in all_branches}
+    branch_head = branch_heads[branch]
+    other_branch_heads = {sha for b, sha in branch_heads.items() if b != branch}
+
+    # A branch parked at the exact same commit as another local ref is normally
+    # ambiguous: the shared history cannot say which ref owns it. A fetched
+    # branch is different, though. If exactly one of the same-commit names has
+    # a matching origin/<name> ref, that remote-backed name is canonical. This
+    # lets `sc pull` restore a PR branch even when a local work/investigation
+    # alias happens to point at its head, while the alias remains untracked.
+    shared_branches = [
+        name for name, head in branch_heads.items() if head == branch_head
+    ]
+    if len(shared_branches) > 1:
+        remote_backed = [
+            name
+            for name in shared_branches
+            if get_remote_ref(repo, f"origin/{name}") == branch_head
+        ]
+        if remote_backed == [branch]:
+            other_branch_heads.discard(branch_head)
 
     # Walk commits from branch head
     # Limit depth to avoid walking entire history for untracked branches.

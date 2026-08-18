@@ -1252,6 +1252,23 @@ def test_get_branch_parent_branch_parked_at_tracked_head_untracked(
     assert git.get_branch_parent(repo_with_feature, "backup-ref", all_branches) is None
 
 
+def test_get_branch_parent_prefers_unique_remote_backed_same_head_branch(
+    repo_with_feature: Repo,
+) -> None:
+    """A fetched branch wins over a local alias parked at the same commit."""
+    _adopt(repo_with_feature)
+
+    feature_sha = get_ref(repo_with_feature, "refs/heads/feature")
+    set_ref(repo_with_feature, "refs/heads/investigation", feature_sha)
+    set_ref(repo_with_feature, "refs/remotes/origin/feature", feature_sha)
+
+    all_branches = set(git.get_all_local_branches(repo_with_feature))
+    assert git.get_branch_parent(repo_with_feature, "feature", all_branches) == "main"
+    assert (
+        git.get_branch_parent(repo_with_feature, "investigation", all_branches) is None
+    )
+
+
 # Staleness markers
 
 
