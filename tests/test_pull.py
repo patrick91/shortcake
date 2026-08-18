@@ -1149,7 +1149,7 @@ def test_ensure_stack_does_not_pull_sibling_stacks(
 
 
 def test_pull_stack_creates_missing_branches(temp_repo: Repo, tmp_path: Path) -> None:
-    """Test _pull_stack creates missing stack branches from remote."""
+    """Pull restores a remote stack branch despite a same-commit local alias."""
     set_remote(temp_repo, "origin", "git@github.com:owner/repo.git")
 
     # Create branch_a locally with trailer
@@ -1181,15 +1181,20 @@ def test_pull_stack_creates_missing_branches(temp_repo: Repo, tmp_path: Path) ->
     set_ref(temp_repo, "refs/remotes/origin/branch_a", branch_a_sha)
     set_ref(temp_repo, "refs/remotes/origin/branch_b", branch_b_sha)
 
-    # Delete branch_b locally
+    # A local investigation branch happens to point at the PR branch's commit.
+    # The remote-backed branch name must remain the canonical tracked branch.
     switch_branch(temp_repo, "branch_a")
+    set_ref(temp_repo, "refs/heads/investigation", branch_b_sha)
     temp_repo.references.delete("refs/heads/branch_b")
 
     with patch("shortcake.commands.pull._fetch", return_value=True):
         result = _pull_stack(temp_repo)
 
     assert result.is_stack is True
-    # branch_b should have been created from remote
+    assert [branch.branch for branch in result.branch_results] == [
+        "branch_a",
+        "branch_b",
+    ]
     assert any(br.created_from_remote for br in result.branch_results)
     assert "refs/heads/branch_b" in temp_repo.references
 
