@@ -1,6 +1,6 @@
 [project]
 name = "shortcake"
-version = "1.6.5"
+version = "1.6.6"
 description = "Add your description here"
 readme = "README.md"
 authors = [

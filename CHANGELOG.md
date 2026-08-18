@@ -1,6 +1,15 @@
 CHANGELOG
 =========
 
+1.6.6 - 2026-08-18
+------------------
+
+Keep pulled PR branches visible when an unrelated local branch points at the
+same commit. Shortcake now uses the uniquely matching remote branch as the
+canonical stack branch while leaving the local alias untracked.
+
+This release was contributed by [@patrick91](https://github.com/patrick91) in [#142](https://github.com/patrick91/shortcake/pull/142)
+
 1.6.5 - 2026-08-12
 ------------------
 
