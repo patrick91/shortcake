@@ -684,10 +684,15 @@ def test_marking_viewed_resets_when_file_patch_changes(page: Page, ui_url: str):
     expect(page.locator(f'[data-file-path="{path}"]')).to_contain_text("BEFORE line 1")
 
 
+def _open_settings(page: Page) -> None:
+    page.get_by_role("button", name="Settings").click()
+
+
 def test_unified_split_toggle(ui_page: Page):
-    """Switching between unified and split diff layouts."""
-    split_btn = ui_page.get_by_role("button", name="Split")
-    unified_btn = ui_page.get_by_role("button", name="Unified")
+    """Switching between unified and split diff layouts (in the settings drawer)."""
+    _open_settings(ui_page)
+    split_btn = ui_page.get_by_role("button", name="split")
+    unified_btn = ui_page.get_by_role("button", name="unified")
 
     # Switch to split
     split_btn.click()
@@ -700,14 +705,17 @@ def test_unified_split_toggle(ui_page: Page):
 
 def test_diff_layout_persists_after_reload(ui_page: Page):
     """The selected diff layout is restored after reloading the UI."""
-    split_btn = ui_page.get_by_role("button", name="Split")
-    unified_btn = ui_page.get_by_role("button", name="Unified")
-
-    split_btn.click()
-    expect(split_btn).to_have_class(re.compile(r"bg-surface-active"))
+    _open_settings(ui_page)
+    ui_page.get_by_role("button", name="split").click()
+    expect(ui_page.get_by_role("button", name="split")).to_have_class(
+        re.compile(r"bg-surface-active")
+    )
 
     ui_page.reload()
     ui_page.wait_for_selector(".diff-content", timeout=10_000)
+    _open_settings(ui_page)
+    split_btn = ui_page.get_by_role("button", name="split")
+    unified_btn = ui_page.get_by_role("button", name="unified")
     expect(split_btn).to_have_class(re.compile(r"bg-surface-active"))
 
     unified_btn.click()
