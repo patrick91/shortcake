@@ -1,4 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,600;12..96,700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "@fontsource/monaspace-neon/400.css";
+@import "@fontsource/monaspace-neon/500.css";
 @import "tailwindcss";
 @source "./**/*.{ts,tsx}";
 @source "../index.html";
@@ -200,4 +202,156 @@ body::before {
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes settings-slide-in {
+  from { transform: translateX(16px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.animate-settings-slide-in {
+  animation: settings-slide-in 180ms ease-out;
+}
+
+/* Diff code font: the custom property inherits through the diffs shadow DOM,
+   so this applies to every rendered diff (review view and recaps). */
+:root {
+  --diffs-font-family: 'Monaspace Neon', 'JetBrains Mono', monospace;
+}
+
+/* File header background — must match the [data-diffs-header] color used in
+   buildDiffUnsafeCSS; the card paints its top strip with it so the clip's
+   anti-aliased corner seam never shows the surface color through.
+   The card border is a solid (non-translucent) color so the corner arcs the
+   header wedges draw with the same value composite identically to the real
+   border — a translucent border would render a different shade depending on
+   what's behind it. */
+:root {
+  --shortcake-diff-header-bg: #16161c;
+  --shortcake-card-border: #2c2c32;
+}
+
+:root[data-theme="light"] {
+  --shortcake-diff-header-bg: #ececed;
+  --shortcake-card-border: #cbcbcd;
+}
+
+/* GitHub-style file cards: constrained reading column, each file in its own
+   rounded card on the page background. clip-path (not overflow) rounds the
+   corners without turning the card into the sticky headers' scroll reference,
+   so file headers keep sticking to the diff scrollport. */
+/* GitHub Primer diff row colors, applied when a github-* diff theme is
+   active (set via data-diff-accent in App). The themes only drive token
+   colors; the add/delete washes come from the diffs library's own mixing,
+   which reads muted compared to GitHub — these overrides pierce the shadow
+   DOM and reproduce Primer's exact diff backgrounds. */
+.diff-content[data-diff-accent="github"] {
+  /* Disable the library's ~90% white/black dilution so the Primer colors
+     below paint at full strength (see the --mix overrides in
+     buildDiffUnsafeCSS). */
+  --shortcake-diff-mix-light: 0%;
+  --shortcake-diff-mix-dark: 0%;
+  /* GitHub has no white slit between the number column and the code: kill
+     the library's gutter gap border (this var is its declared hook). */
+  --diffs-gap-style: none;
+  /* dark-first: Primer dark */
+  --diffs-bg-addition-override: rgba(46, 160, 67, 0.15);
+  --diffs-bg-addition-emphasis-override: rgba(46, 160, 67, 0.4);
+  --diffs-bg-deletion-override: rgba(248, 81, 73, 0.15);
+  --diffs-bg-deletion-emphasis-override: rgba(248, 81, 73, 0.4);
+  --diffs-bg-addition-number-override: rgba(63, 185, 80, 0.3);
+  --diffs-bg-deletion-number-override: rgba(248, 81, 73, 0.3);
+}
+
+:root[data-theme="light"] .diff-content[data-diff-accent="github"] {
+  --diffs-bg-addition-override: #dafbe1;
+  --diffs-bg-addition-emphasis-override: #aceebb;
+  --diffs-bg-deletion-override: #ffebe9;
+  --diffs-bg-deletion-emphasis-override: rgba(255, 129, 130, 0.4);
+  --diffs-bg-addition-number-override: #d1f8d9;
+  --diffs-bg-deletion-number-override: #ffd7d5;
+}
+
+.diff-content {
+  background: var(--color-bg);
+  /* No padding-top: Chromium insets the sticky rectangle by the scroll
+     container's padding, which would make the sticky file headers stick
+     below the top edge. Spacing comes from the per-file masks instead. */
+  padding: 0 0 40px;
+}
+
+.diff-content .diff-file-group {
+  /* Snap to a whole pixel: a fractional width (95% of an arbitrary container)
+     puts the right border on a sub-pixel boundary where it rasterizes
+     thinner/fainter than the left one. Plain 95% is the fallback for
+     browsers without round(). */
+  max-width: 95%;
+  max-width: round(down, 95%, 1px);
+  margin: 0 auto;
+}
+
+/* The last file always fills the remaining viewport (the card keeps its
+   natural height; the extra space is page bg) so jumping to it from the file
+   tree can align it with the top of the scrollport. */
+.diff-content > .diff-file-group:last-child {
+  min-height: 100%;
+}
+
+/* Per-file sticky page-bg mask: renders as the 20px gap above its card at
+   rest, sticks to the scrollport top while its card scrolls (hiding code
+   that slides past the stuck header), and — because it is constrained to its
+   own group — leaves together with the card when it unsticks, handing over
+   to the next file's identical mask seamlessly. */
+.diff-file-mask {
+  position: sticky;
+  top: 0;
+  height: 20px;
+  background: var(--color-bg);
+  /* Above the code it masks, but BELOW the sticky file headers (z 30 in
+     buildDiffUnsafeCSS): a departing header slides visibly over the mask and
+     off the top edge instead of being cut by it. */
+  z-index: 15;
+}
+
+.diff-file-card {
+  position: relative;
+  border: 1px solid var(--shortcake-card-border);
+  border-radius: 10px;
+  /* Clips the square-cornered shadow-DOM content (header, code) to the
+     rounded padding box WITHOUT creating a scroll container, so the sticky
+     file headers keep tracking the .diff-content scrollport (hidden/auto
+     would break them). Same approach as Shopify Polaris cards. */
+  overflow: clip;
+  /* Expand the clip edge from the padding box to the border box so the
+     header's corner wedges (see buildDiffUnsafeCSS) can paint over the border
+     column while stuck. Safari ignores this and degrades gracefully. */
+  overflow-clip-margin: 1px;
+  /* Header-colored top strip under the (clipped) sticky header, surface
+     below: the sub-pixel ring between the border and the clip edge blends
+     into the header instead of flashing the surface color at the corners. */
+  background:
+    linear-gradient(var(--shortcake-diff-header-bg), var(--shortcake-diff-header-bg)) top / 100% 45px no-repeat,
+    var(--color-surface);
+}
+
+/* Bottom counterpart of the header's corner overlay (buildDiffUnsafeCSS):
+   with the clip widened to the border box, the code area's square corners
+   paint over the card's bottom border arcs — redraw the arcs plus the 1px
+   bottom line (which lands exactly on the real border) on top. */
+.diff-file-card::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: -1px;
+  right: -1px;
+  height: 10px;
+  pointer-events: none;
+  /* Above the sticky header (z 30): keeps the bottom arcs visible on
+     collapsed (header-only) cards and rounds the bottom edge of a departing
+     card while its header overlaps it. */
+  z-index: 35;
+  background:
+    radial-gradient(circle at 100% 0%, transparent 8.75px, var(--shortcake-card-border) 9.25px 10px, var(--color-bg) 10.5px) left bottom / 10px 10px no-repeat,
+    radial-gradient(circle at 0% 0%, transparent 8.75px, var(--shortcake-card-border) 9.25px 10px, var(--color-bg) 10.5px) right bottom / 10px 10px no-repeat,
+    linear-gradient(var(--shortcake-card-border), var(--shortcake-card-border)) bottom / 100% 1px no-repeat;
 }

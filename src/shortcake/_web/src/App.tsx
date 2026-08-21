@@ -61,6 +61,15 @@ function useMediaQuery(query: string): boolean {
   return useSyncExternalStore(subscribe, getSnapshot, () => true);
 }
 
+// The GitHub Primer palettes are the defaults. The pierre themes were the old
+// defaults, so stored pierre values migrate to the new default rather than
+// pinning users to it; any other stored theme is an explicit choice and wins.
+function initialDiffTheme(storageKey: string, fallback: string): string {
+  const stored = localStorage.getItem(storageKey);
+  if (!stored || stored === 'pierre-dark' || stored === 'pierre-light') return fallback;
+  return stored;
+}
+
 function formatLineRef(file: string, startLine: number, endLine: number): string {
   return startLine === endLine ? `${file}:${startLine}` : `${file}:${startLine}-${endLine}`;
 }
@@ -318,27 +327,63 @@ function viewedFileRecordsEqual(
   return bEntries.every(([path, patchKey]) => a?.[path] === patchKey);
 }
 
-function buildDiffUnsafeCSS(resolvedTheme: 'dark' | 'light'): string {
+function buildDiffUnsafeCSS(
+  resolvedTheme: 'dark' | 'light',
+  card = false,
+  collapsed = false,
+): string {
   const headerBg = resolvedTheme === 'light' ? '#ececed' : '#16161c';
   const headerBorder = resolvedTheme === 'light' ? 'rgba(0, 0, 0, 0.12)' : 'rgba(255, 255, 255, 0.1)';
   const headerShadow = resolvedTheme === 'light' ? '0 2px 5px rgba(0, 0, 0, 0.06)' : '0 2px 6px rgba(0, 0, 0, 0.35)';
-  return `
+  // Card mode (the diff review view): headers stick 20px below the scrollport
+  // top, under the page-bg mask strip (.diff-content::before), and keep the
+  // card's rounded top corners while stuck. The corner radius is 9px — the
+  // card's 10px outer radius minus its 1px border — matching the rounded
+  // padding-box the card's overflow: clip cuts content to. The ::before /
+  // ::after wedges paint the page bg outside that radius (extending 1px into
+  // the border area) so, while the header is stuck mid-card, code scrolling
+  // behind its rounded corners is hidden and the card appears to slide under
+  // a rounded window. At rest the wedges fall entirely outside the clip
+  // radius and are clipped away, so they can never create a corner seam.
+  const cardHeaderCSS = card
+    ? `
     [data-diffs-header] {
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      min-height: 44px !important;
-      background: ${headerBg} !important;
-      border-bottom: 1px solid ${headerBorder} !important;
-      box-shadow: ${headerShadow};
+      top: 21px;
+      border-radius: 9px 9px 0 0;
+      /* Above the .diff-file-mask strips (z 15): while a card unsticks, its
+         rounded header stays visible and is pushed off the scrollport edge
+         instead of being flat-cut by the mask — the mask only needs to cover
+         scrolled CODE, which stays below it. */
+      z-index: 30;
     }
-    [data-selected-line] { background: rgba(250, 204, 21, 0.10) !important; }
-    [data-annotation-content] {
-      padding: 0;
+    [data-diffs-header]::before {
+      content: '';
+      position: absolute;
+      top: -1px;
+      left: -1px;
+      right: -1px;
+      height: 10px;
+      pointer-events: none;
+      background:
+        radial-gradient(circle at 100% 100%, transparent 8.75px, var(--shortcake-card-border) 9.25px 10px, var(--color-bg) 10.5px) left top / 10px 10px no-repeat,
+        radial-gradient(circle at 0% 100%, transparent 8.75px, var(--shortcake-card-border) 9.25px 10px, var(--color-bg) 10.5px) right top / 10px 10px no-repeat,
+        linear-gradient(var(--shortcake-card-border), var(--shortcake-card-border)) top / 100% 1px no-repeat;
     }
-    [data-line-annotation] {
-      --diffs-annotation-bg: ${resolvedTheme === 'light' ? '#fff7f9' : 'rgba(244, 63, 94, 0.07)'};
-    }
+    [data-diffs-header]::after {
+      content: '';
+      position: absolute;
+      /* Side-border segments riding with the header: at rest they coincide
+         with the card's real borders; while the card departs over the mask
+         (which is above the card but below the header) they keep the left and
+         right borders visible. Start at 9px so the ::before corner arcs own
+         the corner region. */
+      inset: 9px -1px -1px -1px;
+      border-left: 1px solid var(--shortcake-card-border);
+      border-right: 1px solid var(--shortcake-card-border);
+      pointer-events: none;
+    }`
+    : '';
+  const tokenCSS = `
     [data-line] span[style*="--diffs-token-light"],
     [data-line] span[style*="--diffs-token-dark"] {
       --shortcake-token-color-light: var(--diffs-token-light, var(--diffs-fg));
@@ -362,7 +407,60 @@ function buildDiffUnsafeCSS(resolvedTheme: 'dark' | 'light'): string {
       font-style: var(--shortcake-token-font-style);
       -webkit-text-decoration: var(--shortcake-token-text-decoration);
       text-decoration: var(--shortcake-token-text-decoration);
+    }`;
+  return `
+    [data-diffs-header] {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      min-height: 44px !important;
+      background: var(--shortcake-diff-header-bg, ${headerBg}) !important;
+      /* A collapsed card is header-only: its bottom border would double up
+         with the card's own border. */
+      border-bottom: ${collapsed ? 'none' : `1px solid ${headerBorder}`} !important;
+      box-shadow: ${collapsed ? 'none' : headerShadow};
     }
+    ${cardHeaderCSS}
+    [data-code] {
+      /* Don't reserve horizontal-scrollbar space: only actually-overflowing
+         files get a scrollbar (and no phantom band at the card bottom). */
+      overflow-x: auto !important;
+      scrollbar-gutter: auto !important;
+      padding-bottom: 0 !important;
+    }
+    [data-selected-line] { background: rgba(250, 204, 21, 0.10) !important; }
+    [data-annotation-content] {
+      padding: 0;
+    }
+    [data-line-annotation] {
+      --diffs-annotation-bg: ${resolvedTheme === 'light' ? '#fff7f9' : 'rgba(244, 63, 94, 0.07)'};
+    }
+    [data-line], [data-no-newline] {
+      /* The library dilutes diff row colors to ~10% via color-mix; when the
+         GitHub accent is active (.diff-content sets --shortcake-diff-mix-*
+         to 0%), the --diffs-bg-*-override colors apply at full strength. */
+      --mix-light: var(--shortcake-diff-mix-light, 91%) !important;
+      --mix-dark: var(--shortcake-diff-mix-dark, 85%) !important;
+    }
+    [data-gutter-buffer], [data-column-number] {
+      --mix-light: var(--shortcake-diff-mix-light, 88%) !important;
+      --mix-dark: var(--shortcake-diff-mix-dark, 80%) !important;
+    }
+    [data-decoration-bar-stack] {
+      /* Its 2px page-colored side borders paint a white slit over the
+         gutter/code boundary. */
+      border-left-color: transparent !important;
+      border-right-color: transparent !important;
+    }
+    /* The custom header renders the path and counts through the header
+       slots; hide the library's own versions. */
+    [data-diffs-header] [data-change-icon],
+    [data-diffs-header] [data-title],
+    [data-metadata] [data-additions-count],
+    [data-metadata] [data-deletions-count] {
+      display: none !important;
+    }
+    ${tokenCSS}
   `;
 }
 
@@ -1250,27 +1348,43 @@ function ViewedToggle({
   return (
     <button
       type="button"
-      className={`relative flex items-center gap-1.5 appearance-none border-0 bg-transparent px-1 py-0.5 rounded cursor-pointer select-none font-mono text-[0.7rem] ${
-        isViewed ? 'text-accent' : 'text-text-secondary hover:text-text-primary'
+      className={`relative flex items-center gap-1.5 appearance-none rounded-md border px-2 py-[3px] cursor-pointer select-none font-mono text-[0.68rem] leading-none transition-colors duration-100 ${
+        isViewed
+          ? 'border-accent/40 bg-accent/10 text-accent'
+          : 'border-border bg-transparent text-text-secondary hover:bg-surface-hover hover:text-text-primary'
       }`}
       aria-pressed={isViewed}
       onClick={(e) => { e.stopPropagation(); onToggle(); }}
     >
-      <span
-        className={`inline-flex items-center justify-center w-[15px] h-[15px] rounded-[3px] border text-[0.6rem] leading-none shrink-0 transition-colors duration-100 ${
-          isViewed
-            ? 'bg-accent border-accent text-white'
-            : 'bg-surface border-border-strong hover:border-text-muted'
-        }`}
-      >
-        {isViewed ? '\u2713' : ''}
-      </span>
+      {isViewed && (
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M2.5 8.5l4 4 7-8" />
+        </svg>
+      )}
       Viewed
       <span
         className="pointer-fine:hidden absolute top-1/2 left-1/2 size-[max(100%,3rem)] -translate-1/2"
         aria-hidden="true"
       />
     </button>
+  );
+}
+
+// GitHub-style diffstat meter: five blocks split by the add/delete ratio.
+function DiffstatBlocks({ additions, deletions }: { additions: number; deletions: number }) {
+  const total = additions + deletions;
+  if (total === 0) return null;
+  let green = Math.round((additions / total) * 5);
+  if (additions > 0) green = Math.max(green, 1);
+  if (deletions > 0) green = Math.min(green, 4);
+  const blocks = Array.from({ length: 5 }, (_, i) =>
+    i < green ? 'bg-stat-add' : deletions > 0 ? 'bg-stat-del' : 'bg-surface-active');
+  return (
+    <span className="flex items-center gap-[2px]" aria-hidden="true">
+      {blocks.map((cls, i) => (
+        <span key={i} className={`h-[7px] w-[7px] rounded-[2px] ${cls}`} />
+      ))}
+    </span>
   );
 }
 
@@ -1444,6 +1558,7 @@ const DiffFileSection = React.memo(function DiffFileSection({
   const rt = resolvedTheme ?? 'dark';
   const activeTheme = diffTheme ?? (rt === 'light' ? 'pierre-light' : 'pierre-dark');
   const fileLanguage = getFiletypeFromFileName(fileInfo.path);
+  const [pathCopied, setPathCopied] = useState(false);
 
   const fileDiff = useMemo(
     () => setLanguageOverride(getSingularPatch(patch), fileLanguage),
@@ -1454,7 +1569,7 @@ const DiffFileSection = React.memo(function DiffFileSection({
   const options = useMemo<FileDiffProps<CommentMeta>['options']>(
     () => ({
       diffStyle,
-      diffIndicators: 'classic',
+      diffIndicators: 'none',
       hunkSeparators: 'metadata',
       theme: activeTheme,
       themeType: rt,
@@ -1463,7 +1578,7 @@ const DiffFileSection = React.memo(function DiffFileSection({
       lineDiffType: 'word',
       enableLineSelection: true,
       onLineSelectionEnd: handleSelectionEnd,
-      unsafeCSS: buildDiffUnsafeCSS(rt),
+      unsafeCSS: buildDiffUnsafeCSS(rt, true, isCollapsed ?? false),
     }),
     [diffStyle, handleSelectionEnd, rt, activeTheme, isCollapsed],
   );
@@ -1580,9 +1695,77 @@ const DiffFileSection = React.memo(function DiffFileSection({
   );
 
   const renderHeaderMetadata = useCallback(() => {
-    if (!onToggleViewed) return null;
-    return <ViewedToggle isViewed={isViewed ?? false} onToggle={() => onToggleViewed(fileInfo.path)} />;
-  }, [fileInfo.path, isViewed, onToggleViewed]);
+    const viewedToggle = onToggleViewed
+      ? <ViewedToggle isViewed={isViewed ?? false} onToggle={() => onToggleViewed(fileInfo.path)} />
+      : null;
+    return (
+      <span className="flex items-center gap-3">
+        <span className="flex items-center gap-2">
+          <span className="flex items-center gap-1.5 font-mono text-[0.72rem] leading-none tabular-nums">
+            {fileInfo.additions > 0 && <span className="text-stat-add">+{fileInfo.additions}</span>}
+            {fileInfo.deletions > 0 && <span className="text-stat-del">&minus;{fileInfo.deletions}</span>}
+          </span>
+          <DiffstatBlocks additions={fileInfo.additions} deletions={fileInfo.deletions} />
+        </span>
+        {viewedToggle}
+      </span>
+    );
+  }, [fileInfo.path, fileInfo.additions, fileInfo.deletions, isViewed, onToggleViewed]);
+
+  const copyPath = useCallback((event: React.MouseEvent) => {
+    event.stopPropagation();
+    void navigator.clipboard.writeText(fileInfo.path).then(() => {
+      setPathCopied(true);
+      setTimeout(() => setPathCopied(false), 1500);
+    });
+  }, [fileInfo.path]);
+
+  const renderHeaderFilenameSuffix = useCallback(() => {
+    const dir = fileInfo.path.slice(0, fileInfo.path.length - fileInfo.name.length);
+    // Status icon only for the unusual cases; modified files stay clean.
+    const statusIcon =
+      fileInfo.status === 'added' ? (
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className="shrink-0 text-stat-add" aria-label="Added file" role="img">
+          <rect x="1.5" y="1.5" width="13" height="13" rx="3.5" />
+          <path d="M8 5v6M5 8h6" />
+        </svg>
+      ) : fileInfo.status === 'deleted' ? (
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className="shrink-0 text-stat-del" aria-label="Deleted file" role="img">
+          <rect x="1.5" y="1.5" width="13" height="13" rx="3.5" />
+          <path d="M5 8h6" />
+        </svg>
+      ) : fileInfo.status === 'renamed' ? (
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-warning" aria-label="Renamed file" role="img">
+          <rect x="1.5" y="1.5" width="13" height="13" rx="3.5" />
+          <path d="M5 8h6M8.5 5.5L11 8l-2.5 2.5" />
+        </svg>
+      ) : null;
+    const copyButton = (
+      <button
+        type="button"
+        className="appearance-none border-none bg-transparent p-0.5 cursor-pointer text-text-muted hover:text-text-primary shrink-0 leading-none"
+        title="Copy file path"
+        aria-label="Copy file path"
+        onClick={copyPath}
+      >
+        {pathCopied ? (
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-accent"><path d="M2.5 8.5l4 4 7-8" /></svg>
+        ) : (
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5" /><path d="M10.5 5.5v-2a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 3.5V9A1.5 1.5 0 0 0 4 10.5h1.5" /></svg>
+        )}
+      </button>
+    );
+    return (
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span className="truncate font-mono text-[0.8rem] leading-none">
+          {dir && <span className="text-text-secondary">{dir}</span>}
+          <span className="font-semibold text-text-primary">{fileInfo.name}</span>
+        </span>
+        {statusIcon}
+        {copyButton}
+      </span>
+    );
+  }, [fileInfo.path, fileInfo.name, fileInfo.status, copyPath, pathCopied]);
 
   const renderHeaderPrefix = useCallback(() => {
     if (!onToggleCollapsed) return null;
@@ -1607,7 +1790,8 @@ const DiffFileSection = React.memo(function DiffFileSection({
       renderAnnotation={renderAnnotation}
       selectedLines={selectedLines}
       renderHeaderPrefix={onToggleCollapsed ? renderHeaderPrefix : undefined}
-      renderHeaderMetadata={onToggleViewed ? renderHeaderMetadata : undefined}
+      renderHeaderFilenameSuffix={renderHeaderFilenameSuffix}
+      renderHeaderMetadata={renderHeaderMetadata}
       prerenderedHTML={prerenderedDiffHTML}
       disableWorkerPool={shouldPreloadHighlightedDiff}
     />
@@ -2929,6 +3113,10 @@ function SettingsModal({
   diffThemeLight,
   onDarkChange,
   onLightChange,
+  themeMode,
+  onThemeModeChange,
+  diffStyle,
+  onDiffStyleChange,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -2936,8 +3124,23 @@ function SettingsModal({
   diffThemeLight: string;
   onDarkChange: (v: string) => void;
   onLightChange: (v: string) => void;
+  themeMode?: ThemeMode;
+  onThemeModeChange?: (mode: ThemeMode) => void;
+  diffStyle?: DiffStyle;
+  onDiffStyleChange?: (style: DiffStyle) => void;
 }) {
   if (!isOpen) return null;
+
+  const segButton = (label: string, isActive: boolean, onClick: () => void) => (
+    <button
+      key={label}
+      className={`appearance-none border-none rounded-[6px] font-mono text-[0.7rem] tracking-[0.02em] px-2.5 py-1 cursor-pointer transition-[color,background] duration-[120ms] ease-in-out capitalize ${isActive ? 'text-text-primary bg-surface-active' : 'bg-transparent text-text-muted hover:text-text-secondary'}`}
+      onClick={onClick}
+      type="button"
+    >
+      {label}
+    </button>
+  );
 
   const themeSelect = (value: string, onChange: (v: string) => void) => (
     <select
@@ -2957,11 +3160,11 @@ function SettingsModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+      className="fixed inset-0 z-50"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="bg-surface border border-border rounded-lg shadow-lg w-full max-w-[400px] mx-4">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+      <div className="absolute inset-y-0 right-0 flex w-[340px] max-w-[calc(100vw-2rem)] flex-col overflow-y-auto bg-surface border-l border-border shadow-2xl animate-settings-slide-in">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
           <h2 className="text-text-primary text-[0.95rem] font-semibold m-0">Settings</h2>
           <button
             className="appearance-none border-none bg-transparent text-text-muted hover:text-text-primary cursor-pointer p-1"
@@ -2975,6 +3178,30 @@ function SettingsModal({
           </button>
         </div>
         <div className="px-5 py-4 flex flex-col gap-4">
+          {themeMode !== undefined && onThemeModeChange && (
+            <div>
+              <label className="block font-mono text-[0.72rem] font-medium text-text-secondary mb-1.5 uppercase tracking-[0.08em]">
+                Appearance
+              </label>
+              <div className="inline-flex bg-surface-hover border border-border rounded-md p-0.5" role="group" aria-label="Theme">
+                {(['dark', 'light', 'system'] as const).map((mode) =>
+                  segButton(mode, themeMode === mode, () => onThemeModeChange(mode)),
+                )}
+              </div>
+            </div>
+          )}
+          {diffStyle !== undefined && onDiffStyleChange && (
+            <div>
+              <label className="block font-mono text-[0.72rem] font-medium text-text-secondary mb-1.5 uppercase tracking-[0.08em]">
+                Diff Layout
+              </label>
+              <div className="inline-flex bg-surface-hover border border-border rounded-md p-0.5" role="group" aria-label="Diff layout">
+                {(['unified', 'split'] as const).map((style) =>
+                  segButton(style, diffStyle === style, () => onDiffStyleChange(style)),
+                )}
+              </div>
+            </div>
+          )}
           <div>
             <label className="block font-mono text-[0.72rem] font-medium text-text-secondary mb-1.5 uppercase tracking-[0.08em]">
               Dark Mode Diff Theme
@@ -3859,10 +4086,10 @@ export default function App() {
     themeMode === 'system' ? (prefersDark ? 'dark' : 'light') : themeMode;
 
   const [diffThemeDark, setDiffThemeDark] = useState<string>(
-    () => localStorage.getItem('shortcake-diff-theme-dark') ?? 'pierre-dark',
+    () => initialDiffTheme('shortcake-diff-theme-dark', 'github-dark-default'),
   );
   const [diffThemeLight, setDiffThemeLight] = useState<string>(
-    () => localStorage.getItem('shortcake-diff-theme-light') ?? 'pierre-light',
+    () => initialDiffTheme('shortcake-diff-theme-light', 'github-light-default'),
   );
   const [showSettings, setShowSettings] = useState(false);
 
@@ -4693,6 +4920,10 @@ export default function App() {
 
   const branches = stack?.branches ?? [];
   const isRecapRoute = recapId !== null;
+  const selectedBranch =
+    selection?.type === 'branch'
+      ? branches.find((b) => b.name === selection.name) ?? null
+      : null;
 
   return (
     <WorkerPoolContextProvider
@@ -4708,6 +4939,10 @@ export default function App() {
           diffThemeLight={diffThemeLight}
           onDarkChange={setDiffThemeDark}
           onLightChange={setDiffThemeLight}
+          themeMode={themeMode}
+          onThemeModeChange={setThemeMode}
+          diffStyle={diffStyle}
+          onDiffStyleChange={setAndPersistDiffStyle}
         />
         <header className="px-[1.15rem] h-[60px] shrink-0 border-b border-border flex justify-between items-center gap-4">
           <div className="flex items-center gap-2.5 min-w-0 max-w-[58vw] shrink-0 xl:max-w-none">
@@ -4744,6 +4979,21 @@ export default function App() {
                 githubInfo={githubInfo}
                 onSelect={(sel) => { setSelection(sel); setSwitcherOpen(false); }}
               />
+            )}
+            {!isRecapRoute && selectedBranch && (
+              <div className="hidden lg:flex min-w-0 flex-col justify-center leading-tight">
+                <span
+                  className="truncate text-[0.8rem] text-text-secondary"
+                  title={selectedBranch.commitSubject}
+                >
+                  {selectedBranch.commitSubject}
+                </span>
+                {selectedBranch.commitCount > 1 && (
+                  <span className="font-mono text-[0.6rem] text-text-muted">
+                    +{selectedBranch.commitCount - 1} more commit{selectedBranch.commitCount > 2 ? 's' : ''}
+                  </span>
+                )}
+              </div>
             )}
           </div>
 
@@ -4819,42 +5069,6 @@ export default function App() {
                 onSelectFile={scrollToFilePath}
               />
             )}
-            <div
-              className="flex bg-surface-hover border border-border rounded-md p-0.5"
-              role="group"
-              aria-label="Theme"
-            >
-              {(['dark', 'light', 'system'] as const).map((mode) => (
-                <button
-                  key={mode}
-                  className={`appearance-none border-none rounded-[6px] font-mono text-[0.7rem] tracking-[0.02em] px-2.5 py-1 cursor-pointer transition-[color,background] duration-[120ms] ease-in-out capitalize ${themeMode === mode ? 'text-text-primary bg-surface-active' : 'bg-transparent text-text-muted hover:text-text-secondary'}`}
-                  onClick={() => setThemeMode(mode)}
-                  type="button"
-                >
-                  {mode}
-                </button>
-              ))}
-            </div>
-            <div
-              className="flex bg-surface-hover border border-border rounded-md p-0.5"
-              role="group"
-              aria-label="Diff layout"
-            >
-              <button
-                className={`appearance-none border-none rounded-[6px] font-mono text-[0.7rem] tracking-[0.02em] px-2.5 py-1 cursor-pointer transition-[color,background] duration-[120ms] ease-in-out ${diffStyle === 'unified' ? 'text-text-primary bg-surface-active' : 'bg-transparent text-text-muted hover:text-text-secondary'}`}
-                onClick={() => setAndPersistDiffStyle('unified')}
-                type="button"
-              >
-                Unified
-              </button>
-              <button
-                className={`appearance-none border-none rounded-[6px] font-mono text-[0.7rem] tracking-[0.02em] px-2.5 py-1 cursor-pointer transition-[color,background] duration-[120ms] ease-in-out ${diffStyle === 'split' ? 'text-text-primary bg-surface-active' : 'bg-transparent text-text-muted hover:text-text-secondary'}`}
-                onClick={() => setAndPersistDiffStyle('split')}
-                type="button"
-              >
-                Split
-              </button>
-            </div>
             <button
               className="appearance-none border-none bg-transparent text-text-muted hover:text-text-primary cursor-pointer p-1 transition-colors duration-100"
               onClick={() => setShowSettings(true)}
@@ -4965,6 +5179,7 @@ export default function App() {
             <div
               ref={diffContentRef}
               className="diff-content flex-1 min-w-0 overflow-auto"
+              data-diff-accent={activeDiffTheme.startsWith('github-') ? 'github' : undefined}
               onScroll={handleDiffScroll}
             >
               {reviewSummaries.size > 0 && (
@@ -4992,23 +5207,21 @@ export default function App() {
                   </button>
                 </div>
               )}
-              {visibleDiffEntries.map(({ patch, info, index }, visibleIndex) => {
+              {visibleDiffEntries.map(({ patch, info, index }) => {
                 const isViewed = viewedFiles.has(info.path);
                 const isCollapsed = manuallyCollapsedFiles.has(info.path) ||
                   (isViewed && !expandedViewedFiles.has(info.path));
-                const isLastVisibleFile = visibleIndex === visibleDiffEntries.length - 1;
                 return (
                   <div
-                    className={[
-                      visibleIndex > 0 ? 'border-t-2 border-guide' : '',
-                      isLastVisibleFile ? 'min-h-full' : '',
-                    ].filter(Boolean).join(' ') || undefined}
                     key={`${selection?.type === 'working' ? 'working' : diff?.branch}-${info.path}`}
+                    className="diff-file-group"
                     data-file-path={info.path}
                     data-file-index={index}
                     data-file-collapsed={isCollapsed ? 'true' : 'false'}
                     ref={(el) => { fileRefs.current[index] = el; }}
                   >
+                    <div className="diff-file-mask" aria-hidden="true" />
+                    <div className="diff-file-card">
                     {isCollapsed ? (
                       <DiffFileSection
                         patch={patch}
@@ -5049,13 +5262,14 @@ export default function App() {
                           diffStyle={diffStyle}
                           resolvedTheme={resolvedTheme}
                           diffTheme={activeDiffTheme}
-                          isCollapsed={false}
+                            isCollapsed={false}
                           isViewed={isViewed}
                           onToggleCollapsed={toggleFileCollapsed}
                           onToggleViewed={toggleViewed}
                         />
                       )} />
                     )}
+                    </div>
                   </div>
                 );
               })}
