@@ -50,9 +50,12 @@ def _get_stack_in_order(repo: Repo, start: str) -> list[str]:
     Starting from the given branch, walks up to find the stack root (first
     tracked branch whose parent is untracked/trunk), then returns all branches
     in that stack via BFS. Only includes branches in the same stack as start,
-    not sibling stacks under the same trunk.
+    not sibling stacks under the same trunk. Returns an empty list when start
+    no longer exists locally.
     """
     all_branches = set(git.get_all_local_branches(repo))
+    if start not in all_branches:
+        return []
 
     # Precompute branch heads for efficient parent lookups
     branch_heads = {b: git.get_branch_head(repo, b) for b in all_branches}

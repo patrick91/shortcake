@@ -372,6 +372,30 @@ def test_move_updates_pr_bases_and_descriptions(
     assert "Original branch_a description" in new_body_a
 
 
+def test_move_with_missing_old_parent_still_syncs_prs(
+    repo_with_stack: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stale parent trailer must not crash post-move PR synchronization."""
+    setup_origin_remote(repo_with_stack)
+    monkeypatch.setenv("GH_TOKEN", "test-token")
+    switch_branch(repo_with_stack, "branch_b")
+    git.delete_branch(repo_with_stack, "branch_a")
+
+    mock_client = MagicMock(spec=GitHubClient)
+    mock_client.get_pr_for_branch.return_value = None
+    mock_client.__enter__ = MagicMock(return_value=mock_client)
+    mock_client.__exit__ = MagicMock(return_value=False)
+
+    with patch("shortcake.commands.move.GitHubClient", return_value=mock_client):
+        result = _move(repo_with_stack, "branch_b", "main")
+
+    assert result.old_parent == "branch_a"
+    assert result.new_parent == "main"
+    mock_client.get_pr_for_branch.assert_called_once_with("branch_b")
+    all_branches = set(git.get_all_local_branches(repo_with_stack))
+    assert git.get_branch_parent(repo_with_stack, "branch_b", all_branches) == "main"
+
+
 def test_move_pr_sync_errors_are_non_fatal(
     repo_with_stack: Repo, monkeypatch: pytest.MonkeyPatch
 ) -> None:
