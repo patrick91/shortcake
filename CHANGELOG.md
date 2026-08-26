@@ -1,6 +1,15 @@
 CHANGELOG
 =========
 
+1.7.1 - 2026-08-26
+------------------
+
+Prevent `sc move` from crashing after a successful local move when the branch's
+former parent has already been deleted locally. Post-move stack discovery now
+skips missing local branch names instead of indexing a nonexistent ref.
+
+This release was contributed by [@patrick91](https://github.com/patrick91) in [#144](https://github.com/patrick91/shortcake/pull/144)
+
 1.7.0 - 2026-08-21
 ------------------
 
