@@ -355,6 +355,8 @@ class GitHubClient:
                 f"/repos/{self.owner}/{self.repo}/commits/{branch}/check-runs",
                 params={"per_page": 100},
             )
+            if response.status_code in (403, 429):
+                response.raise_for_status()
             if response.status_code != 200:
                 return None
             data = response.json()
