@@ -1,6 +1,15 @@
 CHANGELOG
 =========
 
+1.7.2 - 2026-09-17
+------------------
+
+Reduce GitHub API traffic from `sc ui` by sharing a five-minute cache across tabs
+and pausing polling in hidden tabs. Stop refreshes when GitHub rate-limits requests,
+respect its retry timing, and preserve previously loaded PR and CI information.
+
+This release was contributed by [@patrick91](https://github.com/patrick91) in [#147](https://github.com/patrick91/shortcake/pull/147)
+
 1.7.1 - 2026-08-26
 ------------------
 
