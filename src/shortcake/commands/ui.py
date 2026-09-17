@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
 from urllib.parse import parse_qs, unquote, urlparse
 
+import httpx
 import typer
 
 from shortcake import _git as git
@@ -36,7 +37,6 @@ from shortcake._recap import (
 if TYPE_CHECKING:
     from shortcake._git._core import Repo
 from shortcake._github import (
-    BranchGitHubInfo,
     GitHubClient,
     get_github_token,
     get_repo_info,
@@ -466,12 +466,11 @@ def _build_github_info_payload(repo: Repo, branch_names: list[str]) -> dict[str,
     except Exception:
         return {"branches": {}}
 
-    def _fetch_info(branch: str) -> tuple[str, BranchGitHubInfo]:
-        return branch, client.get_branch_github_info(branch)
-
     result: dict[str, dict[str, Any]] = {}
-    with ThreadPoolExecutor(max_workers=min(8, len(branch_names) or 1)) as pool:
-        for branch, info in pool.map(_fetch_info, branch_names):
+    try:
+        # Fetch sequentially so a rate limit stops the remaining branches.
+        for branch in branch_names:
+            info = client.get_branch_github_info(branch)
             result[branch] = {
                 "prNumber": info.pr_number,
                 "prUrl": info.pr_url,
@@ -479,9 +478,61 @@ def _build_github_info_payload(repo: Repo, branch_names: list[str]) -> dict[str,
                 "prState": info.pr_state,
                 "checkStatus": info.check_status,
             }
+    finally:
+        client.client.close()
 
-    client.client.close()
     return {"branches": result}
+
+
+class _GitHubInfoCache:
+    """Share a bounded refresh cadence across all tabs of one UI server."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._payload: dict[str, Any] = {"branches": {}}
+        self._refresh_at = 0.0
+        self._retry_delay = 60.0
+
+    def get(self, repo: Repo, branch_names: list[str]) -> dict[str, Any]:
+        # Hold the lock through refresh: concurrent tabs must not start more work.
+        with self._lock:
+            if time.time() >= self._refresh_at:
+                try:
+                    payload = _build_github_info_payload(repo, branch_names)
+                except httpx.HTTPStatusError as exc:
+                    response = exc.response
+                    delay = self._retry_delay
+                    self._retry_delay = min(self._retry_delay * 2, 3600)
+                    if response.status_code in (403, 429):
+                        with contextlib.suppress(ValueError):
+                            delay = max(
+                                delay, float(response.headers.get("retry-after", "0"))
+                            )
+                        if response.headers.get("x-ratelimit-remaining") == "0":
+                            with contextlib.suppress(ValueError):
+                                delay = max(
+                                    delay,
+                                    float(
+                                        response.headers.get("x-ratelimit-reset", "0")
+                                    )
+                                    - time.time()
+                                    + 1,
+                                )
+                    self._refresh_at = time.time() + delay
+                except httpx.RequestError:
+                    self._refresh_at = time.time() + 60
+                else:
+                    self._retry_delay = 60.0
+                    self._payload = payload
+                    self._refresh_at = time.time() + 300
+
+            return {
+                "branches": {
+                    branch: info
+                    for branch, info in self._payload["branches"].items()
+                    if branch in branch_names
+                }
+            }
 
 
 def _write_json(
@@ -578,6 +629,8 @@ def _build_request_handler(
     def _open_repo() -> Repo:
         return git.open_repo(repo_path)
 
+    github_info_cache = _GitHubInfoCache()
+
     class StackUIRequestHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:
             parsed = urlparse(self.path)
@@ -615,9 +668,7 @@ def _build_request_handler(
                     repo = _open_repo()
                     tracked = _tracked_branch_parents(repo)
                     branch_names = list(tracked.keys())
-                    _write_json(
-                        self, 200, _build_github_info_payload(repo, branch_names)
-                    )
+                    _write_json(self, 200, github_info_cache.get(repo, branch_names))
                 except Exception as exc:
                     _write_json(self, 500, {"error": str(exc)})
                 return

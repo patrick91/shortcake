@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 import typer
 
@@ -25,6 +26,7 @@ from shortcake.commands.ui import (
     _git_diff_patch,
     _git_working_diff,
     _git_working_diff_key,
+    _GitHubInfoCache,
     _live_ui_session,
     _live_ui_session_unlocked,
     _load_persisted_ui_state,
@@ -3099,3 +3101,140 @@ def test_post_review_synthesis_exception(repo_with_stack: Repo) -> None:
     assert len(review_events) == 1
     assert len(synth_events) == 0
     assert len(done_events) == 1
+
+
+def test_github_cache_shares_refresh_and_expires(temp_repo: Repo) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    cache = _GitHubInfoCache()
+    payload = {"branches": {"feat": {"prNumber": 42}}}
+    with (
+        patch("shortcake.commands.ui.time.time", return_value=1000) as clock,
+        patch(
+            "shortcake.commands.ui._build_github_info_payload", return_value=payload
+        ) as fetch,
+    ):
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(lambda _: cache.get(temp_repo, ["feat"]), range(8)))
+
+        assert results == [payload] * 8
+        fetch.assert_called_once()
+        assert cache.get(temp_repo, []) == {"branches": {}}
+        assert cache.get(temp_repo, ["new"]) == {"branches": {}}
+        fetch.assert_called_once()
+
+        clock.return_value = 1300
+        assert cache.get(temp_repo, ["feat"]) == payload
+        assert fetch.call_count == 2
+
+
+@pytest.mark.parametrize(
+    ("status", "headers", "retry_at"),
+    [
+        (403, {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "2000"}, 2001),
+        (429, {"retry-after": "900"}, 2200),
+        (
+            403,
+            {
+                "retry-after": "900",
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": "3000",
+            },
+            3001,
+        ),
+        (429, {}, 1360),
+        (
+            403,
+            {
+                "retry-after": "bad",
+                "x-ratelimit-remaining": "0",
+                "x-ratelimit-reset": "bad",
+            },
+            1360,
+        ),
+        (500, {}, 1360),
+    ],
+)
+def test_github_cache_preserves_data_until_retry(
+    temp_repo: Repo, status, headers, retry_at
+) -> None:
+    cache = _GitHubInfoCache()
+    payload = {"branches": {"feat": {"prNumber": 42}}}
+    response = httpx.Response(
+        status,
+        headers=headers,
+        request=httpx.Request("GET", "https://api.github.com/test"),
+    )
+    error = httpx.HTTPStatusError(
+        "limited", request=response.request, response=response
+    )
+
+    with (
+        patch("shortcake.commands.ui.time.time", return_value=1000) as clock,
+        patch(
+            "shortcake.commands.ui._build_github_info_payload", return_value=payload
+        ) as fetch,
+    ):
+        assert cache.get(temp_repo, ["feat"]) == payload
+        clock.return_value = 1300
+        fetch.side_effect = error
+        assert cache.get(temp_repo, ["feat"]) == payload
+
+        clock.return_value = retry_at - 1
+        assert cache.get(temp_repo, ["feat", "new"]) == payload
+        assert fetch.call_count == 2
+
+        clock.return_value = retry_at
+        fetch.side_effect = None
+        assert cache.get(temp_repo, ["feat"]) == payload
+        assert fetch.call_count == 3
+
+
+def test_github_cache_network_error_and_secondary_backoff(temp_repo: Repo) -> None:
+    cache = _GitHubInfoCache()
+    response = httpx.Response(
+        429, request=httpx.Request("GET", "https://api.github.com/test")
+    )
+    limited = httpx.HTTPStatusError(
+        "limited", request=response.request, response=response
+    )
+
+    with (
+        patch("shortcake.commands.ui.time.time", return_value=1000) as clock,
+        patch(
+            "shortcake.commands.ui._build_github_info_payload",
+            side_effect=httpx.ConnectError("offline"),
+        ) as fetch,
+    ):
+        assert cache.get(temp_repo, ["feat"]) == {"branches": {}}
+        clock.return_value = 1059
+        cache.get(temp_repo, ["feat"])
+        fetch.assert_called_once()
+
+        clock.return_value = 1060
+        fetch.side_effect = limited
+        cache.get(temp_repo, ["feat"])
+        clock.return_value = 1120
+        cache.get(temp_repo, ["feat"])
+        clock.return_value = 1239
+        cache.get(temp_repo, ["feat"])
+        assert fetch.call_count == 3
+        clock.return_value = 1240
+        cache.get(temp_repo, ["feat"])
+        assert fetch.call_count == 4
+
+
+def test_github_refresh_stops_and_closes_on_error(temp_repo: Repo) -> None:
+    with (
+        patch("shortcake.commands.ui.get_github_token", return_value="token"),
+        patch("shortcake.commands.ui.get_repo_info", return_value=("owner", "repo")),
+        patch("shortcake.commands.ui.GitHubClient") as client_cls,
+    ):
+        client = client_cls.return_value
+        client.get_branch_github_info.side_effect = httpx.ConnectError("offline")
+
+        with pytest.raises(httpx.ConnectError):
+            _build_github_info_payload(temp_repo, ["first", "second"])
+
+        client.get_branch_github_info.assert_called_once_with("first")
+        client.client.close.assert_called_once()

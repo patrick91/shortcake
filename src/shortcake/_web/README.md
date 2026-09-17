@@ -15,6 +15,12 @@ By default, `sc ui` serves the built `dist/` assets and the API from the same
 local server. It does not start Vite or require Bun unless the built assets are
 missing.
 
+GitHub PR and CI information refreshes every five minutes while the tab is visible.
+All tabs connected to the same UI server share a five-minute cache; newly tracked
+branches appear in GitHub results on the next refresh. If GitHub rate-limits a
+request, the server keeps the previous results and waits for the reset or
+`Retry-After` time before trying again. Repeated failures increase the retry delay.
+
 Useful flags:
 
 ```bash

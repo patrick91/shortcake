@@ -1670,3 +1670,23 @@ def test_unstack_returns_remaining_native_stack() -> None:
 
     assert stack is not None
     assert stack.number == 7
+
+
+@pytest.mark.parametrize("status", [403, 429])
+@respx.mock
+def test_check_rate_limit_stops_branch_lookup(status: int) -> None:
+    pulls = respx.get("https://api.github.com/repos/owner/repo/pulls").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    checks = respx.get(
+        "https://api.github.com/repos/owner/repo/commits/feat/check-runs"
+    ).mock(return_value=httpx.Response(status))
+
+    with (
+        GitHubClient("token", "owner", "repo") as client,
+        pytest.raises(httpx.HTTPStatusError),
+    ):
+        client.get_branch_github_info("feat")
+
+    assert pulls.call_count == 1
+    assert checks.call_count == 1

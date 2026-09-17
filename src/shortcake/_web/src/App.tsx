@@ -4746,29 +4746,49 @@ export default function App() {
     };
   }, []);
 
-  // Fetch GitHub info (PR links + CI status) on a slower polling interval
+  // Only poll GitHub while visible, with at most one request in flight.
   useEffect(() => {
     let cancelled = false;
+    let inFlight = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
 
     const fetchGithubInfo = async () => {
+      if (cancelled || inFlight || document.visibilityState !== 'visible') return;
+      clearTimeout(timeoutId);
+      inFlight = true;
       try {
-        const data = await fetchJSON<GitHubInfoResponse>('/api/github-info');
-        if (!cancelled) {
-          setGithubInfo(data.branches);
-          setIsGithubInfoLoading(false);
-        }
+        const response = await fetch(`${API_BASE}/api/github-info`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error('GitHub info unavailable');
+        const data: GitHubInfoResponse = await response.json();
+        if (!cancelled) setGithubInfo(data.branches);
       } catch {
-        // Silent failure — GitHub info is optional
-        if (!cancelled) setIsGithubInfoLoading(false);
+        // Keep previous data when a refresh fails.
+      } finally {
+        inFlight = false;
+        if (!cancelled) {
+          setIsGithubInfoLoading(false);
+          if (document.visibilityState === 'visible') {
+            timeoutId = setTimeout(fetchGithubInfo, 300_000);
+          }
+        }
       }
     };
 
-    fetchGithubInfo();
+    const handleVisibilityChange = () => {
+      clearTimeout(timeoutId);
+      if (document.visibilityState === 'visible') void fetchGithubInfo();
+    };
 
-    const intervalId = setInterval(fetchGithubInfo, 30_000);
+    void fetchGithubInfo();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => {
       cancelled = true;
-      clearInterval(intervalId);
+      clearTimeout(timeoutId);
+      controller.abort();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
   }, []);
 
