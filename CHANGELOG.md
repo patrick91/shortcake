@@ -1,6 +1,15 @@
 CHANGELOG
 =========
 
+1.7.3 - 2026-09-18
+------------------
+
+Fix `sc sync` crashing when a branch that needs reparenting is checked out in
+another worktree. Sync now rebases it in that worktree and keeps the parent branch
+when uncommitted changes or an operation in progress prevent reparenting.
+
+This release was contributed by [@patrick91](https://github.com/patrick91) in [#148](https://github.com/patrick91/shortcake/pull/148)
+
 1.7.2 - 2026-09-17
 ------------------
 
