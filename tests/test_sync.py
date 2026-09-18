@@ -16,6 +16,7 @@ from shortcake._git._stack import (
     is_squash_merged,
 )
 from shortcake._output import get_rich_toolkit
+from shortcake._restack_state import RestackState
 from shortcake._trailers import Trailers
 from shortcake.cli import app
 from shortcake.commands.restack import RestackResult
@@ -638,6 +639,208 @@ def test_sync_restores_original_branch_after_reparenting_children(
     _sync(repo_with_merged_and_children, force=True)
 
     assert git.get_current_branch(repo_with_merged_and_children) == "main"
+
+
+@pytest.mark.parametrize("sync_from_linked_worktree", [False, True])
+def test_sync_reparents_child_in_its_worktree(
+    repo_with_merged_and_children: Repo,
+    tmp_path: Path,
+    sync_from_linked_worktree: bool,
+) -> None:
+    repo = repo_with_merged_and_children
+    worktree_path = tmp_path / "linked-worktree"
+
+    if sync_from_linked_worktree:
+        run_git(repo, "worktree", "add", str(worktree_path), "main")
+        sync_repo = git.open_repo(worktree_path)
+        child_repo = repo
+    else:
+        git.switch_branch(repo, "main")
+        run_git(repo, "worktree", "add", str(worktree_path), "branch_b")
+        sync_repo = repo
+        child_repo = git.open_repo(worktree_path)
+
+    result = _sync(sync_repo, force=True)
+
+    assert result.deleted_branches == ["branch_a"]
+    assert result.reparented_branches == {"branch_b": "main"}
+    assert not git.branch_exists(repo, "branch_a")
+    all_branches = set(git.get_all_local_branches(repo))
+    assert git.get_branch_parent(repo, "branch_b", all_branches) == "main"
+    assert git.get_current_branch(sync_repo) == "main"
+    assert git.get_current_branch(child_repo) == "branch_b"
+    assert worktree_path.exists()
+    assert not git.has_uncommitted_changes(sync_repo)
+    assert not git.has_uncommitted_changes(child_repo)
+    assert (Path(child_repo.workdir) / "b.txt").read_text() == "branch b content"
+    assert (Path(child_repo.workdir) / "main_after_merge.txt").read_text() == (
+        "main after merge"
+    )
+
+
+@pytest.mark.parametrize("changes", ["unstaged", "staged", "untracked"])
+def test_sync_keeps_parent_when_child_worktree_is_dirty(
+    repo_with_merged_and_children: Repo,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    changes: str,
+) -> None:
+    repo = repo_with_merged_and_children
+    git.switch_branch(repo, "main")
+    worktree_path = tmp_path / "child-worktree"
+    run_git(repo, "worktree", "add", str(worktree_path), "branch_b")
+    child_repo = git.open_repo(worktree_path)
+    original_head = git.get_branch_head(repo, "branch_b")
+    dirty_file = worktree_path / (
+        "main_after_merge.txt" if changes == "untracked" else "b.txt"
+    )
+    dirty_file.write_text("work in progress")
+
+    if changes == "staged":
+        run_git(child_repo, "add", dirty_file.name)
+
+    original_status = run_git(child_repo, "status", "--porcelain").stdout
+
+    result = _sync(repo, force=True)
+
+    assert result.deleted_branches == []
+    assert result.reparented_branches == {}
+    assert git.branch_exists(repo, "branch_a")
+    all_branches = set(git.get_all_local_branches(repo))
+    assert git.get_branch_parent(repo, "branch_b", all_branches) == "branch_a"
+    assert git.get_branch_head(repo, "branch_b") == original_head
+    assert git.get_current_branch(repo) == "main"
+    assert git.get_current_branch(child_repo) == "branch_b"
+    assert dirty_file.read_text() == "work in progress"
+    assert run_git(child_repo, "status", "--porcelain").stdout == original_status
+    warning = capsys.readouterr().err
+    assert ("untracked" if changes == "untracked" else "uncommitted changes") in warning
+    assert str(worktree_path.resolve()) in warning
+    assert "Keeping 'branch_a'" in warning
+
+
+def test_sync_aborts_conflicting_reparent_in_child_worktree(
+    repo_with_merged_and_children: Repo,
+    tmp_path: Path,
+) -> None:
+    repo = repo_with_merged_and_children
+    original_head = git.get_branch_head(repo, "branch_b")
+    git.switch_branch(repo, "main")
+    commit_files(repo, {tmp_path / "b.txt": "conflicting trunk change"}, "Conflict")
+    worktree_path = tmp_path / "child-worktree"
+    run_git(repo, "worktree", "add", str(worktree_path), "branch_b")
+    child_repo = git.open_repo(worktree_path)
+
+    result = _sync(repo, force=True)
+
+    assert result.deleted_branches == []
+    assert result.reparented_branches == {}
+    assert git.branch_exists(repo, "branch_a")
+    all_branches = set(git.get_all_local_branches(repo))
+    assert git.get_branch_parent(repo, "branch_b", all_branches) == "branch_a"
+    assert git.get_branch_head(repo, "branch_b") == original_head
+    assert git.get_current_branch(repo) == "main"
+    assert git.get_current_branch(child_repo) == "branch_b"
+    assert not git.is_rebase_in_progress(child_repo)
+    assert not git.has_uncommitted_changes(child_repo)
+    assert (worktree_path / "b.txt").read_text() == "branch b content"
+
+
+@pytest.mark.parametrize("operation", ["rebase", "cherry-pick"])
+def test_sync_preserves_operation_in_child_worktree(
+    repo_with_merged_and_children: Repo,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    operation: str,
+) -> None:
+    repo = repo_with_merged_and_children
+    original_head = git.get_branch_head(repo, "branch_b")
+    git.switch_branch(repo, "main")
+    commit_files(repo, {tmp_path / "b.txt": "conflicting trunk change"}, "Conflict")
+    worktree_path = tmp_path / "child-worktree"
+    run_git(repo, "worktree", "add", str(worktree_path), "branch_b")
+    child_repo = git.open_repo(worktree_path)
+    operation_result = subprocess.run(
+        ["git", operation, "main"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+    )
+    assert operation_result.returncode != 0
+    assert git.is_rebase_in_progress(child_repo)
+    original_status = run_git(child_repo, "status", "--porcelain").stdout
+    original_content = (worktree_path / "b.txt").read_text()
+    original_child_branch = git.get_current_branch(child_repo)
+
+    result = _sync(repo, force=True)
+
+    assert result.deleted_branches == []
+    assert result.reparented_branches == {}
+    assert git.branch_exists(repo, "branch_a")
+    assert git.get_branch_head(repo, "branch_b") == original_head
+    assert git.get_current_branch(repo) == "main"
+    assert git.get_current_branch(child_repo) == original_child_branch
+    assert git.is_rebase_in_progress(child_repo)
+    assert run_git(child_repo, "status", "--porcelain").stdout == original_status
+    assert (worktree_path / "b.txt").read_text() == original_content
+    warning = capsys.readouterr().err
+    assert str(worktree_path.resolve()) in warning
+    assert "Keeping 'branch_a'" in warning
+
+
+def test_sync_keeps_parent_when_child_has_multiple_worktrees(
+    repo_with_merged_and_children: Repo,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = repo_with_merged_and_children
+    original_head = git.get_branch_head(repo, "branch_b")
+    worktree_path = tmp_path / "child-worktree"
+    original_parent_head = git.get_branch_head(repo, "branch_a")
+    run_git(repo, "worktree", "add", "--force", str(worktree_path), "branch_b")
+
+    result = _sync(repo, force=True)
+
+    assert result.deleted_branches == []
+    assert result.reparented_branches == {}
+    assert git.branch_exists(repo, "branch_a")
+    assert git.get_branch_head(repo, "branch_b") == original_head
+    assert git.get_branch_head(repo, "branch_a") == original_parent_head
+    assert git.get_current_branch(repo) == "branch_b"
+    assert not RestackState.exists(repo)
+    assert not git.has_uncommitted_changes(repo)
+    assert not git.has_uncommitted_changes(git.open_repo(worktree_path))
+    warning = capsys.readouterr().err
+    assert "checked out in multiple worktrees" in warning
+    assert str(worktree_path.resolve()) in warning
+    assert "Skipping restack" in warning
+
+
+def test_sync_keeps_parent_when_child_worktree_cannot_be_opened(
+    repo_with_merged_and_children: Repo,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    repo = repo_with_merged_and_children
+    git.switch_branch(repo, "main")
+    worktree_path = tmp_path / "child-worktree"
+    run_git(repo, "worktree", "add", str(worktree_path), "branch_b")
+    original_head = git.get_branch_head(repo, "branch_b")
+
+    with patch(
+        "shortcake.commands.sync.git.open_repo", side_effect=OSError("unavailable")
+    ):
+        result = _sync(repo, force=True)
+
+    assert result.deleted_branches == []
+    assert result.reparented_branches == {}
+    assert git.branch_exists(repo, "branch_a")
+    assert git.get_branch_head(repo, "branch_b") == original_head
+    assert git.get_current_branch(repo) == "main"
+    warning = capsys.readouterr().err
+    assert "could not open worktree" in warning
+    assert "unavailable" in warning
+    assert str(worktree_path.resolve()) in warning
 
 
 def test_sync_prompt_fn_decline(repo_with_merged_branch: Repo, tmp_path: Path) -> None:

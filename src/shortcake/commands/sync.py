@@ -127,14 +127,65 @@ def _reparent_branch(repo: Repo, child: str, new_parent: str) -> bool:
     if merge_base is None:
         return True  # Orphan commit, nothing to do
 
+    worktrees = git.get_branch_worktrees(repo).get(child, [])
+    if len(worktrees) > 1:
+        paths = ", ".join(git.format_worktree_path(path) for path in worktrees)
+        typer.echo(
+            f"Warning: Cannot reparent '{child}': checked out in multiple "
+            f"worktrees ({paths}). Leave it checked out in only one worktree "
+            "and re-run 'sc sync'.",
+            err=True,
+        )
+        return False
+
+    if worktrees and worktrees[0].resolve() != Path(repo.workdir).resolve():
+        path = worktrees[0]
+        display_path = git.format_worktree_path(path)
+        try:
+            repo = git.open_repo(path)
+        except git.DULWICH_ERRORS as error:
+            typer.echo(
+                f"Warning: Cannot reparent '{child}': could not open worktree "
+                f"'{display_path}': {error}",
+                err=True,
+            )
+            return False
+
+        if git.is_rebase_in_progress(repo):
+            typer.echo(
+                f"Warning: Cannot reparent '{child}': a rebase or cherry-pick "
+                f"is in progress in '{display_path}'. Complete or abort it first.",
+                err=True,
+            )
+            return False
+
+        if git.has_uncommitted_changes(repo):
+            typer.echo(
+                f"Warning: Cannot reparent '{child}': worktree '{display_path}' "
+                "has uncommitted changes. Commit or stash them first.",
+                err=True,
+            )
+            return False
+
     # Rebase the branch onto the new parent, properly handling file content.
+    # Use its existing worktree so HEAD, index, and files stay in sync.
     # This takes commits from merge_base..child and replays them onto new_parent.
-    result = git.rebase_branch(repo, child, new_parent, merge_base.decode())
+    try:
+        result = git.rebase_branch(repo, child, new_parent, merge_base.decode())
+    except ValueError as error:
+        typer.echo(f"Warning: Cannot reparent '{child}': {error}", err=True)
+        return False
 
     if not result.success:
         # Abort the failed rebase so we can continue with other branches
         if git.is_rebase_in_progress(repo):
             git.rebase_abort(repo)
+        typer.echo(
+            f"Warning: Could not reparent '{child}' in "
+            f"'{git.format_worktree_path(Path(repo.workdir))}': "
+            f"{result.error_output.strip()}",
+            err=True,
+        )
         return False
 
     # Update the trailer to point to the new parent
@@ -230,8 +281,8 @@ def _delete_and_reparent(
         names = ", ".join(f"'{c}'" for c in failed_children)
         typer.echo(
             f"Warning: Keeping '{branch}': could not reparent {names} onto "
-            f"'{grandparent}' due to conflicts. "
-            f"Run 'sc move <child> -p {grandparent}', resolve the conflicts, "
+            f"'{grandparent}'. "
+            f"Run 'sc move <child> -p {grandparent}', resolve any conflicts, "
             f"then re-run 'sc sync'.",
             err=True,
         )
@@ -554,6 +605,7 @@ def _sync(
 
     # Reparenting skips anything that is going away, whichever scope is chosen.
     all_removing: set[str] = {item.branch for item in stale}
+    cleanup_incomplete = False
 
     if dry_run:
         for item in stale:
@@ -622,6 +674,7 @@ def _sync(
                     row.state = RowState.DONE
                     row.label = Text("deleted", style=Style(color="green"))
                 else:
+                    cleanup_incomplete = True
                     row.state = RowState.FAILED
                     row.label = Text("kept", style=Style(color="red"))
                 view.sync()
@@ -662,12 +715,22 @@ def _sync(
                             f"('{parent}' was merged)"
                         )
                     else:
+                        cleanup_incomplete = True
                         toolkit.echo(
                             f"Warning: Could not reparent '{branch}' to "
-                            f"'{resolved_parent}' due to conflicts. "
-                            f"Run 'sc restack' manually after resolving.",
+                            f"'{resolved_parent}'. "
+                            f"Run 'sc sync' again after resolving the problem.",
                             err=True,
                         )
+
+    # Do not retry blocked branches through restack or rewrite their parents.
+    if cleanup_incomplete:
+        toolkit.echo(
+            "Skipping restack because branch cleanup could not complete. "
+            "Resolve the warnings above and re-run 'sc sync'.",
+            err=True,
+        )
+        return result
 
     # 4. Restack remaining branches if current is tracked
     current_branch = git.get_current_branch(repo)
