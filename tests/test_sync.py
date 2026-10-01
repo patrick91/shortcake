@@ -937,6 +937,78 @@ def test_sync_chain_deletion(temp_repo: Repo, tmp_path: Path) -> None:
     )
 
 
+def _squash_merged_stack(repo: Repo, tmp_path: Path) -> None:
+    """main → a → b → c → d, with a, b and c squash-merged into main.
+
+    c and d edit the same line, so d only applies cleanly on top of c's change,
+    which main has but a and b do not. Leaves d checked out.
+    """
+    shared = tmp_path / "shared.txt"
+    commit_files(repo, {shared: "one\ntwo\nthree\n"}, "Add shared")
+
+    stack = {
+        "a": ("main", {tmp_path / "a.txt": "a"}),
+        "b": ("a", {tmp_path / "b.txt": "b"}),
+        "c": ("b", {shared: "one\nC\nthree\n"}),
+        "d": ("c", {shared: "one\nD\nthree\n"}),
+    }
+    for branch, (parent, files) in stack.items():
+        create_branch(repo, branch, get_branch_head(repo, parent), checkout=True)
+        commit_files(repo, files, Trailers(parent_branch=parent).apply_to(branch))
+
+    switch_branch(repo, "main")
+    for branch in ("a", "b", "c"):
+        run_git(repo, "merge", "--squash", branch)
+        run_git(repo, "commit", "-m", f"{branch} (#1)")
+    switch_branch(repo, "d")
+
+
+def test_sync_reparents_past_parents_that_are_also_being_deleted(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """A child skips every merged ancestor and lands on trunk.
+
+    Moving d onto b (c's parent, also being deleted) conflicts, which used to
+    keep c and then try to rebase the already-merged c onto main.
+    """
+    _squash_merged_stack(temp_repo, tmp_path)
+
+    with patch("shortcake.commands.sync._resolve_deleted_parent", return_value="main"):
+        result = _sync(temp_repo, force=True)
+
+    assert sorted(result.deleted_branches) == ["a", "b", "c"]
+    assert result.reparented_branches == {"d": "main"}
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    assert all_branches == {"main", "d"}
+    assert git.get_branch_parent(temp_repo, "d", all_branches) == "main"
+    assert (tmp_path / "shared.txt").read_text() == "one\nD\nthree\n"
+
+
+def test_sync_does_not_rebase_a_kept_merged_branch(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """A merged branch that could not be deleted is not replayed onto trunk.
+
+    Its parent is gone, but its changes are already in trunk, so rebasing it
+    there would only conflict.
+    """
+    _squash_merged_stack(temp_repo, tmp_path)
+    original_head = git.get_branch_head(temp_repo, "c")
+
+    with (
+        patch("shortcake.commands.sync._resolve_deleted_parent", return_value="main"),
+        patch(
+            "shortcake.commands.sync._remove_branch_worktrees",
+            side_effect=lambda repo, branch, result: branch != "c",
+        ),
+    ):
+        result = _sync(temp_repo, force=True)
+
+    assert sorted(result.deleted_branches) == ["a", "b"]
+    assert "c" not in result.reparented_branches
+    assert git.get_branch_head(temp_repo, "c") == original_head
+
+
 # CLI tests
 
 
