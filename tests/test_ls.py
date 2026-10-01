@@ -13,12 +13,16 @@ from tests._git_helpers import (
     Repo,
     add_paths,
     commit,
+    commit_files,
+    create_branch,
+    get_branch_head,
     get_ref,
     reset_hard,
     run_git,
     set_ref,
     set_remote,
     switch_branch,
+    update_branch,
 )
 
 
@@ -1306,3 +1310,75 @@ def test_ls_no_restack_marker_when_up_to_date(repo_with_feature: Repo) -> None:
     result = _ls(repo_with_feature)
 
     assert "needs restack" not in result
+
+
+def test_get_branch_parent_info_uses_oldest_commit_with_trailer(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """`sc modify -m` repeats the trailer; the branch starts at the first one."""
+    main_sha = get_branch_head(temp_repo, "main")
+    create_branch(temp_repo, "feature", main_sha, checkout=True)
+    commit_files(
+        temp_repo, {tmp_path / "a.txt": "a"}, "feat: a\n\nShortcake-Parent: main"
+    )
+    commit_files(
+        temp_repo, {tmp_path / "b.txt": "b"}, "feat: b\n\nShortcake-Parent: main"
+    )
+
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    assert git.get_branch_parent_info(temp_repo, "feature", all_branches) == (
+        "main",
+        main_sha,
+    )
+
+
+def test_get_branch_parent_info_run_stops_at_stale_parent_commit(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """After the parent is amended, its old commit (other trailer) is not ours."""
+    main_sha = get_branch_head(temp_repo, "main")
+    create_branch(temp_repo, "branch_a", main_sha, checkout=True)
+    old_a = commit_files(
+        temp_repo, {tmp_path / "a.txt": "a"}, "feat: a\n\nShortcake-Parent: main"
+    )
+    create_branch(temp_repo, "branch_b", old_a, checkout=True)
+    commit_files(
+        temp_repo, {tmp_path / "b1.txt": "b1"}, "feat: b1\n\nShortcake-Parent: branch_a"
+    )
+    commit_files(
+        temp_repo, {tmp_path / "b2.txt": "b2"}, "feat: b2\n\nShortcake-Parent: branch_a"
+    )
+    # Amend branch_a: its old commit is no longer a branch head
+    switch_branch(temp_repo, "main")
+    update_branch(temp_repo, "branch_a", main_sha)
+    switch_branch(temp_repo, "branch_a")
+    commit_files(
+        temp_repo, {tmp_path / "a.txt": "a2"}, "feat: a2\n\nShortcake-Parent: main"
+    )
+
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    assert git.get_branch_parent_info(temp_repo, "branch_b", all_branches) == (
+        "branch_a",
+        old_a,
+    )
+
+
+def test_get_branch_parent_info_run_stops_at_trunk_history(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Trailers on ff-merged trunk commits never extend the branch."""
+    merged = commit_files(
+        temp_repo, {tmp_path / "m.txt": "m"}, "feat: merged\n\nShortcake-Parent: main"
+    )
+    create_branch(temp_repo, "feature", merged, checkout=True)
+    commit_files(
+        temp_repo, {tmp_path / "f.txt": "f"}, "feat: f\n\nShortcake-Parent: main"
+    )
+    switch_branch(temp_repo, "main")
+    commit_files(temp_repo, {tmp_path / "t.txt": "t"}, "chore: trunk moves")
+
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    assert git.get_branch_parent_info(temp_repo, "feature", all_branches) == (
+        "main",
+        merged,
+    )

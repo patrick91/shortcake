@@ -85,7 +85,8 @@ def get_branch_parent_info(
     # branches, trunk's history contains stale trailers. This check protects
     # all callers (ls, sync, submit, restack) without requiring each to pass
     # trunk_head.
-    if branch == get_default_branch(repo):
+    default_branch = get_default_branch(repo)
+    if branch == default_branch:
         return None
 
     # Get all branch heads so we can identify boundaries and same-commit aliases.
@@ -159,8 +160,19 @@ def get_branch_parent_info(
                 # Stale trailer from shared history — skip it
                 continue  # pragma: no cover
 
-            # Found the first commit with trailer - return its parent as merge base
+            # Found the newest commit with the trailer. `sc modify -m` copies
+            # the trailer onto every new commit, so the branch starts at the
+            # oldest commit of that run, not this one.
             commit = repo.get(_oid(commit_sha))
+            commit = _oldest_commit_with_parent_trailer(
+                repo,
+                commit,
+                trailers.parent_branch,
+                other_branch_heads,
+                seen,
+                trunk_head or branch_heads.get(default_branch or ""),
+                branch_head,
+            )
             if commit.parent_ids:
                 return (trailers.parent_branch, str(commit.parent_ids[0]).encode())
             # Orphan commit (no parents) - return None for merge_base
@@ -176,6 +188,41 @@ def get_branch_parent_info(
                 to_visit.append(first_parent)
 
     return None
+
+
+def _oldest_commit_with_parent_trailer(
+    repo: Repo,
+    commit: pygit2.Commit,
+    parent_branch: str,
+    other_branch_heads: set[bytes],
+    seen: set[bytes],
+    trunk_head: bytes | None,
+    branch_head: bytes,
+) -> pygit2.Commit:
+    """Follow first parents while they carry the same Shortcake-Parent trailer.
+
+    Stops at another branch's head, at the trunk merge base, and at commits
+    already in trunk (stale trailers from ff-merged branches), so the run
+    never extends past the branch's own commits.
+    """
+    branch_merged = trunk_head is not None and is_ancestor(
+        repo, branch_head, trunk_head
+    )
+    while commit.parent_ids:
+        parent_sha = str(commit.parent_ids[0]).encode()
+        if parent_sha in other_branch_heads or parent_sha in seen:
+            break
+        if (
+            trunk_head is not None
+            and not branch_merged
+            and is_ancestor(repo, parent_sha, trunk_head)
+        ):
+            break
+        parent_trailers = Trailers.from_message(get_commit_message(repo, parent_sha))
+        if parent_trailers.parent_branch != parent_branch:
+            break
+        commit = repo.get(_oid(parent_sha))
+    return commit
 
 
 def get_branch_children(repo: Repo, branch: str) -> list[str]:
