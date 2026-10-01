@@ -237,6 +237,29 @@ def _remove_branch_worktrees(repo: Repo, branch: str, result: SyncResult) -> boo
     return all_removed
 
 
+def _surviving_ancestor(
+    repo: Repo,
+    branch: str,
+    trunk: str,
+    skip_branches: set[str],
+    all_branches: set[str],
+) -> str:
+    """The nearest ancestor of branch that outlives this sync, else trunk.
+
+    Children must skip ancestors that are also being deleted: those are merged
+    into trunk but not into each other, so rebasing onto one conflicts with
+    changes trunk already has.
+    """
+    seen = {branch}
+    ancestor = git.get_branch_parent(repo, branch, all_branches) or trunk
+    while ancestor in skip_branches & all_branches and ancestor not in seen:
+        seen.add(ancestor)
+        ancestor = git.get_branch_parent(repo, ancestor, all_branches) or trunk
+    if ancestor in skip_branches or ancestor not in all_branches:
+        return trunk
+    return ancestor
+
+
 def _delete_and_reparent(
     repo: Repo,
     branch: str,
@@ -251,12 +274,7 @@ def _delete_and_reparent(
     """
     children = git.get_branch_children(repo, branch)
     all_branches = set(git.get_all_local_branches(repo))
-    branch_parent = git.get_branch_parent(repo, branch, all_branches)
-    grandparent = branch_parent if branch_parent else trunk
-
-    # If grandparent was deleted earlier in this sync loop, fall back to trunk
-    if grandparent != trunk and not git.branch_exists(repo, grandparent):
-        grandparent = trunk
+    grandparent = _surviving_ancestor(repo, branch, trunk, skip_branches, all_branches)
 
     if not _remove_branch_worktrees(repo, branch, result):
         return _DeleteBranchResult(current_branch=current_branch, deleted=False)
@@ -693,6 +711,10 @@ def _sync(
     branch_heads = {b: git.get_branch_head(repo, b) for b in all_local}
     trunk_head = branch_heads.get(trunk)
     for branch in remaining_tracked:
+        # A branch picked for deletion but kept is already in trunk, so
+        # replaying its commits onto it would only conflict.
+        if branch in all_removing:
+            continue
         parent = git.get_branch_parent(
             repo, branch, all_local, branch_heads, trunk_head
         )
