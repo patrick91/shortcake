@@ -1,6 +1,16 @@
 CHANGELOG
 =========
 
+1.7.4 - 2026-10-01
+------------------
+
+Fix restacks dropping commits from branches with more than one commit. `sc modify -m`
+copies the `Shortcake-Parent` trailer onto each new commit, and restacking (via
+`sc sync`, `sc restack`, or `sc pull`) treated only the newest of them as the
+branch, silently dropping the earlier commits.
+
+This release was contributed by [@patrick91](https://github.com/patrick91) in [#149](https://github.com/patrick91/shortcake/pull/149)
+
 1.7.3 - 2026-09-18
 ------------------
 
