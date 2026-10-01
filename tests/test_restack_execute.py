@@ -9,12 +9,21 @@ from typer.testing import CliRunner
 
 from shortcake import _git as git
 from shortcake._restack_state import STATE_VERSION, RestackState
+from shortcake.commands.create import _create
+from shortcake.commands.modify import _modify_with_new_commit
 from shortcake.commands.restack import (
     RestackError,
     _needs_restack,
     _restack,
 )
-from tests._git_helpers import Repo, add_paths, get_ref, set_ref
+from tests._git_helpers import (
+    Repo,
+    add_paths,
+    commit_files,
+    get_ref,
+    set_ref,
+    switch_branch,
+)
 
 runner = CliRunner()
 
@@ -207,3 +216,49 @@ def test_restack_after_parent_amend_preserves_content(
     assert len(commits_on_b) == 1, (
         f"branch_b should have exactly 1 commit since branch_a, got {len(commits_on_b)}"
     )
+
+
+def test_restack_keeps_every_commit_of_branch_extended_with_modify(
+    temp_repo: Repo, tmp_path: Path
+) -> None:
+    """Regression: a commit added with `sc modify -m` must not drop the first one.
+
+    `sc modify -m` copies the Shortcake-Parent trailer onto the new commit, so
+    the branch ends up with two commits carrying the same trailer. Restack
+    used the newest of them as the branch boundary and silently dropped the
+    original `sc create` commit when the trunk moved.
+    """
+    (tmp_path / "first.txt").write_text("first")
+    add_paths(temp_repo, tmp_path / "first.txt")
+    _create(temp_repo, "feat: first", "branch_a")
+
+    (tmp_path / "second.txt").write_text("second")
+    add_paths(temp_repo, tmp_path / "second.txt")
+    _modify_with_new_commit(temp_repo, "feat: second")
+
+    (tmp_path / "child.txt").write_text("child")
+    add_paths(temp_repo, tmp_path / "child.txt")
+    _create(temp_repo, "feat: child", "branch_b")
+
+    switch_branch(temp_repo, "main")
+    commit_files(temp_repo, {tmp_path / "trunk.txt": "trunk"}, "chore: trunk moves")
+    switch_branch(temp_repo, "branch_b")
+
+    result = _restack(temp_repo)
+
+    assert result.restacked_branches == ["branch_a", "branch_b"]
+    main_head = git.get_branch_head(temp_repo, "main")
+    a_head = git.get_branch_head(temp_repo, "branch_a")
+    b_head = git.get_branch_head(temp_repo, "branch_b")
+
+    def subjects(head: bytes, base: bytes) -> list[str]:
+        return [
+            git.get_commit_message(temp_repo, sha).splitlines()[0]
+            for sha in git.get_commits_between(temp_repo, head, base)
+        ]
+
+    assert subjects(a_head, main_head) == ["feat: second", "feat: first"]
+    assert subjects(b_head, a_head) == ["feat: child"]
+    all_branches = set(git.get_all_local_branches(temp_repo))
+    assert git.get_branch_parent(temp_repo, "branch_a", all_branches) == "main"
+    assert git.get_branch_parent(temp_repo, "branch_b", all_branches) == "branch_a"
