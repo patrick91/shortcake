@@ -1,6 +1,21 @@
 CHANGELOG
 =========
 
+1.7.6 - 2026-10-02
+------------------
+
+Fix `sc move`, `sc restack` and other restacking commands crashing when a branch
+they need to rebase is checked out in another worktree. Shortcake now rebases it
+on a detached HEAD and moves the branch from inside its worktree, so that
+worktree's files follow. It refuses with a clear error when that worktree has
+uncommitted changes or an operation in progress, and `sc continue` / `sc abort`
+keep the worktree in sync after a conflict.
+
+Also fix `sc move` crashing with a `KeyError` when the branch to move doesn't
+exist; it now reports that the branch wasn't found.
+
+This release was contributed by [@patrick91](https://github.com/patrick91) in [#151](https://github.com/patrick91/shortcake/pull/151)
+
 1.7.5 - 2026-10-01
 ------------------
 
