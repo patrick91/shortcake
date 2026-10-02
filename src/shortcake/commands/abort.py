@@ -44,11 +44,11 @@ def _abort(repo: Repo) -> AbortResult:
                 err=True,
             )
 
-    # Restore original refs
+    # Restore original refs, moving other worktrees that have them checked out
     restored = []
     for branch, sha_hex in state.original_refs.items():
         try:
-            git.update_branch(repo, branch, sha_hex)
+            git.update_branch_and_worktree(repo, branch, sha_hex)
             restored.append(branch)
         except KeyError:
             typer.echo(
@@ -56,6 +56,8 @@ def _abort(repo: Repo) -> AbortResult:
                 f"commit {sha_hex[:8]} no longer exists.",
                 err=True,
             )
+        except ValueError as error:
+            typer.echo(f"Warning: Could not restore '{branch}': {error}", err=True)
 
     # Return to original branch
     git.switch_branch(repo, state.original_branch, force=True)

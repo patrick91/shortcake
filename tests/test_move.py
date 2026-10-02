@@ -131,6 +131,13 @@ def test_move_untracked_branch(temp_repo: Repo, tmp_path: Path) -> None:
         _move(temp_repo, parent="main")
 
 
+def test_move_branch_not_found(repo_with_stack: Repo) -> None:
+    """MoveError when the branch to move doesn't exist."""
+    switch_branch(repo_with_stack, "branch_b")
+    with pytest.raises(MoveError, match="Branch 'nonexistent' not found"):
+        _move(repo_with_stack, "nonexistent", parent="main")
+
+
 def test_move_parent_not_found(repo_with_stack: Repo) -> None:
     """MoveError when new parent doesn't exist."""
     switch_branch(repo_with_stack, "branch_b")

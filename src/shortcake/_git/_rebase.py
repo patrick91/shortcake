@@ -3,6 +3,7 @@
 import os
 import subprocess
 from dataclasses import dataclass
+from pathlib import Path
 
 import pygit2
 
@@ -12,7 +13,16 @@ from shortcake._git._core import (
     _git_dir,
     _oid,
     _repo_workdir,
+    branch_exists,
+    format_worktree_path,
+    get_branch_head,
+    get_current_branch,
+    get_head_sha,
+    get_other_worktrees_for_branch,
+    has_uncommitted_changes,
+    open_repo,
     switch_branch,
+    update_branch,
 )
 
 DULWICH_REBASE_ERRORS = (*DULWICH_ERRORS, OSError, ValueError, KeyError)
@@ -132,10 +142,126 @@ def rebase_branch(repo: Repo, branch: str, onto: str, upstream: str) -> RebaseRe
     Returns:
         RebaseResult indicating success, conflict, or skipped empty commits
     """
-    switch_branch(repo, branch)
+    worktrees = get_other_worktrees_for_branch(repo, branch)
+    if worktrees and get_current_branch(repo) != branch:
+        return _rebase_branch_checked_out_elsewhere(
+            repo, branch, onto, upstream, worktrees
+        )
 
+    try:
+        switch_branch(repo, branch)
+    except ValueError as error:
+        # e.g. another worktree is mid-rebase on it, so lists it as detached
+        return RebaseResult(success=False, error_output=str(error))
+    return _run_rebase(
+        repo, ["git", "rebase", "--onto", onto, upstream, branch, "--empty=drop"]
+    )
+
+
+def _rebase_branch_checked_out_elsewhere(
+    repo: Repo, branch: str, onto: str, upstream: str, worktrees: list[Path]
+) -> RebaseResult:
+    """Rebase a branch that another worktree has checked out.
+
+    git won't check a branch out in two worktrees, so replay its commits on a
+    detached HEAD here, then move the branch from inside the worktree that has
+    it, so that worktree's index and files follow. On conflict the rebase stops
+    here, and finish_detached_rebase() moves the branch once it's resumed.
+    """
+    try:
+        _check_worktree_can_follow(branch, worktrees)
+        switch_branch(repo, branch, detach=True)
+    except ValueError as error:
+        return RebaseResult(success=False, error_output=str(error))
+
+    result = _run_rebase(
+        repo, ["git", "rebase", "--onto", onto, upstream, "--empty=drop"]
+    )
+    if not result.success:
+        return result
+
+    try:
+        update_branch_and_worktree(repo, branch, get_head_sha(repo).decode())
+    except ValueError as error:
+        return RebaseResult(success=False, error_output=str(error))
+    return result
+
+
+def _check_worktree_can_follow(branch: str, worktrees: list[Path]) -> None:
+    """Raise ValueError unless branch's worktree can safely move to new commits."""
+    if len(worktrees) > 1:
+        paths = ", ".join(format_worktree_path(path) for path in worktrees)
+        raise ValueError(
+            f"'{branch}' is checked out in multiple worktrees ({paths}). "
+            "Leave it checked out in only one worktree."
+        )
+
+    path = worktrees[0]
+    display_path = format_worktree_path(path)
+    if not path.exists():
+        raise ValueError(
+            f"'{branch}' is checked out in missing worktree '{display_path}'. "
+            "Run 'git worktree prune' first."
+        )
+
+    worktree = open_repo(path)
+    if is_rebase_in_progress(worktree):
+        raise ValueError(
+            f"'{branch}' is checked out in '{display_path}', where a rebase or "
+            "cherry-pick is in progress. Complete or abort it first."
+        )
+    if has_uncommitted_changes(worktree):
+        raise ValueError(
+            f"'{branch}' is checked out in '{display_path}', which has "
+            "uncommitted changes. Commit or stash them first."
+        )
+
+
+def update_branch_and_worktree(repo: Repo, branch: str, sha_hex: str) -> None:
+    """Point branch at sha_hex, moving any other worktree that has it checked out.
+
+    A plain ref update would leave that worktree's index and files on the old
+    commit, so move the branch from inside it with `git reset --keep`, which
+    refuses rather than overwrite local changes. Raises ValueError on failure.
+    """
+    worktrees = get_other_worktrees_for_branch(repo, branch)
+    if not worktrees:
+        update_branch(repo, branch, sha_hex)
+        return
+    if get_branch_head(repo, branch).decode() == sha_hex:
+        return
+
+    _check_worktree_can_follow(branch, worktrees)
     result = subprocess.run(
-        ["git", "rebase", "--onto", onto, upstream, branch, "--empty=drop"],
+        ["git", "reset", "--keep", sha_hex],
+        cwd=worktrees[0],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise ValueError(
+            f"Could not move '{branch}' in worktree "
+            f"'{format_worktree_path(worktrees[0])}': {result.stderr.strip()}"
+        )
+
+
+def finish_detached_rebase(repo: Repo, branch: str, onto: str) -> None:
+    """Move branch to a resumed rebase's result left on a detached HEAD.
+
+    See _rebase_branch_checked_out_elsewhere(). Does nothing unless HEAD is
+    detached on a commit that sits on top of onto.
+    """
+    if get_current_branch(repo) is not None or not branch_exists(repo, onto):
+        return
+    head = get_head_sha(repo)
+    if is_ancestor(repo, get_branch_head(repo, onto), head):
+        update_branch_and_worktree(repo, branch, head.decode())
+
+
+def _run_rebase(repo: Repo, cmd: list[str]) -> RebaseResult:
+    """Run a git rebase command and classify how it ended."""
+    result = subprocess.run(
+        cmd,
         cwd=_repo_workdir(repo),
         capture_output=True,
         text=True,
