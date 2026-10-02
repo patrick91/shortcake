@@ -184,15 +184,15 @@ def test_abort_with_invalid_sha(
     )
     state.save(repo_with_stack_behind)
 
-    # Mock update_branch to raise KeyError for branch_b (simulating deleted commit)
-    original_update = git.update_branch
+    # Mock the ref update to raise KeyError for branch_b (simulating deleted commit)
+    original_update = git.update_branch_and_worktree
 
     def mock_update_branch(repo: Repo, branch: str, sha_hex: str) -> None:
         if branch == "branch_b":
             raise KeyError(sha_hex)
         original_update(repo, branch, sha_hex)
 
-    monkeypatch.setattr(git, "update_branch", mock_update_branch)
+    monkeypatch.setattr(git, "update_branch_and_worktree", mock_update_branch)
 
     result = _abort(repo_with_stack_behind)
 

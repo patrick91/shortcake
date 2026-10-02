@@ -114,8 +114,10 @@ def _move(
     if branch is None:
         branch = current_branch
 
-    # Validate branch is tracked
+    # Validate branch exists and is tracked
     all_branches = set(git.get_all_local_branches(repo))
+    if branch not in all_branches:
+        raise MoveError(f"Branch '{branch}' not found")
     parent_info = git.get_branch_parent_info(repo, branch, all_branches)
     if parent_info is None:
         raise MoveError(

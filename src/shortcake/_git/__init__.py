@@ -32,6 +32,7 @@ from shortcake._git._core import (
     get_current_branch,
     get_default_branch,
     get_head_sha,
+    get_other_worktrees_for_branch,
     get_staged_diff,
     get_staged_files,
     get_worktrees,
@@ -55,6 +56,7 @@ from shortcake._git._rebase import (
     RebaseFailure,
     RebaseResult,
     cherry_pick,
+    finish_detached_rebase,
     get_cherry_pick_head,
     get_merge_base,
     get_rebase_commits,
@@ -63,6 +65,7 @@ from shortcake._git._rebase import (
     rebase_abort,
     rebase_branch,
     rebase_continue,
+    update_branch_and_worktree,
 )
 from shortcake._git._remote import (
     fetch_and_fast_forward_trunk,
@@ -97,6 +100,7 @@ __all__ = [
     "delete_branch",
     "extract_sub_patch",
     "fetch_and_fast_forward_trunk",
+    "finish_detached_rebase",
     "format_worktree_path",
     "get_all_local_branches",
     "get_branch_children",
@@ -114,6 +118,7 @@ __all__ = [
     "get_head_sha",
     "get_merge_base",
     "get_merged_branches",
+    "get_other_worktrees_for_branch",
     "get_rebase_commits",
     "get_remote_ref",
     "get_staged_diff",
@@ -137,4 +142,5 @@ __all__ = [
     "switch_branch",
     "unstage_all",
     "update_branch",
+    "update_branch_and_worktree",
 ]

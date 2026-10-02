@@ -244,6 +244,19 @@ def get_branch_worktrees(repo: Repo) -> dict[str, list[Path]]:
     return branch_worktrees
 
 
+def get_other_worktrees_for_branch(repo: Repo, branch: str) -> list[Path]:
+    """Return worktrees other than repo's own that have branch checked out."""
+    current_path = Path(repo.workdir).resolve()
+    return sorted(
+        (
+            path
+            for path in get_branch_worktrees(repo).get(branch, [])
+            if path.resolve() != current_path
+        ),
+        key=lambda path: str(path),
+    )
+
+
 def format_worktree_path(path: Path) -> str:
     """Format a worktree path for display."""
     home = Path.home()
@@ -297,9 +310,15 @@ def switch_branch(
     branch: str,
     force: bool = False,
     ignore_other_worktrees: bool = False,
+    detach: bool = False,
 ) -> None:
-    """Switch to branch, updating working directory and index."""
+    """Switch to branch, updating working directory and index.
+
+    With detach, check out branch's commit on a detached HEAD instead.
+    """
     cmd = ["git", "switch", branch]
+    if detach:
+        cmd.append("--detach")
     if force:
         cmd.append("--force")
     if ignore_other_worktrees:

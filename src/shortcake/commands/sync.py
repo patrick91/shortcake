@@ -170,12 +170,7 @@ def _reparent_branch(repo: Repo, child: str, new_parent: str) -> bool:
     # Rebase the branch onto the new parent, properly handling file content.
     # Use its existing worktree so HEAD, index, and files stay in sync.
     # This takes commits from merge_base..child and replays them onto new_parent.
-    try:
-        result = git.rebase_branch(repo, child, new_parent, merge_base.decode())
-    except ValueError as error:
-        typer.echo(f"Warning: Cannot reparent '{child}': {error}", err=True)
-        return False
-
+    result = git.rebase_branch(repo, child, new_parent, merge_base.decode())
     if not result.success:
         # Abort the failed rebase so we can continue with other branches
         if git.is_rebase_in_progress(repo):
@@ -206,21 +201,10 @@ def _restore_current_branch(repo: Repo, current_branch: str | None) -> None:
         git.switch_branch(repo, current_branch, ignore_other_worktrees=True)
 
 
-def _other_worktrees_for_branch(repo: Repo, branch: str) -> list[Path]:
-    """Return non-current worktree paths for branch."""
-    current_path = Path(repo.workdir).resolve()
-    paths: list[Path] = []
-    for path in git.get_branch_worktrees(repo).get(branch, []):
-        worktree_path = Path(str(path))
-        if worktree_path.resolve() != current_path:
-            paths.append(worktree_path)
-    return sorted(paths, key=str)  # type: ignore[invalid-return-type]
-
-
 def _remove_branch_worktrees(repo: Repo, branch: str, result: SyncResult) -> bool:
     """Remove all clean non-current worktrees for branch."""
     all_removed = True
-    for path in _other_worktrees_for_branch(repo, branch):
+    for path in git.get_other_worktrees_for_branch(repo, branch):
         display_path = git.format_worktree_path(path)
         success, error = git.remove_worktree(repo, path)
         if success:
@@ -397,7 +381,7 @@ def _collect_stale(
             pr=github.pr_numbers.get(branch),
             worktrees=[
                 git.format_worktree_path(path)
-                for path in _other_worktrees_for_branch(repo, branch)
+                for path in git.get_other_worktrees_for_branch(repo, branch)
             ],
             # Trustworthy only because fetch prunes; a stale remote-tracking
             # ref would report a deleted branch as still pushed.

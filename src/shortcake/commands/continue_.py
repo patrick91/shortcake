@@ -85,6 +85,13 @@ def _continue(
             )
             any_skipped_empty = True
 
+    # A branch checked out in another worktree is rebased on a detached HEAD
+    # here, so the branch itself only moves once that rebase has finished.
+    try:
+        git.finish_detached_rebase(repo, current_step.branch, current_step.onto)
+    except ValueError as error:
+        raise ContinueError(str(error)) from None
+
     # Update trailer if needed (for reorder operations)
     if current_step.new_parent_trailer is not None:
         from shortcake.commands.reorder import _update_branch_trailer
