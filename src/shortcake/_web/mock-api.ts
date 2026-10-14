@@ -378,6 +378,72 @@ index 0000000..e5f6a7b
 +    def mark_all_read(self) -> None:
 +        for n in self._notifications:
 +            n.read = True
+diff --git a/src/webhooks/push.py b/src/webhooks/push.py
+index 20477ee900ad8c7cf86a92e899dcc523ffc59ec4..cd0f3a5b68b64452ceea19aa3ea850f6f5f75436 100644
+--- a/src/webhooks/push.py
++++ b/src/webhooks/push.py
+@@ -1,7 +1,7 @@
+ import logfire
+ 
+ from app.models import App, DeploymentStatus, DeploymentTrigger
+-from app.queue import enqueue_build
++from app.queue import enqueue_build, enqueue_github_check_create
+ from app.time import get_datetime_utc
+ 
+ 
+@@ -23,10 +23,19 @@ def _deploy_app_from_commit(
+     commit_message: str | None,
+     repo_id: int,
+     queue,
++    changed_paths: list[str],
+ ) -> None:
++    should_build = app.build_filters.matches(changed_paths)
++    # A newly connected app needs its initial build even if the first push only
++    # touches ignored files. Later pushes follow the configured filters.
++    if not should_build and app.latest_deployment is None:
++        should_build = True
++
+     deployment = app.make_deployment(
+         trigger=DeploymentTrigger.github,
+-        status=DeploymentStatus.ready_for_build,
++        status=DeploymentStatus.ready_for_build
++        if should_build
++        else DeploymentStatus.build_skipped_filtered,
+         github_commit_sha=commit_sha,
+         github_commit_message=commit_message,
+         github_repository_id=repo_id,
+@@ -37,9 +46,14 @@ def _deploy_app_from_commit(
+     )
+ 
+     session.add(deployment)
+-    app.updated_at = get_datetime_utc()
++    if should_build:
++        app.updated_at = get_datetime_utc()
+     session.commit()
+ 
++    if not should_build:
++        enqueue_github_check_create(deployment, queue=queue)
++        return
++
+     logfire.info(
+         "Created deployment {deployment_id} for app {app_slug}",
+         deployment_id=str(deployment.id),
+@@ -58,6 +72,7 @@ def handle_push_event(payload, session, sqs, queue) -> dict[str, str]:
+     commit_message = (
+         payload.head_commit.message.strip() or None if payload.head_commit else None
+     )
++    changed_paths = payload.changed_paths()
+ 
+     rows = _find_apps_for_branch(session, repo_id, branch)
+     for app in rows:
+@@ -68,6 +83,7 @@ def handle_push_event(payload, session, sqs, queue) -> dict[str, str]:
+             commit_message=commit_message,
+             repo_id=repo_id,
+             queue=queue,
++            changed_paths=changed_paths,
+         )
+ 
+     return {"status": "ok"}
 `,
   },
   'feat/email-alerts': {

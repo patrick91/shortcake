@@ -6,7 +6,7 @@ import {
   type SelectedLineRange,
   WorkerPoolContextProvider,
 } from '@pierre/diffs/react';
-import { getFiletypeFromFileName, getSingularPatch, setLanguageOverride } from '@pierre/diffs';
+import { getFiletypeFromFileName, getSingularPatch, setLanguageOverride, type PostRenderPhase } from '@pierre/diffs';
 import { preloadDiffHTML } from '@pierre/diffs/ssr';
 import DiffsWorker from '@pierre/diffs/worker/worker.js?worker';
 import type { FileTreeRowDecoration, FileTreeSortComparator, GitStatusEntry } from '@pierre/trees';
@@ -327,6 +327,57 @@ function viewedFileRecordsEqual(
   return bEntries.every(([path, patchKey]) => a?.[path] === patchKey);
 }
 
+const HUNK_HEADER_PATTERN = /^(@@ [^@]* @@)\s*(.*)$/;
+
+// The library renders each hunk header ("@@ -105,9 +160,14 @@ def foo(") as a
+// single text node, so a hunk in a new function looks exactly like one in the
+// same function as the hunk above. After every render, split the header into
+// range + scope spans and tag each separator row as entering a new scope or
+// continuing the previous one; buildDiffUnsafeCSS styles the result.
+function markHunkScopes(container: HTMLElement): void {
+  const root = container.shadowRoot ?? container;
+  for (const code of root.querySelectorAll<HTMLElement>('[data-code]')) {
+    const gutterSeparators = code.querySelectorAll<HTMLElement>('[data-gutter] [data-separator="metadata"]');
+    const contentSeparators = code.querySelectorAll<HTMLElement>('[data-content] [data-separator="metadata"]');
+    let previousScope: string | null = null;
+    gutterSeparators.forEach((separator, index) => {
+      const wrapper = separator.querySelector<HTMLElement>('[data-separator-wrapper]');
+      if (!wrapper) return;
+      let scope = wrapper.dataset.shortcakeScope;
+      if (scope === undefined) {
+        const match = HUNK_HEADER_PATTERN.exec(wrapper.textContent?.trim() ?? '');
+        if (!match) return;
+        scope = match[2] ?? '';
+        // One span around both parts: the wrapper is a centered flex row, and
+        // as separate flex items the range (UI font) and scope (code font)
+        // would each be centered by their own font metrics instead of
+        // sharing a baseline.
+        const header = document.createElement('span');
+        const range = document.createElement('span');
+        range.dataset.shortcakeHunkRange = '';
+        range.textContent = match[1] ?? '';
+        header.append(range);
+        if (scope) {
+          const scopeLabel = document.createElement('span');
+          scopeLabel.dataset.shortcakeHunkScope = '';
+          scopeLabel.textContent = scope;
+          header.append(scopeLabel);
+        }
+        wrapper.replaceChildren(header);
+        wrapper.dataset.shortcakeScope = scope;
+      }
+      const kind = scope === '' ? 'none' : scope === previousScope ? 'same' : 'new';
+      separator.dataset.shortcakeScope = kind;
+      contentSeparators[index]?.setAttribute('data-shortcake-scope', kind);
+      previousScope = scope;
+    });
+  }
+}
+
+function handleDiffPostRender(container: HTMLElement, _instance: unknown, phase: PostRenderPhase): void {
+  if (phase !== 'unmount') markHunkScopes(container);
+}
+
 function buildDiffUnsafeCSS(
   resolvedTheme: 'dark' | 'light',
   card = false,
@@ -335,6 +386,7 @@ function buildDiffUnsafeCSS(
   const headerBg = resolvedTheme === 'light' ? '#ececed' : '#16161c';
   const headerBorder = resolvedTheme === 'light' ? 'rgba(0, 0, 0, 0.12)' : 'rgba(255, 255, 255, 0.1)';
   const headerShadow = resolvedTheme === 'light' ? '0 2px 5px rgba(0, 0, 0, 0.06)' : '0 2px 6px rgba(0, 0, 0, 0.35)';
+  const hunkRule = resolvedTheme === 'light' ? 'rgba(0, 0, 0, 0.14)' : 'rgba(255, 255, 255, 0.14)';
   // Card mode (the diff review view): headers stick 20px below the scrollport
   // top, under the page-bg mask strip (.diff-content::before), and keep the
   // card's rounded top corners while stuck. The corner radius is 9px — the
@@ -459,6 +511,32 @@ function buildDiffUnsafeCSS(
     [data-metadata] [data-additions-count],
     [data-metadata] [data-deletions-count] {
       display: none !important;
+    }
+    /* Hunk headers, split by markHunkScopes: the @@ range recedes (the gutter
+       already shows line numbers) and the enclosing function reads as code.
+       A hunk entering a new function gets a ruled, full-strength header; one
+       that continues the function above keeps its name dimmed. */
+    [data-shortcake-hunk-range] {
+      opacity: 0.6;
+    }
+    [data-shortcake-hunk-scope] {
+      margin-left: 1.5ch;
+      font-family: var(--diffs-font-family, monospace);
+      color: var(--diffs-fg);
+    }
+    [data-separator][data-shortcake-scope="new"] {
+      box-shadow:
+        inset 0 1px 0 ${hunkRule},
+        inset 0 -1px 0 ${hunkRule};
+    }
+    [data-separator][data-shortcake-scope="new"] [data-separator-wrapper] {
+      box-shadow: inherit;
+    }
+    [data-separator][data-shortcake-scope="new"] [data-shortcake-hunk-scope] {
+      font-weight: 600;
+    }
+    [data-separator][data-shortcake-scope="same"] [data-shortcake-hunk-scope] {
+      color: var(--diffs-fg-number);
     }
     ${tokenCSS}
   `;
@@ -1578,6 +1656,7 @@ const DiffFileSection = React.memo(function DiffFileSection({
       lineDiffType: 'word',
       enableLineSelection: true,
       onLineSelectionEnd: handleSelectionEnd,
+      onPostRender: handleDiffPostRender,
       unsafeCSS: buildDiffUnsafeCSS(rt, true, isCollapsed ?? false),
     }),
     [diffStyle, handleSelectionEnd, rt, activeTheme, isCollapsed],
@@ -2495,6 +2574,7 @@ function RecapDiffBlock({
       overflow: 'scroll',
       lineDiffType: 'word',
       enableLineSelection: false,
+      onPostRender: handleDiffPostRender,
       unsafeCSS: buildDiffUnsafeCSS(context.resolvedTheme),
     }),
     [context.diffStyle, context.diffTheme, context.resolvedTheme],
