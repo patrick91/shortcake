@@ -105,6 +105,26 @@ def test_layout_stack_left_files_right(ui_page: Page):
     assert diff_box["x"] + diff_box["width"] <= files_box["x"]
 
 
+def test_diff_files_run_edge_to_edge(ui_page: Page):
+    """Files fill the diff pane with no side or top gap."""
+    gaps = ui_page.evaluate(
+        """
+        () => {
+          const pane = document.querySelector('.diff-content');
+          const file = pane.querySelector('.diff-file-group');
+          const paneBox = pane.getBoundingClientRect();
+          const fileBox = file.getBoundingClientRect();
+          return {
+            left: fileBox.left - paneBox.left - pane.clientLeft,
+            right: pane.clientLeft + pane.clientWidth - (fileBox.right - paneBox.left),
+            top: fileBox.top - paneBox.top,
+          };
+        }
+        """
+    )
+    assert gaps == {"left": 0, "right": 0, "top": 0}
+
+
 def test_diff_sidebar_resizes_and_persists(ui_page: Page):
     """Dragging the sidebar divider resizes it and preserves the chosen width."""
     sidebar = ui_page.get_by_test_id("diff-sidebar")

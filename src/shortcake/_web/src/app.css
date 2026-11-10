@@ -219,13 +219,8 @@ body::before {
   --diffs-font-family: 'Monaspace Neon', 'JetBrains Mono', monospace;
 }
 
-/* File header background — must match the [data-diffs-header] color used in
-   buildDiffUnsafeCSS; the card paints its top strip with it so the clip's
-   anti-aliased corner seam never shows the surface color through.
-   The card border is a solid (non-translucent) color so the corner arcs the
-   header wedges draw with the same value composite identically to the real
-   border — a translucent border would render a different shade depending on
-   what's behind it. */
+/* File header background (read by buildDiffUnsafeCSS) and the rule between
+   files in the diff pane. */
 :root {
   --shortcake-diff-header-bg: #16161c;
   --shortcake-card-border: #2c2c32;
@@ -236,10 +231,6 @@ body::before {
   --shortcake-card-border: #cbcbcd;
 }
 
-/* GitHub-style file cards: constrained reading column, each file in its own
-   rounded card on the page background. clip-path (not overflow) rounds the
-   corners without turning the card into the sticky headers' scroll reference,
-   so file headers keep sticking to the diff scrollport. */
 /* GitHub Primer diff row colors, applied when a github-* diff theme is
    active (set via data-diff-accent in App). The themes only drive token
    colors; the add/delete washes come from the diffs library's own mixing,
@@ -276,18 +267,8 @@ body::before {
   background: var(--color-bg);
   /* No padding-top: Chromium insets the sticky rectangle by the scroll
      container's padding, which would make the sticky file headers stick
-     below the top edge. Spacing comes from the per-file masks instead. */
+     below the top edge. */
   padding: 0 0 40px;
-}
-
-.diff-content .diff-file-group {
-  /* Snap to a whole pixel: a fractional width (95% of an arbitrary container)
-     puts the right border on a sub-pixel boundary where it rasterizes
-     thinner/fainter than the left one. Plain 95% is the fallback for
-     browsers without round(). */
-  max-width: 95%;
-  max-width: round(down, 95%, 1px);
-  margin: 0 auto;
 }
 
 /* The last file always fills the remaining viewport (the card keeps its
@@ -297,61 +278,10 @@ body::before {
   min-height: 100%;
 }
 
-/* Per-file sticky page-bg mask: renders as the 20px gap above its card at
-   rest, sticks to the scrollport top while its card scrolls (hiding code
-   that slides past the stuck header), and — because it is constrained to its
-   own group — leaves together with the card when it unsticks, handing over
-   to the next file's identical mask seamlessly. */
-.diff-file-mask {
-  position: sticky;
-  top: 0;
-  height: 20px;
-  background: var(--color-bg);
-  /* Above the code it masks, but BELOW the sticky file headers (z 30 in
-     buildDiffUnsafeCSS): a departing header slides visibly over the mask and
-     off the top edge instead of being cut by it. */
-  z-index: 15;
-}
-
+/* Files run edge to edge between the two sidebars, stacked with a rule
+   between them; each file's header sticks to the top of the diff pane. */
 .diff-file-card {
   position: relative;
-  border: 1px solid var(--shortcake-card-border);
-  border-radius: 10px;
-  /* Clips the square-cornered shadow-DOM content (header, code) to the
-     rounded padding box WITHOUT creating a scroll container, so the sticky
-     file headers keep tracking the .diff-content scrollport (hidden/auto
-     would break them). Same approach as Shopify Polaris cards. */
-  overflow: clip;
-  /* Expand the clip edge from the padding box to the border box so the
-     header's corner wedges (see buildDiffUnsafeCSS) can paint over the border
-     column while stuck. Safari ignores this and degrades gracefully. */
-  overflow-clip-margin: 1px;
-  /* Header-colored top strip under the (clipped) sticky header, surface
-     below: the sub-pixel ring between the border and the clip edge blends
-     into the header instead of flashing the surface color at the corners. */
-  background:
-    linear-gradient(var(--shortcake-diff-header-bg), var(--shortcake-diff-header-bg)) top / 100% 45px no-repeat,
-    var(--color-surface);
-}
-
-/* Bottom counterpart of the header's corner overlay (buildDiffUnsafeCSS):
-   with the clip widened to the border box, the code area's square corners
-   paint over the card's bottom border arcs — redraw the arcs plus the 1px
-   bottom line (which lands exactly on the real border) on top. */
-.diff-file-card::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: -1px;
-  right: -1px;
-  height: 10px;
-  pointer-events: none;
-  /* Above the sticky header (z 30): keeps the bottom arcs visible on
-     collapsed (header-only) cards and rounds the bottom edge of a departing
-     card while its header overlaps it. */
-  z-index: 35;
-  background:
-    radial-gradient(circle at 100% 0%, transparent 8.75px, var(--shortcake-card-border) 9.25px 10px, var(--color-bg) 10.5px) left bottom / 10px 10px no-repeat,
-    radial-gradient(circle at 0% 0%, transparent 8.75px, var(--shortcake-card-border) 9.25px 10px, var(--color-bg) 10.5px) right bottom / 10px 10px no-repeat,
-    linear-gradient(var(--shortcake-card-border), var(--shortcake-card-border)) bottom / 100% 1px no-repeat;
+  border-bottom: 1px solid var(--shortcake-card-border);
+  background: var(--color-surface);
 }

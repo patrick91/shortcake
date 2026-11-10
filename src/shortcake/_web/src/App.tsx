@@ -248,28 +248,50 @@ const DIFF_SIDEBAR_STORAGE_KEY = 'shortcake-diff-sidebar-width';
 const DEFAULT_DIFF_SIDEBAR_WIDTH = 280;
 const MIN_DIFF_SIDEBAR_WIDTH = 220;
 const MAX_DIFF_SIDEBAR_WIDTH = 560;
-const MIN_DIFF_PANE_WIDTH = 420;
-// Width of the stack sidebar (`w-[264px]`), shown from the `md` breakpoint up.
-const STACK_SIDEBAR_WIDTH = 264;
+// The files sidebar is shown from this viewport width up.
+const DIFF_SIDEBAR_MIN_VIEWPORT = 1200;
+const STACK_SIDEBAR_STORAGE_KEY = 'shortcake-stack-sidebar-width';
+const DEFAULT_STACK_SIDEBAR_WIDTH = 264;
+const MIN_STACK_SIDEBAR_WIDTH = 200;
+const MAX_STACK_SIDEBAR_WIDTH = 480;
+// The stack sidebar is shown from this viewport width (`md`) up.
 const STACK_SIDEBAR_MIN_VIEWPORT = 768;
+const MIN_DIFF_PANE_WIDTH = 420;
 
-function maxDiffSidebarWidth(): number {
+// Room left for a sidebar once the diff pane keeps its minimum width and the
+// other sidebar (if it is shown at this viewport) keeps its current width.
+function sidebarRoom(otherWidth: number, otherMinViewport: number): number {
+  return window.innerWidth - MIN_DIFF_PANE_WIDTH - (window.innerWidth >= otherMinViewport ? otherWidth : 0);
+}
+
+function maxDiffSidebarWidth(stackSidebarWidth: number): number {
   if (typeof window === 'undefined') return MAX_DIFF_SIDEBAR_WIDTH;
-  const stackWidth = window.innerWidth >= STACK_SIDEBAR_MIN_VIEWPORT ? STACK_SIDEBAR_WIDTH : 0;
   return Math.max(
     MIN_DIFF_SIDEBAR_WIDTH,
-    Math.min(MAX_DIFF_SIDEBAR_WIDTH, window.innerWidth - MIN_DIFF_PANE_WIDTH - stackWidth),
+    Math.min(MAX_DIFF_SIDEBAR_WIDTH, sidebarRoom(stackSidebarWidth, STACK_SIDEBAR_MIN_VIEWPORT)),
   );
 }
 
-function clampDiffSidebarWidth(width: number): number {
-  return Math.min(maxDiffSidebarWidth(), Math.max(MIN_DIFF_SIDEBAR_WIDTH, width));
+function clampDiffSidebarWidth(width: number, stackSidebarWidth: number): number {
+  return Math.min(maxDiffSidebarWidth(stackSidebarWidth), Math.max(MIN_DIFF_SIDEBAR_WIDTH, width));
 }
 
-function loadDiffSidebarWidth(): number {
-  if (typeof window === 'undefined') return DEFAULT_DIFF_SIDEBAR_WIDTH;
-  const storedWidth = Number.parseFloat(localStorage.getItem(DIFF_SIDEBAR_STORAGE_KEY) ?? '');
-  return clampDiffSidebarWidth(Number.isFinite(storedWidth) ? storedWidth : DEFAULT_DIFF_SIDEBAR_WIDTH);
+function maxStackSidebarWidth(diffSidebarWidth: number): number {
+  if (typeof window === 'undefined') return MAX_STACK_SIDEBAR_WIDTH;
+  return Math.max(
+    MIN_STACK_SIDEBAR_WIDTH,
+    Math.min(MAX_STACK_SIDEBAR_WIDTH, sidebarRoom(diffSidebarWidth, DIFF_SIDEBAR_MIN_VIEWPORT)),
+  );
+}
+
+function clampStackSidebarWidth(width: number, diffSidebarWidth: number): number {
+  return Math.min(maxStackSidebarWidth(diffSidebarWidth), Math.max(MIN_STACK_SIDEBAR_WIDTH, width));
+}
+
+function loadStoredWidth(key: string, fallback: number): number {
+  if (typeof window === 'undefined') return fallback;
+  const storedWidth = Number.parseFloat(localStorage.getItem(key) ?? '');
+  return Number.isFinite(storedWidth) ? storedWidth : fallback;
 }
 
 function hashString(value: string): string {
@@ -386,61 +408,12 @@ function handleDiffPostRender(container: HTMLElement, _instance: unknown, phase:
 
 function buildDiffUnsafeCSS(
   resolvedTheme: 'dark' | 'light',
-  card = false,
   collapsed = false,
 ): string {
   const headerBg = resolvedTheme === 'light' ? '#ececed' : '#16161c';
   const headerBorder = resolvedTheme === 'light' ? 'rgba(0, 0, 0, 0.12)' : 'rgba(255, 255, 255, 0.1)';
   const headerShadow = resolvedTheme === 'light' ? '0 2px 5px rgba(0, 0, 0, 0.06)' : '0 2px 6px rgba(0, 0, 0, 0.35)';
   const hunkRule = resolvedTheme === 'light' ? 'rgba(0, 0, 0, 0.14)' : 'rgba(255, 255, 255, 0.14)';
-  // Card mode (the diff review view): headers stick 20px below the scrollport
-  // top, under the page-bg mask strip (.diff-content::before), and keep the
-  // card's rounded top corners while stuck. The corner radius is 9px — the
-  // card's 10px outer radius minus its 1px border — matching the rounded
-  // padding-box the card's overflow: clip cuts content to. The ::before /
-  // ::after wedges paint the page bg outside that radius (extending 1px into
-  // the border area) so, while the header is stuck mid-card, code scrolling
-  // behind its rounded corners is hidden and the card appears to slide under
-  // a rounded window. At rest the wedges fall entirely outside the clip
-  // radius and are clipped away, so they can never create a corner seam.
-  const cardHeaderCSS = card
-    ? `
-    [data-diffs-header] {
-      top: 21px;
-      border-radius: 9px 9px 0 0;
-      /* Above the .diff-file-mask strips (z 15): while a card unsticks, its
-         rounded header stays visible and is pushed off the scrollport edge
-         instead of being flat-cut by the mask — the mask only needs to cover
-         scrolled CODE, which stays below it. */
-      z-index: 30;
-    }
-    [data-diffs-header]::before {
-      content: '';
-      position: absolute;
-      top: -1px;
-      left: -1px;
-      right: -1px;
-      height: 10px;
-      pointer-events: none;
-      background:
-        radial-gradient(circle at 100% 100%, transparent 8.75px, var(--shortcake-card-border) 9.25px 10px, var(--color-bg) 10.5px) left top / 10px 10px no-repeat,
-        radial-gradient(circle at 0% 100%, transparent 8.75px, var(--shortcake-card-border) 9.25px 10px, var(--color-bg) 10.5px) right top / 10px 10px no-repeat,
-        linear-gradient(var(--shortcake-card-border), var(--shortcake-card-border)) top / 100% 1px no-repeat;
-    }
-    [data-diffs-header]::after {
-      content: '';
-      position: absolute;
-      /* Side-border segments riding with the header: at rest they coincide
-         with the card's real borders; while the card departs over the mask
-         (which is above the card but below the header) they keep the left and
-         right borders visible. Start at 9px so the ::before corner arcs own
-         the corner region. */
-      inset: 9px -1px -1px -1px;
-      border-left: 1px solid var(--shortcake-card-border);
-      border-right: 1px solid var(--shortcake-card-border);
-      pointer-events: none;
-    }`
-    : '';
   const tokenCSS = `
     [data-line] span[style*="--diffs-token-light"],
     [data-line] span[style*="--diffs-token-dark"] {
@@ -473,12 +446,11 @@ function buildDiffUnsafeCSS(
       z-index: 10;
       min-height: 44px !important;
       background: var(--shortcake-diff-header-bg, ${headerBg}) !important;
-      /* A collapsed card is header-only: its bottom border would double up
-         with the card's own border. */
+      /* A collapsed file is header-only: its bottom border would double up
+         with the rule under the file. */
       border-bottom: ${collapsed ? 'none' : `1px solid ${headerBorder}`} !important;
       box-shadow: ${collapsed ? 'none' : headerShadow};
     }
-    ${cardHeaderCSS}
     [data-code] {
       /* Don't reserve horizontal-scrollbar space: only actually-overflowing
          files get a scrollbar (and no phantom band at the card bottom). */
@@ -1663,7 +1635,7 @@ const DiffFileSection = React.memo(function DiffFileSection({
       enableLineSelection: true,
       onLineSelectionEnd: handleSelectionEnd,
       onPostRender: handleDiffPostRender,
-      unsafeCSS: buildDiffUnsafeCSS(rt, true, isCollapsed ?? false),
+      unsafeCSS: buildDiffUnsafeCSS(rt, isCollapsed ?? false),
     }),
     [diffStyle, handleSelectionEnd, rt, activeTheme, isCollapsed],
   );
@@ -3556,9 +3528,98 @@ type DiffStats = {
   deletions: number;
 };
 
+// Draggable 1px divider between a sidebar and the diff. `side` is where the
+// sidebar sits, so dragging toward the diff widens it. The parent clamps the
+// widths it receives through `onResize`.
+function SidebarResizeHandle({
+  label,
+  side,
+  width,
+  minWidth,
+  maxWidth,
+  defaultWidth,
+  onResize,
+}: {
+  label: string;
+  side: 'left' | 'right';
+  width: number;
+  minWidth: number;
+  maxWidth: number;
+  defaultWidth: number;
+  onResize: (width: number) => void;
+}) {
+  const [isResizing, setIsResizing] = useState(false);
+  const startRef = useRef<{ clientX: number; width: number } | null>(null);
+  const direction = side === 'left' ? 1 : -1;
+
+  useEffect(() => {
+    if (!isResizing) return undefined;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    };
+  }, [isResizing]);
+
+  const handlePointerEnd = (event: React.PointerEvent<HTMLDivElement>) => {
+    startRef.current = null;
+    setIsResizing(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  return (
+    <div
+      role="separator"
+      aria-label={label}
+      aria-orientation="vertical"
+      aria-valuemin={minWidth}
+      aria-valuemax={maxWidth}
+      aria-valuenow={Math.round(width)}
+      tabIndex={0}
+      title="Drag to resize · Double-click to reset"
+      className={`group relative z-20 w-px shrink-0 touch-none cursor-col-resize bg-border outline-none transition-colors after:absolute after:inset-y-0 after:-left-1 after:w-[9px] hover:bg-accent/60 focus-visible:bg-accent ${isResizing ? 'bg-accent' : ''}`}
+      onDoubleClick={() => onResize(defaultWidth)}
+      onKeyDown={(event) => {
+        let nextWidth: number | null = null;
+        if (event.key === 'ArrowRight') nextWidth = width + 16 * direction;
+        if (event.key === 'ArrowLeft') nextWidth = width - 16 * direction;
+        if (event.key === 'Home') nextWidth = minWidth;
+        if (event.key === 'End') nextWidth = maxWidth;
+        if (nextWidth === null) return;
+        event.preventDefault();
+        onResize(nextWidth);
+      }}
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        startRef.current = { clientX: event.clientX, width };
+        setIsResizing(true);
+      }}
+      onPointerMove={(event) => {
+        const start = startRef.current;
+        if (!start) return;
+        onResize(start.width + (event.clientX - start.clientX) * direction);
+      }}
+      onPointerUp={handlePointerEnd}
+      onPointerCancel={handlePointerEnd}
+    >
+      <span
+        aria-hidden="true"
+        className={`pointer-events-none absolute top-1/2 left-1/2 h-9 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent transition-opacity ${isResizing ? 'opacity-100' : 'opacity-0 group-hover:opacity-70 group-focus-visible:opacity-100'}`}
+      />
+    </div>
+  );
+}
+
 type StackSidebarProps = {
   /** The "Jump to branch…" switcher, shown at the top of the sidebar. */
   switcher: React.ReactNode;
+  width: number;
   branches: StackBranch[];
   workingStats: WorkingStats | null;
   selection: DiffSelection | null;
@@ -3573,6 +3634,7 @@ type StackSidebarProps = {
 // date prefix; each row shows its commit, commit count and diff stats.
 function StackSidebar({
   switcher,
+  width,
   branches,
   workingStats,
   selection,
@@ -3706,7 +3768,8 @@ function StackSidebar({
     <nav
       aria-label="Stack"
       data-testid="stack-sidebar"
-      className="hidden w-[264px] shrink-0 flex-col overflow-hidden border-r border-border md:flex"
+      className="hidden shrink-0 flex-col overflow-hidden md:flex"
+      style={{ width: `${width}px` }}
     >
       {switcher && <div className="border-b border-border p-2.5">{switcher}</div>}
       <div className="min-h-0 flex-1 overflow-y-auto py-2">
@@ -4227,7 +4290,7 @@ function DiffSwitcher({
 }
 
 export default function App() {
-  const isWideScreen = useMediaQuery('(min-width: 1200px)');
+  const isWideScreen = useMediaQuery(`(min-width: ${DIFF_SIDEBAR_MIN_VIEWPORT}px)`);
   const isStackSidebarVisible = useMediaQuery(`(min-width: ${STACK_SIDEBAR_MIN_VIEWPORT}px)`);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [stack, setStack] = useState<StackResponse | null>(null);
@@ -4249,11 +4312,22 @@ export default function App() {
   const [isPersistedUIStateLoaded, setIsPersistedUIStateLoaded] = useState(false);
   const [persistedViewedFiles, setPersistedViewedFiles] = useState<Record<string, Record<string, string>>>({});
   const [fileFilter, setFileFilter] = useState('');
-  const [diffSidebarWidth, setDiffSidebarWidth] = useState(loadDiffSidebarWidth);
-  const [isDiffSidebarResizing, setIsDiffSidebarResizing] = useState(false);
+  // The stack sidebar takes its stored width first; the files sidebar gets
+  // what's left of the viewport.
+  const [stackSidebarWidth, setStackSidebarWidth] = useState(() =>
+    clampStackSidebarWidth(
+      loadStoredWidth(STACK_SIDEBAR_STORAGE_KEY, DEFAULT_STACK_SIDEBAR_WIDTH),
+      MIN_DIFF_SIDEBAR_WIDTH,
+    ),
+  );
+  const [diffSidebarWidth, setDiffSidebarWidth] = useState(() =>
+    clampDiffSidebarWidth(
+      loadStoredWidth(DIFF_SIDEBAR_STORAGE_KEY, DEFAULT_DIFF_SIDEBAR_WIDTH),
+      stackSidebarWidth,
+    ),
+  );
   const [activeFileIndex, setActiveFileIndex] = useState<number | null>(null);
   const diffContentRef = useRef<HTMLDivElement>(null);
-  const diffSidebarResizeStartRef = useRef<{ clientX: number; width: number } | null>(null);
   const fileRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const fileScrollCleanupRef = useRef<(() => void) | null>(null);
   const scrollSpyFrameRef = useRef<number | null>(null);
@@ -4329,58 +4403,26 @@ export default function App() {
   }, [diffSidebarWidth]);
 
   useEffect(() => {
+    localStorage.setItem(STACK_SIDEBAR_STORAGE_KEY, String(Math.round(stackSidebarWidth)));
+  }, [stackSidebarWidth]);
+
+  useEffect(() => {
     const handleWindowResize = () => {
-      setDiffSidebarWidth((width) => clampDiffSidebarWidth(width));
+      // Shrink the files sidebar first, then fit the stack sidebar beside it.
+      const nextDiffWidth = clampDiffSidebarWidth(diffSidebarWidth, stackSidebarWidth);
+      setDiffSidebarWidth(nextDiffWidth);
+      setStackSidebarWidth(clampStackSidebarWidth(stackSidebarWidth, nextDiffWidth));
     };
     window.addEventListener('resize', handleWindowResize);
     return () => window.removeEventListener('resize', handleWindowResize);
-  }, []);
+  }, [diffSidebarWidth, stackSidebarWidth]);
 
-  useEffect(() => {
-    if (!isDiffSidebarResizing) return undefined;
-    const previousCursor = document.body.style.cursor;
-    const previousUserSelect = document.body.style.userSelect;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-    return () => {
-      document.body.style.cursor = previousCursor;
-      document.body.style.userSelect = previousUserSelect;
-    };
-  }, [isDiffSidebarResizing]);
+  const resizeDiffSidebar = useCallback((width: number) => {
+    setDiffSidebarWidth(clampDiffSidebarWidth(width, stackSidebarWidth));
+  }, [stackSidebarWidth]);
 
-  const handleDiffSidebarResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    diffSidebarResizeStartRef.current = {
-      clientX: event.clientX,
-      width: diffSidebarWidth,
-    };
-    setIsDiffSidebarResizing(true);
-  }, [diffSidebarWidth]);
-
-  const handleDiffSidebarResizeMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    const start = diffSidebarResizeStartRef.current;
-    if (!start) return;
-    setDiffSidebarWidth(clampDiffSidebarWidth(start.width - (event.clientX - start.clientX)));
-  }, []);
-
-  const handleDiffSidebarResizeEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    diffSidebarResizeStartRef.current = null;
-    setIsDiffSidebarResizing(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  }, []);
-
-  const handleDiffSidebarResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    let nextWidth: number | null = null;
-    if (event.key === 'ArrowLeft') nextWidth = diffSidebarWidth + 16;
-    if (event.key === 'ArrowRight') nextWidth = diffSidebarWidth - 16;
-    if (event.key === 'Home') nextWidth = MIN_DIFF_SIDEBAR_WIDTH;
-    if (event.key === 'End') nextWidth = maxDiffSidebarWidth();
-    if (nextWidth === null) return;
-    event.preventDefault();
-    setDiffSidebarWidth(clampDiffSidebarWidth(nextWidth));
+  const resizeStackSidebar = useCallback((width: number) => {
+    setStackSidebarWidth(clampStackSidebarWidth(width, diffSidebarWidth));
   }, [diffSidebarWidth]);
 
   const expandLargeFile = useCallback((path: string) => {
@@ -5461,6 +5503,7 @@ export default function App() {
           <div className="flex flex-1 min-h-0">
             <StackSidebar
               switcher={isStackSidebarVisible ? diffSwitcher : null}
+              width={stackSidebarWidth}
               branches={branches}
               workingStats={stack?.workingStats ?? null}
               selection={selection}
@@ -5468,6 +5511,17 @@ export default function App() {
               githubInfo={githubInfo}
               onSelect={setSelection}
             />
+            {isStackSidebarVisible && (
+              <SidebarResizeHandle
+                label="Resize stack sidebar"
+                side="left"
+                width={stackSidebarWidth}
+                minWidth={MIN_STACK_SIDEBAR_WIDTH}
+                maxWidth={maxStackSidebarWidth(diffSidebarWidth)}
+                defaultWidth={DEFAULT_STACK_SIDEBAR_WIDTH}
+                onResize={resizeStackSidebar}
+              />
+            )}
             <div className="flex min-w-0 flex-1 flex-col">
               {error ? (
                 <p className="m-[1.15rem] text-danger text-[0.88rem]">{error}</p>
@@ -5537,7 +5591,6 @@ export default function App() {
                           data-file-collapsed={isCollapsed ? 'true' : 'false'}
                           ref={(el) => { fileRefs.current[index] = el; }}
                         >
-                          <div className="diff-file-mask" aria-hidden="true" />
                           <div className="diff-file-card">
                           {isCollapsed ? (
                             <DiffFileSection
@@ -5593,28 +5646,15 @@ export default function App() {
                   </div>
                   {isWideScreen && (
                     <>
-                    <div
-                      role="separator"
-                      aria-label="Resize files sidebar"
-                      aria-orientation="vertical"
-                      aria-valuemin={MIN_DIFF_SIDEBAR_WIDTH}
-                      aria-valuemax={maxDiffSidebarWidth()}
-                      aria-valuenow={Math.round(diffSidebarWidth)}
-                      tabIndex={0}
-                      title="Drag to resize · Double-click to reset"
-                      className={`group relative z-20 w-px shrink-0 touch-none cursor-col-resize bg-border outline-none transition-colors after:absolute after:inset-y-0 after:-left-1 after:w-[9px] hover:bg-accent/60 focus-visible:bg-accent ${isDiffSidebarResizing ? 'bg-accent' : ''}`}
-                      onDoubleClick={() => setDiffSidebarWidth(clampDiffSidebarWidth(DEFAULT_DIFF_SIDEBAR_WIDTH))}
-                      onKeyDown={handleDiffSidebarResizeKeyDown}
-                      onPointerDown={handleDiffSidebarResizeStart}
-                      onPointerMove={handleDiffSidebarResizeMove}
-                      onPointerUp={handleDiffSidebarResizeEnd}
-                      onPointerCancel={handleDiffSidebarResizeEnd}
-                    >
-                      <span
-                        aria-hidden="true"
-                        className={`pointer-events-none absolute top-1/2 left-1/2 h-9 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent transition-opacity ${isDiffSidebarResizing ? 'opacity-100' : 'opacity-0 group-hover:opacity-70 group-focus-visible:opacity-100'}`}
-                      />
-                    </div>
+                    <SidebarResizeHandle
+                      label="Resize files sidebar"
+                      side="right"
+                      width={diffSidebarWidth}
+                      minWidth={MIN_DIFF_SIDEBAR_WIDTH}
+                      maxWidth={maxDiffSidebarWidth(stackSidebarWidth)}
+                      defaultWidth={DEFAULT_DIFF_SIDEBAR_WIDTH}
+                      onResize={resizeDiffSidebar}
+                    />
                     <aside
                       data-testid="diff-sidebar"
                       className="flex shrink-0 flex-col overflow-hidden"

@@ -260,3 +260,54 @@ def test_stack_sidebar_hidden_on_small_screens(page: Page, ui_url: str):
     page.goto(ui_url)
     expect(page.get_by_role("button", name="Switch diff")).to_be_visible()
     expect(page.get_by_test_id("stack-sidebar")).to_be_hidden()
+    expect(page.get_by_role("separator", name="Resize stack sidebar")).to_have_count(0)
+
+
+def test_stack_sidebar_resizes_and_persists(ui_page: Page):
+    """Dragging the stack divider right widens the sidebar and the width sticks."""
+    sidebar = ui_page.get_by_test_id("stack-sidebar")
+    separator = ui_page.get_by_role("separator", name="Resize stack sidebar")
+    initial_box = sidebar.bounding_box()
+    separator_box = separator.bounding_box()
+    assert initial_box is not None and separator_box is not None
+    initial_width = initial_box["width"]
+
+    # The stack sidebar sits left of the diff: dragging right widens it.
+    ui_page.mouse.move(separator_box["x"], separator_box["y"] + 80)
+    ui_page.mouse.down()
+    ui_page.mouse.move(separator_box["x"] + 100, separator_box["y"] + 80)
+    ui_page.mouse.up()
+
+    ui_page.wait_for_function(
+        "([element, width]) => element.getBoundingClientRect().width >= width + 90",
+        arg=[sidebar.element_handle(), initial_width],
+    )
+    resized_box = sidebar.bounding_box()
+    assert resized_box is not None
+    resized_width = resized_box["width"]
+
+    ui_page.reload()
+    expect(ui_page.get_by_test_id("stack-sidebar")).to_have_css(
+        "width", f"{round(resized_width)}px"
+    )
+
+
+def test_stack_sidebar_resizes_with_keyboard(ui_page: Page):
+    """Arrow keys nudge the stack divider; Home snaps to the minimum width."""
+    sidebar = ui_page.get_by_test_id("stack-sidebar")
+    separator = ui_page.get_by_role("separator", name="Resize stack sidebar")
+    expect(separator).to_have_attribute("aria-valuenow", "264")
+
+    separator.press("ArrowRight")
+    expect(separator).to_have_attribute("aria-valuenow", "280")
+    expect(sidebar).to_have_css("width", "280px")
+
+    separator.press("ArrowLeft")
+    separator.press("ArrowLeft")
+    expect(separator).to_have_attribute("aria-valuenow", "248")
+
+    separator.press("Home")
+    expect(sidebar).to_have_css("width", "200px")
+
+    separator.dblclick()
+    expect(sidebar).to_have_css("width", "264px")

@@ -8,7 +8,11 @@ only in the header's branch menu. The stack you're viewing is drawn as an
 shows its commit, commit count and `+/−` line stats against its parent. Date
 prefixes are dropped from branch names, and other stacks fold away under
 "Other stacks". The "Jump to branch…" (⌘K) search sits at the top of the
-sidebar.
+sidebar, and you can drag the sidebar's edge to resize it (double-click to
+reset). The width is remembered.
+
+Files now run edge to edge between the sidebars instead of sitting in padded,
+rounded cards, with a rule between files.
 
 The changed-files tree moves to the right of the diff. Below 1200px it folds
 into the header's file menu, and below 768px the stack sidebar hides and the
