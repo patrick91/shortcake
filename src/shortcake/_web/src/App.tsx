@@ -88,6 +88,8 @@ type StackBranch = {
   commitShort: string;
   commitSubject: string;
   commitTime: number;
+  /** Files/lines changed vs the parent (`parent...branch`); null if no merge base. */
+  diffStats?: DiffStats | null;
 };
 
 type WorkingStats = {
@@ -3555,10 +3557,11 @@ type DiffStats = {
 };
 
 type StackSidebarProps = {
+  /** The "Jump to branch…" switcher, shown at the top of the sidebar. */
+  switcher: React.ReactNode;
   branches: StackBranch[];
   workingStats: WorkingStats | null;
   selection: DiffSelection | null;
-  selectedStats: DiffStats | null;
   isStackLoading: boolean;
   githubInfo: Record<string, GitHubBranchInfo>;
   onSelect: (sel: DiffSelection) => void;
@@ -3567,12 +3570,12 @@ type StackSidebarProps = {
 // Persistent stack navigator on the left of the diff. Shows the stack holding
 // the viewed branch (falling back to the checked-out one) as a `sc ls`-style
 // rail; every other stack folds away under "Other stacks". Names drop their
-// date prefix, and only the viewed branch expands to show commit details.
+// date prefix; each row shows its commit, commit count and diff stats.
 function StackSidebar({
+  switcher,
   branches,
   workingStats,
   selection,
-  selectedStats,
   isStackLoading,
   githubInfo,
   onSelect,
@@ -3648,21 +3651,21 @@ function StackSidebar({
               >
                 {stripDatePrefix(branch.name)}
               </span>
-              {selected && (
-                <span className="mt-0.5 block font-mono text-[0.63rem] leading-4 text-text-muted">
-                  {branch.commitShort}
-                  {branch.commitCount > 0 && (
-                    <> &middot; {branch.commitCount} commit{branch.commitCount === 1 ? '' : 's'}</>
-                  )}
-                  {selectedStats && (
-                    <>
-                      {' '}&middot;{' '}
-                      <span className="text-stat-add">+{selectedStats.additions}</span>{' '}
-                      <span className="text-stat-del">&minus;{selectedStats.deletions}</span>
-                    </>
-                  )}
-                </span>
-              )}
+              <span
+                className={`mt-0.5 block truncate font-mono text-[0.63rem] leading-4 ${selected ? 'text-text-secondary' : 'text-text-muted'}`}
+              >
+                {branch.commitShort}
+                {branch.commitCount > 0 && (
+                  <> &middot; {branch.commitCount} commit{branch.commitCount === 1 ? '' : 's'}</>
+                )}
+                {branch.diffStats && (
+                  <>
+                    {' '}&middot;{' '}
+                    <span className="text-stat-add">+{branch.diffStats.additions}</span>{' '}
+                    <span className="text-stat-del">&minus;{branch.diffStats.deletions}</span>
+                  </>
+                )}
+              </span>
             </button>
             {(gh?.prNumber != null || gh?.checkStatus != null) && (
               <span className="flex shrink-0 items-center gap-1.5 pt-[9px] pr-2.5 pl-1">
@@ -3705,14 +3708,7 @@ function StackSidebar({
       data-testid="stack-sidebar"
       className="hidden w-[264px] shrink-0 flex-col overflow-hidden border-r border-border md:flex"
     >
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <span className="text-[0.8rem] font-semibold text-text-primary">Stack</span>
-        {focusGroup && (
-          <span className="text-[0.65rem] font-mono tabular-nums text-text-muted bg-surface-hover px-2 py-0.5 rounded-full">
-            {focusGroup.branches.length}
-          </span>
-        )}
-      </div>
+      {switcher && <div className="border-b border-border p-2.5">{switcher}</div>}
       <div className="min-h-0 flex-1 overflow-y-auto py-2">
         <button
           type="button"
@@ -4029,6 +4025,8 @@ type DiffSwitcherProps = {
   isGithubInfoLoading: boolean;
   githubInfo: Record<string, GitHubBranchInfo>;
   onSelect: (sel: DiffSelection) => void;
+  /** Stretch the trigger to its container (the stack sidebar). */
+  fullWidth?: boolean;
 };
 
 const IS_MAC = typeof navigator !== 'undefined' && navigator.platform.includes('Mac');
@@ -4045,6 +4043,7 @@ function DiffSwitcher({
   isGithubInfoLoading,
   githubInfo,
   onSelect,
+  fullWidth = false,
 }: DiffSwitcherProps) {
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -4156,10 +4155,10 @@ function DiffSwitcher({
   return (
     <Popover.Root open={open} onOpenChange={onOpenChange}>
       <Popover.Trigger
-        className="group flex shrink-0 items-center appearance-none border-none bg-transparent p-0 m-0 text-left cursor-pointer rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30"
+        className={`group flex items-center appearance-none border-none bg-transparent p-0 m-0 text-left cursor-pointer rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 ${fullWidth ? 'w-full' : 'shrink-0'}`}
         aria-label="Switch diff"
       >
-        <span className={`inline-flex h-8 w-[15rem] max-w-[40vw] items-center gap-2 rounded-md border px-2.5 transition-colors duration-100 group-hover:border-border-strong group-hover:bg-surface-active group-hover:text-text-secondary ${open ? 'border-border-strong bg-surface-active text-text-secondary' : 'border-border bg-surface-hover text-text-muted'}`}>
+        <span className={`inline-flex h-8 items-center ${fullWidth ? 'w-full' : 'w-[15rem] max-w-[40vw]'} gap-2 rounded-md border px-2.5 transition-colors duration-100 group-hover:border-border-strong group-hover:bg-surface-active group-hover:text-text-secondary ${open ? 'border-border-strong bg-surface-active text-text-secondary' : 'border-border bg-surface-hover text-text-muted'}`}>
           <SearchIcon />
           <span className="min-w-0 flex-1 truncate text-[0.8rem]">Jump to branch…</span>
           <kbd className="hidden sm:inline-flex items-center gap-0.5 font-mono text-[0.58rem] font-medium text-text-muted bg-surface border border-border rounded px-1 py-px leading-none shrink-0">
@@ -4229,6 +4228,7 @@ function DiffSwitcher({
 
 export default function App() {
   const isWideScreen = useMediaQuery('(min-width: 1200px)');
+  const isStackSidebarVisible = useMediaQuery(`(min-width: ${STACK_SIDEBAR_MIN_VIEWPORT}px)`);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [stack, setStack] = useState<StackResponse | null>(null);
   const [selection, setSelectionRaw] = useState<DiffSelection | null>(
@@ -5283,17 +5283,22 @@ export default function App() {
             .filter(Boolean)
             .join(' · ')
         : null;
-  // Totals for the viewed branch's diff, once it has loaded.
-  const selectedStats = useMemo<DiffStats | null>(() => {
-    if (selection?.type !== 'branch' || diff?.branch !== selection.name || isDiffLoading) {
-      return null;
-    }
-    return {
-      files: fileInfos.length,
-      additions: fileInfos.reduce((sum, f) => sum + f.additions, 0),
-      deletions: fileInfos.reduce((sum, f) => sum + f.deletions, 0),
-    };
-  }, [selection, diff, isDiffLoading, fileInfos]);
+  // One switcher instance (one ⌘K popover): it lives at the top of the stack
+  // sidebar, and moves to the header when the sidebar is hidden.
+  const diffSwitcher = (
+    <DiffSwitcher
+      open={switcherOpen}
+      onOpenChange={setSwitcherOpen}
+      selection={selection}
+      branches={branches}
+      workingStats={stack?.workingStats ?? null}
+      isStackLoading={isStackLoading}
+      isGithubInfoLoading={isGithubInfoLoading}
+      githubInfo={githubInfo}
+      onSelect={(sel) => { setSelection(sel); setSwitcherOpen(false); }}
+      fullWidth={isStackSidebarVisible}
+    />
+  );
 
   return (
     <WorkerPoolContextProvider
@@ -5337,17 +5342,7 @@ export default function App() {
                 </span>
               </div>
             ) : (
-              <DiffSwitcher
-                open={switcherOpen}
-                onOpenChange={setSwitcherOpen}
-                selection={selection}
-                branches={branches}
-                workingStats={stack?.workingStats ?? null}
-                isStackLoading={isStackLoading}
-                isGithubInfoLoading={isGithubInfoLoading}
-                githubInfo={githubInfo}
-                onSelect={(sel) => { setSelection(sel); setSwitcherOpen(false); }}
-              />
+              !isStackSidebarVisible && diffSwitcher
             )}
             {!isRecapRoute && (
               <div className="flex min-w-0 flex-col justify-center leading-tight">
@@ -5465,10 +5460,10 @@ export default function App() {
         {!isRecapRoute && (
           <div className="flex flex-1 min-h-0">
             <StackSidebar
+              switcher={isStackSidebarVisible ? diffSwitcher : null}
               branches={branches}
               workingStats={stack?.workingStats ?? null}
               selection={selection}
-              selectedStats={selectedStats}
               isStackLoading={isStackLoading}
               githubInfo={githubInfo}
               onSelect={setSelection}

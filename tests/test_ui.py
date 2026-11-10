@@ -91,8 +91,23 @@ def test_build_stack_payload_linear_stack(repo_with_stack: Repo) -> None:
     assert branch_b["isCurrent"] is True
     assert branch_b["commitTime"] > 0
 
+    # Each branch's stats cover only its own changes, not its parent's.
+    assert branch_a["diffStats"] == {"files": 1, "additions": 1, "deletions": 0}
+    assert branch_b["diffStats"] == {"files": 1, "additions": 1, "deletions": 0}
+
     # Clean working tree — stats are present but empty.
     assert payload["workingStats"] == {"files": 0, "additions": 0, "deletions": 0}
+
+
+def test_build_stack_payload_diff_stats_none_without_merge_base(
+    repo_with_stack: Repo, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Branches with no common ancestor with their parent have no diff stats."""
+    monkeypatch.setattr(git, "get_merge_base", lambda *args: None)
+
+    payload = _build_stack_payload(repo_with_stack)
+
+    assert [branch["diffStats"] for branch in payload["branches"]] == [None, None]
 
 
 def test_build_stack_payload_no_tracked_branches(temp_repo: Repo) -> None:

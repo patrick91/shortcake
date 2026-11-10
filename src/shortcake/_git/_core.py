@@ -130,6 +130,42 @@ def get_commits_between(repo: Repo, head: bytes, base: bytes) -> list[bytes]:
     return commits
 
 
+@dataclass(frozen=True)
+class DiffStats:
+    """Changed files and lines between two commits."""
+
+    files: int
+    additions: int
+    deletions: int
+
+
+# A diff between two commits never changes, and `sc ui` re-reads every branch's
+# stats each time it polls the stack, so remember them per commit pair.
+_DIFF_STATS_CACHE: dict[tuple[str, str, str], DiffStats] = {}
+_DIFF_STATS_CACHE_SIZE = 1024
+
+
+def get_diff_stats(repo: Repo, base: bytes, head: bytes) -> DiffStats:
+    """Count files and lines changed from ``base`` to ``head``, detecting renames."""
+    key = (repo.path, _oid(base), _oid(head))
+    cached = _DIFF_STATS_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    diff = repo.diff(repo.get(key[1]).tree, repo.get(key[2]).tree)
+    diff.find_similar()
+    stats = diff.stats
+    result = DiffStats(
+        files=stats.files_changed,
+        additions=stats.insertions,
+        deletions=stats.deletions,
+    )
+    if len(_DIFF_STATS_CACHE) >= _DIFF_STATS_CACHE_SIZE:
+        _DIFF_STATS_CACHE.clear()
+    _DIFF_STATS_CACHE[key] = result
+    return result
+
+
 def get_commit_message(repo: Repo, sha: bytes) -> str:
     """Get commit message."""
     return repo.get(_oid(sha)).message

@@ -172,6 +172,10 @@ def test_stack_sidebar_lists_stack(ui_page: Page):
     expect(sidebar.get_by_role("button", name="branch_b")).to_have_attribute(
         "aria-current", "true"
     )
+    # Every row (not just the viewed one) shows its commit count and diff stats.
+    expect(sidebar.get_by_role("button", name="branch_a")).to_contain_text(
+        "1 commit · +2 \u22120"
+    )
 
 
 def test_stack_sidebar_selects_branch(ui_page: Page):

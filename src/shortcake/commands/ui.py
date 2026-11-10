@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 import webbrowser
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any
@@ -86,6 +86,7 @@ class StackDiffBranch:
     commit_short: str
     commit_subject: str
     commit_time: int
+    diff_stats: git.DiffStats | None = None
 
 
 @dataclass(frozen=True)
@@ -268,10 +269,15 @@ def _get_stack_diff_branches(repo: Repo) -> list[StackDiffBranch]:
             continue
 
         commit_count = 0
+        diff_stats = None
         if parent in all_branches:
             branch_head = git.get_branch_head(repo, node.name)
             parent_head = git.get_branch_head(repo, parent)
             commit_count = len(git.get_commits_between(repo, branch_head, parent_head))
+            # Same range as the branch diff the UI shows (`parent...branch`).
+            merge_base = git.get_merge_base(repo, branch_head, parent_head)
+            if merge_base is not None:
+                diff_stats = git.get_diff_stats(repo, merge_base, branch_head)
         latest_commit = git.get_branch_latest_commit(repo, node.name)
 
         result.append(
@@ -285,6 +291,7 @@ def _get_stack_diff_branches(repo: Repo) -> list[StackDiffBranch]:
                 commit_short=latest_commit.short_sha,
                 commit_subject=latest_commit.subject,
                 commit_time=latest_commit.time,
+                diff_stats=diff_stats,
             )
         )
 
@@ -327,6 +334,9 @@ def _build_stack_payload(
                 "commitShort": item.commit_short,
                 "commitSubject": item.commit_subject,
                 "commitTime": item.commit_time,
+                "diffStats": (
+                    None if item.diff_stats is None else asdict(item.diff_stats)
+                ),
             }
             for item in branches
         ],

@@ -355,3 +355,57 @@ def test_amend_commit_failure(temp_repo: Repo, monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(subprocess, "run", failing_run)
     with pytest.raises(ValueError, match="Amend failed"):
         git.amend_commit(temp_repo, "test", allow_empty=False)
+
+
+def test_get_diff_stats_counts_files_and_lines(temp_repo: Repo, tmp_path: Path) -> None:
+    """Diff stats count changed files, added and deleted lines between commits."""
+    base = git.get_branch_head(temp_repo, "main")
+    head = commit_files(
+        temp_repo,
+        {
+            tmp_path / "README.md": "# Changed\nline 2\n",
+            tmp_path / "new.py": "a = 1\nb = 2\n",
+        },
+        "Change files",
+    )
+
+    stats = git.get_diff_stats(temp_repo, base, head)
+
+    assert stats == git.DiffStats(files=2, additions=4, deletions=1)
+
+
+def test_get_diff_stats_is_cached_per_commit_pair(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A commit pair's stats are computed once and then served from the cache."""
+    base = git.get_branch_head(temp_repo, "main")
+    head = commit_files(temp_repo, {tmp_path / "a.txt": "a\n"}, "Add a")
+    first = git.get_diff_stats(temp_repo, base, head)
+
+    def fail_diff(*args, **kwargs):
+        raise AssertionError("diff should not be recomputed")
+
+    monkeypatch.setattr(temp_repo, "diff", fail_diff)
+    assert git.get_diff_stats(temp_repo, base, head) is first
+
+
+def test_get_diff_stats_cache_is_bounded(
+    temp_repo: Repo, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cache is cleared once it reaches its size limit."""
+    from shortcake._git import _core
+
+    cache: dict = {}
+    monkeypatch.setattr(_core, "_DIFF_STATS_CACHE", cache)
+    monkeypatch.setattr(_core, "_DIFF_STATS_CACHE_SIZE", 1)
+    base = git.get_branch_head(temp_repo, "main")
+    head_a = commit_files(temp_repo, {tmp_path / "a.txt": "a\n"}, "Add a")
+    head_b = commit_files(temp_repo, {tmp_path / "b.txt": "b\n"}, "Add b")
+
+    git.get_diff_stats(temp_repo, base, head_a)
+    git.get_diff_stats(temp_repo, base, head_b)
+
+    assert len(cache) == 1
+    assert next(iter(cache.values())) == git.DiffStats(
+        files=2, additions=2, deletions=0
+    )
