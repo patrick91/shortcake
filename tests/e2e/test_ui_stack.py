@@ -1,3 +1,4 @@
+import json
 import re
 
 import pytest
@@ -30,7 +31,8 @@ def test_current_branch_badge(ui_page: Page):
 def test_working_changes_button(ui_page: Page):
     """Working Changes option is always visible in the diff switcher."""
     open_diff_switcher(ui_page)
-    expect(ui_page.get_by_text("Working Changes")).to_be_visible()
+    listbox = ui_page.locator("#sc-diff-listbox")
+    expect(listbox.get_by_text("Working Changes")).to_be_visible()
 
 
 def test_diff_switcher_filters_and_selection_persists(page: Page, ui_url: str):
@@ -159,3 +161,98 @@ def test_no_branches_message(page: Page, ui_url: str):
     page.goto(ui_url)
     open_diff_switcher(page)
     expect(page.get_by_text("No tracked branches found")).to_be_visible(timeout=10_000)
+
+
+def test_stack_sidebar_lists_stack(ui_page: Page):
+    """The left sidebar shows the trunk and every branch of the viewed stack."""
+    sidebar = ui_page.get_by_role("navigation", name="Stack")
+    expect(sidebar).to_be_visible()
+    expect(sidebar.get_by_text("main", exact=True)).to_be_visible()
+    expect(sidebar.get_by_role("button", name="branch_a")).to_be_visible()
+    expect(sidebar.get_by_role("button", name="branch_b")).to_have_attribute(
+        "aria-current", "true"
+    )
+
+
+def test_stack_sidebar_selects_branch(ui_page: Page):
+    """Clicking a branch in the sidebar loads its diff and updates the URL."""
+    sidebar = ui_page.get_by_role("navigation", name="Stack")
+    sidebar.get_by_role("button", name="branch_a").click()
+
+    expect(ui_page.locator("header")).to_contain_text("branch_a → main")
+    expect(sidebar.get_by_role("button", name="branch_a")).to_have_attribute(
+        "aria-current", "true"
+    )
+    expect(sidebar.get_by_role("button", name="branch_b")).not_to_have_attribute(
+        "aria-current", "true"
+    )
+    assert ui_page.url.endswith("#/branch/branch_a")
+
+
+def test_stack_sidebar_selects_working_changes(ui_page: Page):
+    """The sidebar's Working changes row switches to the uncommitted diff."""
+    sidebar = ui_page.get_by_role("navigation", name="Stack")
+    sidebar.get_by_role("button", name=re.compile("^Working changes")).click()
+    expect(ui_page.locator("header")).to_contain_text("Uncommitted changes")
+
+
+def test_stack_sidebar_folds_other_stacks(page: Page, ui_url: str):
+    """Stacks other than the viewed one collapse under "Other stacks"."""
+
+    def branch(name: str, parent: str, *, current: bool = False) -> dict:
+        return {
+            "name": name,
+            "parent": parent,
+            "depth": 0,
+            "isCurrent": current,
+            "commitCount": 1,
+            "commit": "1" * 40,
+            "commitShort": "1111111",
+            "commitSubject": f"Add {name}",
+            "commitTime": 1_700_000_000,
+        }
+
+    stack = {
+        "currentBranch": "2026-01-02-auth",
+        "branches": [
+            branch("2026-01-02-auth", "main", current=True),
+            branch("2026-01-02-login", "2026-01-02-auth"),
+            branch("2026-01-01-billing", "main"),
+        ],
+    }
+    page.route(
+        "**/api/stack",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(stack)
+        ),
+    )
+    # Keep the 3s poll from swapping the real repo's stack back in.
+    page.route(
+        "**/api/state",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({**stack, "workingDiffKey": "fixed"}),
+        ),
+    )
+    page.goto(ui_url)
+
+    sidebar = page.get_by_role("navigation", name="Stack")
+    # Date prefixes are dropped from the sidebar labels.
+    expect(sidebar.get_by_text("auth", exact=True)).to_be_visible()
+    expect(sidebar.get_by_text("login", exact=True)).to_be_visible()
+    expect(sidebar.get_by_text("billing", exact=True)).not_to_be_visible()
+
+    toggle = sidebar.get_by_role("button", name=re.compile("^Other stacks"))
+    expect(toggle).to_contain_text("1 branch")
+    toggle.click()
+    expect(toggle).to_have_attribute("aria-expanded", "true")
+    expect(sidebar.get_by_text("billing", exact=True)).to_be_visible()
+
+
+def test_stack_sidebar_hidden_on_small_screens(page: Page, ui_url: str):
+    """Below the md breakpoint the sidebar hides; the switcher still works."""
+    page.set_viewport_size({"width": 700, "height": 900})
+    page.goto(ui_url)
+    expect(page.get_by_role("button", name="Switch diff")).to_be_visible()
+    expect(page.get_by_test_id("stack-sidebar")).to_be_hidden()

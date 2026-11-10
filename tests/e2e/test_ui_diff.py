@@ -95,6 +95,16 @@ def test_diff_shows_file_tree(ui_page: Page):
     expect(file_entry).to_be_visible()
 
 
+def test_layout_stack_left_files_right(ui_page: Page):
+    """The stack sidebar sits left of the diff and the files sidebar right of it."""
+    stack_box = ui_page.get_by_test_id("stack-sidebar").bounding_box()
+    diff_box = ui_page.locator(".diff-content").bounding_box()
+    files_box = ui_page.get_by_test_id("diff-sidebar").bounding_box()
+    assert stack_box is not None and diff_box is not None and files_box is not None
+    assert stack_box["x"] + stack_box["width"] <= diff_box["x"]
+    assert diff_box["x"] + diff_box["width"] <= files_box["x"]
+
+
 def test_diff_sidebar_resizes_and_persists(ui_page: Page):
     """Dragging the sidebar divider resizes it and preserves the chosen width."""
     sidebar = ui_page.get_by_test_id("diff-sidebar")
@@ -105,9 +115,10 @@ def test_diff_sidebar_resizes_and_persists(ui_page: Page):
     separator_box = separator.bounding_box()
     assert separator_box is not None
 
+    # The files sidebar sits right of the diff: dragging left widens it.
     ui_page.mouse.move(separator_box["x"], separator_box["y"] + 80)
     ui_page.mouse.down()
-    ui_page.mouse.move(separator_box["x"] + 120, separator_box["y"] + 80)
+    ui_page.mouse.move(separator_box["x"] - 120, separator_box["y"] + 80)
     ui_page.mouse.up()
 
     ui_page.wait_for_function(
