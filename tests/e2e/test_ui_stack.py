@@ -191,6 +191,23 @@ def test_stack_sidebar_selects_branch(ui_page: Page):
         "aria-current", "true"
     )
     assert ui_page.url.endswith("#/branch/branch_a")
+    # The selected (bold) name truncates like the others instead of wrapping.
+    expect(
+        sidebar.get_by_role("button", name="branch_a").get_by_text("branch_a")
+    ).to_have_css("white-space", "nowrap")
+
+
+def test_diff_switcher_is_shortcut_only_with_sidebar(ui_page: Page):
+    """With the stack sidebar shown, the palette has no button: ⌘K opens it."""
+    expect(ui_page.get_by_role("button", name="Switch diff")).to_have_count(0)
+
+    ui_page.keyboard.press("ControlOrMeta+k")
+    palette = ui_page.get_by_role("dialog", name="Switch diff")
+    expect(palette).to_be_visible()
+    expect(palette.get_by_role("combobox")).to_be_focused()
+
+    ui_page.keyboard.press("Escape")
+    expect(palette).to_have_count(0)
 
 
 def test_stack_sidebar_selects_working_changes(ui_page: Page):
@@ -258,8 +275,11 @@ def test_stack_sidebar_hidden_on_small_screens(page: Page, ui_url: str):
     """Below the md breakpoint the sidebar hides; the switcher still works."""
     page.set_viewport_size({"width": 700, "height": 900})
     page.goto(ui_url)
-    expect(page.get_by_role("button", name="Switch diff")).to_be_visible()
+    switch_button = page.get_by_role("button", name="Switch diff")
+    expect(switch_button).to_be_visible()
     expect(page.get_by_test_id("stack-sidebar")).to_be_hidden()
+    switch_button.click()
+    expect(page.locator("#sc-diff-listbox")).to_be_visible()
     expect(page.get_by_role("separator", name="Resize stack sidebar")).to_have_count(0)
 
 

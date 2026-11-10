@@ -8,6 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 from playwright.sync_api import Page
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 from shortcake._trailers import Trailers
 from shortcake.commands.ui import _start_api_server
@@ -15,13 +16,26 @@ from tests._git_helpers import commit_files, create_branch, get_branch_head, ini
 
 
 def open_diff_switcher(page: Page) -> None:
-    """Open the header diff switcher and wait for its listbox."""
-    page.get_by_role("button", name="Switch diff").click()
-    page.wait_for_selector("#sc-diff-listbox", timeout=5_000)
+    """Open the diff switcher palette with ⌘K / Ctrl+K and wait for its listbox.
+
+    The shortcut listener is attached after the app mounts, so a press right
+    after navigation can be missed: retry until the palette shows up (pressing
+    only while it's closed, since the shortcut toggles it).
+    """
+    listbox = page.locator("#sc-diff-listbox")
+    for _ in range(20):
+        if listbox.count() == 0:
+            page.keyboard.press("ControlOrMeta+k")
+        try:
+            listbox.wait_for(timeout=250)
+            return
+        except PlaywrightTimeoutError:
+            continue
+    listbox.wait_for(timeout=5_000)
 
 
 def select_diff_option(page: Page, label: str) -> None:
-    """Select a diff target from the header switcher."""
+    """Select a diff target from the switcher palette."""
     open_diff_switcher(page)
     page.locator("#sc-diff-listbox [role='option']").filter(has_text=label).click()
 

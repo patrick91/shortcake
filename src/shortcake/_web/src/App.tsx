@@ -13,6 +13,7 @@ import type { FileTreeRowDecoration, FileTreeSortComparator, GitStatusEntry } fr
 import { prepareFileTreeInput } from '@pierre/trees';
 import { FileTree as PierreFileTree, useFileTree } from '@pierre/trees/react';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { Dialog } from '@base-ui-components/react/dialog';
 import { Popover } from '@base-ui-components/react/popover';
 
 type DiffStyle = 'unified' | 'split';
@@ -3616,8 +3617,6 @@ function SidebarResizeHandle({
 }
 
 type StackSidebarProps = {
-  /** The "Jump to branch…" switcher, shown at the top of the sidebar. */
-  switcher: React.ReactNode;
   width: number;
   branches: StackBranch[];
   workingStats: WorkingStats | null;
@@ -3632,7 +3631,6 @@ type StackSidebarProps = {
 // rail; every other stack folds away under "Other stacks". Names drop their
 // date prefix; each row shows its commit, commit count and diff stats.
 function StackSidebar({
-  switcher,
   width,
   branches,
   workingStats,
@@ -3708,7 +3706,7 @@ function StackSidebar({
               onClick={() => onSelect({ type: 'branch', name: branch.name })}
             >
               <span
-                className={`block text-[0.84rem] leading-5 ${selected ? 'font-semibold text-text-primary [overflow-wrap:anywhere]' : 'truncate font-medium text-text-secondary group-hover:text-text-primary'}`}
+                className={`block truncate text-[0.84rem] leading-5 ${selected ? 'font-semibold text-text-primary' : 'font-medium text-text-secondary group-hover:text-text-primary'}`}
               >
                 {stripDatePrefix(branch.name)}
               </span>
@@ -3770,11 +3768,6 @@ function StackSidebar({
       className="hidden shrink-0 flex-col overflow-hidden md:flex"
       style={{ width: `${width}px` }}
     >
-      {/* 44px including the border: lines up with the file headers (min-height
-          44px in buildDiffUnsafeCSS) so both rules sit at the same height. */}
-      {switcher && (
-        <div className="h-11 shrink-0 border-b border-[var(--shortcake-diff-rule)]">{switcher}</div>
-      )}
       <div className="min-h-0 flex-1 overflow-y-auto py-2">
         <button
           type="button"
@@ -4091,8 +4084,8 @@ type DiffSwitcherProps = {
   isGithubInfoLoading: boolean;
   githubInfo: Record<string, GitHubBranchInfo>;
   onSelect: (sel: DiffSelection) => void;
-  /** Render the trigger as the stack sidebar's full-width top row. */
-  inSidebar?: boolean;
+  /** Show a "Jump to branch…" button; otherwise the palette opens only via ⌘K. */
+  showTrigger: boolean;
 };
 
 const IS_MAC = typeof navigator !== 'undefined' && navigator.platform.includes('Mac');
@@ -4109,7 +4102,7 @@ function DiffSwitcher({
   isGithubInfoLoading,
   githubInfo,
   onSelect,
-  inSidebar = false,
+  showTrigger,
 }: DiffSwitcherProps) {
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -4218,93 +4211,81 @@ function DiffSwitcher({
     }
   };
 
-  const shortcutHint = (
-    <kbd className="hidden sm:inline-flex items-center gap-0.5 font-mono text-[0.58rem] font-medium text-text-muted bg-surface border border-border rounded px-1 py-px leading-none shrink-0">
-      {IS_MAC ? '⌘' : 'Ctrl'}K
-    </kbd>
-  );
-
+  // A ⌘K command palette: centered over the page, opened by the shortcut (see
+  // App) or, where the stack sidebar is hidden, the header button.
   return (
-    <Popover.Root open={open} onOpenChange={onOpenChange}>
-      {inSidebar ? (
-        // The whole row is the button: no inner box, just the accent tint on hover.
-        <Popover.Trigger
-          className={`flex h-full w-full items-center gap-2 appearance-none border-none m-0 px-3.5 text-left cursor-pointer outline-none transition-colors duration-100 hover:bg-accent-bg hover:text-accent focus-visible:bg-accent-bg focus-visible:text-accent ${open ? 'bg-accent-bg text-accent' : 'bg-transparent text-text-muted'}`}
-          aria-label="Switch diff"
-        >
-          <SearchIcon />
-          <span className="min-w-0 flex-1 truncate text-[0.8rem]">Jump to branch…</span>
-          {shortcutHint}
-        </Popover.Trigger>
-      ) : (
-        <Popover.Trigger
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      {showTrigger && (
+        <Dialog.Trigger
           className="group flex shrink-0 items-center appearance-none border-none bg-transparent p-0 m-0 text-left cursor-pointer rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30"
           aria-label="Switch diff"
         >
           <span className={`inline-flex h-8 w-[15rem] max-w-[40vw] items-center gap-2 rounded-md border px-2.5 transition-colors duration-100 group-hover:border-border-strong group-hover:bg-surface-active group-hover:text-text-secondary ${open ? 'border-border-strong bg-surface-active text-text-secondary' : 'border-border bg-surface-hover text-text-muted'}`}>
             <SearchIcon />
             <span className="min-w-0 flex-1 truncate text-[0.8rem]">Jump to branch…</span>
-            {shortcutHint}
+            <kbd className="hidden sm:inline-flex items-center gap-0.5 font-mono text-[0.58rem] font-medium text-text-muted bg-surface border border-border rounded px-1 py-px leading-none shrink-0">
+              {IS_MAC ? '⌘' : 'Ctrl'}K
+            </kbd>
           </span>
-        </Popover.Trigger>
+        </Dialog.Trigger>
       )}
-      <Popover.Portal>
-        <Popover.Positioner side="bottom" align="start" sideOffset={10} className="z-50">
-          <Popover.Popup
-            initialFocus={inputRef}
-            className="w-[440px] max-w-[calc(100vw-2rem)] max-h-[min(560px,70vh)] flex flex-col bg-surface border border-border rounded-lg shadow-lg overflow-hidden outline-none origin-[var(--transform-origin)] transition-[opacity,transform] duration-150 data-[starting-style]:opacity-0 data-[starting-style]:scale-[0.98] data-[ending-style]:opacity-0 data-[ending-style]:scale-[0.98]"
-          >
-            <div className="px-3.5 py-2.5 border-b border-border flex items-center justify-between shrink-0">
-              <span className="font-mono text-[0.62rem] font-medium uppercase tracking-[0.13em] text-accent">
-                Switch diff
-              </span>
-              {branches.length > 0 && (
-                <span className="font-mono text-[0.6rem] text-text-muted bg-surface-hover border border-border px-2 py-[2px] rounded-full">
-                  {isFiltering ? `${filteredRows.length}/${branches.length}` : branches.length} branch{branches.length === 1 ? '' : 'es'}
-                </span>
-              )}
-            </div>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/20 transition-opacity duration-150 data-[starting-style]:opacity-0 data-[ending-style]:opacity-0" />
+        <Dialog.Popup
+          aria-label="Switch diff"
+          initialFocus={inputRef}
+          className="fixed top-[12vh] left-1/2 z-50 w-[560px] max-w-[calc(100vw-2rem)] max-h-[min(600px,76vh)] -translate-x-1/2 flex flex-col bg-surface border border-border rounded-lg shadow-2xl overflow-hidden outline-none transition-[opacity,transform] duration-150 data-[starting-style]:opacity-0 data-[starting-style]:scale-[0.98] data-[ending-style]:opacity-0 data-[ending-style]:scale-[0.98]"
+        >
+          <div className="px-3.5 py-2.5 border-b border-border flex items-center justify-between shrink-0">
+            <span className="font-mono text-[0.62rem] font-medium uppercase tracking-[0.13em] text-accent">
+              Switch diff
+            </span>
             {branches.length > 0 && (
-              <div className="px-2.5 py-2 border-b border-border shrink-0">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  role="combobox"
-                  aria-expanded="true"
-                  aria-controls="sc-diff-listbox"
-                  aria-activedescendant={activeId}
-                  autoComplete="off"
-                  className="w-full appearance-none border border-border rounded-md bg-surface-hover text-text-primary font-mono text-[0.72rem] px-2.5 py-1.5 outline-none transition-[border-color] duration-150 ease-in-out focus:border-accent/40 focus:ring-1 focus:ring-accent/10 placeholder:text-text-muted"
-                  placeholder="Filter branches…"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={handleInputKeyDown}
-                />
-              </div>
+              <span className="font-mono text-[0.6rem] text-text-muted bg-surface-hover border border-border px-2 py-[2px] rounded-full">
+                {isFiltering ? `${filteredRows.length}/${branches.length}` : branches.length} branch{branches.length === 1 ? '' : 'es'}
+              </span>
             )}
-            <StackList
-              rows={filteredRows}
-              trunkName={trunkName}
-              workingStats={workingStats}
-              selection={selection}
-              isStackLoading={isStackLoading}
-              isGithubInfoLoading={isGithubInfoLoading}
-              githubInfo={githubInfo}
-              onSelect={onSelect}
-              isFiltering={isFiltering}
-              workingVisible={workingVisible}
-              activeKey={activeKey}
-              onActivateKey={activateKey}
-            />
-            <div className="shrink-0 border-t border-border px-3.5 py-[6px] flex items-center gap-3.5 font-mono text-[0.6rem] text-text-muted">
-              <span className="flex items-center gap-1"><kbd className={KBD_CLS}>↑↓</kbd> navigate</span>
-              <span className="flex items-center gap-1"><kbd className={KBD_CLS}>↵</kbd> select</span>
-              <span className="flex items-center gap-1"><kbd className={KBD_CLS}>esc</kbd> clear &middot; close</span>
+          </div>
+          {branches.length > 0 && (
+            <div className="px-2.5 py-2 border-b border-border shrink-0">
+              <input
+                ref={inputRef}
+                type="text"
+                role="combobox"
+                aria-expanded="true"
+                aria-controls="sc-diff-listbox"
+                aria-activedescendant={activeId}
+                autoComplete="off"
+                className="w-full appearance-none border border-border rounded-md bg-surface-hover text-text-primary font-mono text-[0.72rem] px-2.5 py-1.5 outline-none transition-[border-color] duration-150 ease-in-out focus:border-accent/40 focus:ring-1 focus:ring-accent/10 placeholder:text-text-muted"
+                placeholder="Filter branches…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleInputKeyDown}
+              />
             </div>
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
+          )}
+          <StackList
+            rows={filteredRows}
+            trunkName={trunkName}
+            workingStats={workingStats}
+            selection={selection}
+            isStackLoading={isStackLoading}
+            isGithubInfoLoading={isGithubInfoLoading}
+            githubInfo={githubInfo}
+            onSelect={onSelect}
+            isFiltering={isFiltering}
+            workingVisible={workingVisible}
+            activeKey={activeKey}
+            onActivateKey={activateKey}
+          />
+          <div className="shrink-0 border-t border-border px-3.5 py-[6px] flex items-center gap-3.5 font-mono text-[0.6rem] text-text-muted">
+            <span className="flex items-center gap-1"><kbd className={KBD_CLS}>↑↓</kbd> navigate</span>
+            <span className="flex items-center gap-1"><kbd className={KBD_CLS}>↵</kbd> select</span>
+            <span className="flex items-center gap-1"><kbd className={KBD_CLS}>esc</kbd> clear &middot; close</span>
+          </div>
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
@@ -5344,8 +5325,8 @@ export default function App() {
             .filter(Boolean)
             .join(' · ')
         : null;
-  // One switcher instance (one ⌘K popover): it lives at the top of the stack
-  // sidebar, and moves to the header when the sidebar is hidden.
+  // One ⌘K palette instance. Its header button only shows where the stack
+  // sidebar is hidden (small screens, which may have no keyboard).
   const diffSwitcher = (
     <DiffSwitcher
       open={switcherOpen}
@@ -5357,7 +5338,7 @@ export default function App() {
       isGithubInfoLoading={isGithubInfoLoading}
       githubInfo={githubInfo}
       onSelect={(sel) => { setSelection(sel); setSwitcherOpen(false); }}
-      inSidebar={isStackSidebarVisible}
+      showTrigger={!isStackSidebarVisible && !isRecapRoute}
     />
   );
 
@@ -5402,9 +5383,8 @@ export default function App() {
                   </span>
                 </span>
               </div>
-            ) : (
-              !isStackSidebarVisible && diffSwitcher
-            )}
+            ) : null}
+            {diffSwitcher}
             {!isRecapRoute && (
               <div className="flex min-w-0 flex-col justify-center leading-tight">
                 <span
@@ -5521,7 +5501,6 @@ export default function App() {
         {!isRecapRoute && (
           <div className="flex flex-1 min-h-0">
             <StackSidebar
-              switcher={isStackSidebarVisible ? diffSwitcher : null}
               width={stackSidebarWidth}
               branches={branches}
               workingStats={stack?.workingStats ?? null}

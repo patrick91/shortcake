@@ -15,7 +15,7 @@ def test_github_polling_visibility_and_inflight(page: Page, ui_url: str) -> None
     )
     page.route("**/api/github-info", lambda route: requests.append(route))
     page.goto(ui_url)
-    expect(page.get_by_role("button", name="Switch diff")).to_be_visible()
+    expect(page.get_by_test_id("stack-sidebar")).to_be_visible()
 
     page.clock.fast_forward(600_000)
     assert len(requests) == 0

@@ -125,26 +125,6 @@ def test_diff_files_run_edge_to_edge(ui_page: Page):
     assert gaps == {"left": 0, "right": 0, "top": 0}
 
 
-def test_stack_search_row_lines_up_with_file_header(ui_page: Page):
-    """The sidebar's search row and the first file header end at the same y."""
-    bottoms = ui_page.evaluate(
-        """
-        () => {
-          const sidebar = document.querySelector('[data-testid=stack-sidebar]');
-          const row = sidebar.firstElementChild;
-          const host = [...document.querySelectorAll('.diff-file-card *')]
-            .find((el) => el.shadowRoot);
-          const header = host.shadowRoot.querySelector('[data-diffs-header]');
-          return [
-            row.getBoundingClientRect().bottom,
-            header.getBoundingClientRect().bottom,
-          ];
-        }
-        """
-    )
-    assert bottoms[0] == bottoms[1]
-
-
 def test_diff_sidebar_resizes_and_persists(ui_page: Page):
     """Dragging the sidebar divider resizes it and preserves the chosen width."""
     sidebar = ui_page.get_by_test_id("diff-sidebar")
