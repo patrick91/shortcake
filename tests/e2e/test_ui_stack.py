@@ -1,3 +1,4 @@
+import json
 import re
 
 import pytest
@@ -30,7 +31,8 @@ def test_current_branch_badge(ui_page: Page):
 def test_working_changes_button(ui_page: Page):
     """Working Changes option is always visible in the diff switcher."""
     open_diff_switcher(ui_page)
-    expect(ui_page.get_by_text("Working Changes")).to_be_visible()
+    listbox = ui_page.locator("#sc-diff-listbox")
+    expect(listbox.get_by_text("Working Changes")).to_be_visible()
 
 
 def test_diff_switcher_filters_and_selection_persists(page: Page, ui_url: str):
@@ -159,3 +161,173 @@ def test_no_branches_message(page: Page, ui_url: str):
     page.goto(ui_url)
     open_diff_switcher(page)
     expect(page.get_by_text("No tracked branches found")).to_be_visible(timeout=10_000)
+
+
+def test_stack_sidebar_lists_stack(ui_page: Page):
+    """The left sidebar shows the trunk and every branch of the viewed stack."""
+    sidebar = ui_page.get_by_role("navigation", name="Stack")
+    expect(sidebar).to_be_visible()
+    expect(sidebar.get_by_text("main", exact=True)).to_be_visible()
+    expect(sidebar.get_by_role("button", name="branch_a")).to_be_visible()
+    expect(sidebar.get_by_role("button", name="branch_b")).to_have_attribute(
+        "aria-current", "true"
+    )
+    # Every row (not just the viewed one) shows its commit count and diff stats.
+    expect(sidebar.get_by_role("button", name="branch_a")).to_contain_text(
+        "1 commit · +2 \u22120"
+    )
+
+
+def test_stack_sidebar_selects_branch(ui_page: Page):
+    """Clicking a branch in the sidebar loads its diff and updates the URL."""
+    sidebar = ui_page.get_by_role("navigation", name="Stack")
+    sidebar.get_by_role("button", name="branch_a").click()
+
+    expect(ui_page.locator("header")).to_contain_text("branch_a → main")
+    expect(sidebar.get_by_role("button", name="branch_a")).to_have_attribute(
+        "aria-current", "true"
+    )
+    expect(sidebar.get_by_role("button", name="branch_b")).not_to_have_attribute(
+        "aria-current", "true"
+    )
+    assert ui_page.url.endswith("#/branch/branch_a")
+    # The selected (bold) name truncates like the others instead of wrapping.
+    expect(
+        sidebar.get_by_role("button", name="branch_a").get_by_text("branch_a")
+    ).to_have_css("white-space", "nowrap")
+
+
+def test_diff_switcher_is_shortcut_only_with_sidebar(ui_page: Page):
+    """With the stack sidebar shown, the palette has no button: ⌘K opens it."""
+    expect(ui_page.get_by_role("button", name="Switch diff")).to_have_count(0)
+
+    ui_page.keyboard.press("ControlOrMeta+k")
+    palette = ui_page.get_by_role("dialog", name="Switch diff")
+    expect(palette).to_be_visible()
+    expect(palette.get_by_role("combobox")).to_be_focused()
+
+    ui_page.keyboard.press("Escape")
+    expect(palette).to_have_count(0)
+
+
+def test_stack_sidebar_selects_working_changes(ui_page: Page):
+    """The sidebar's Working changes row switches to the uncommitted diff."""
+    sidebar = ui_page.get_by_role("navigation", name="Stack")
+    sidebar.get_by_role("button", name=re.compile("^Working changes")).click()
+    expect(ui_page.locator("header")).to_contain_text("Uncommitted changes")
+
+
+def test_stack_sidebar_folds_other_stacks(page: Page, ui_url: str):
+    """Stacks other than the viewed one collapse under "Other stacks"."""
+
+    def branch(name: str, parent: str, *, current: bool = False) -> dict:
+        return {
+            "name": name,
+            "parent": parent,
+            "depth": 0,
+            "isCurrent": current,
+            "commitCount": 1,
+            "commit": "1" * 40,
+            "commitShort": "1111111",
+            "commitSubject": f"Add {name}",
+            "commitTime": 1_700_000_000,
+        }
+
+    stack = {
+        "currentBranch": "2026-01-02-auth",
+        "branches": [
+            branch("2026-01-02-auth", "main", current=True),
+            branch("2026-01-02-login", "2026-01-02-auth"),
+            branch("2026-01-01-billing", "main"),
+        ],
+    }
+    page.route(
+        "**/api/stack",
+        lambda route: route.fulfill(
+            status=200, content_type="application/json", body=json.dumps(stack)
+        ),
+    )
+    # Keep the 3s poll from swapping the real repo's stack back in.
+    page.route(
+        "**/api/state",
+        lambda route: route.fulfill(
+            status=200,
+            content_type="application/json",
+            body=json.dumps({**stack, "workingDiffKey": "fixed"}),
+        ),
+    )
+    page.goto(ui_url)
+
+    sidebar = page.get_by_role("navigation", name="Stack")
+    # Date prefixes are dropped from the sidebar labels.
+    expect(sidebar.get_by_text("auth", exact=True)).to_be_visible()
+    expect(sidebar.get_by_text("login", exact=True)).to_be_visible()
+    expect(sidebar.get_by_text("billing", exact=True)).not_to_be_visible()
+
+    toggle = sidebar.get_by_role("button", name=re.compile("^Other stacks"))
+    expect(toggle).to_contain_text("1 branch")
+    toggle.click()
+    expect(toggle).to_have_attribute("aria-expanded", "true")
+    expect(sidebar.get_by_text("billing", exact=True)).to_be_visible()
+
+
+def test_stack_sidebar_hidden_on_small_screens(page: Page, ui_url: str):
+    """Below the md breakpoint the sidebar hides; the switcher still works."""
+    page.set_viewport_size({"width": 700, "height": 900})
+    page.goto(ui_url)
+    switch_button = page.get_by_role("button", name="Switch diff")
+    expect(switch_button).to_be_visible()
+    expect(page.get_by_test_id("stack-sidebar")).to_be_hidden()
+    switch_button.click()
+    expect(page.locator("#sc-diff-listbox")).to_be_visible()
+    expect(page.get_by_role("separator", name="Resize stack sidebar")).to_have_count(0)
+
+
+def test_stack_sidebar_resizes_and_persists(ui_page: Page):
+    """Dragging the stack divider right widens the sidebar and the width sticks."""
+    sidebar = ui_page.get_by_test_id("stack-sidebar")
+    separator = ui_page.get_by_role("separator", name="Resize stack sidebar")
+    initial_box = sidebar.bounding_box()
+    separator_box = separator.bounding_box()
+    assert initial_box is not None and separator_box is not None
+    initial_width = initial_box["width"]
+
+    # The stack sidebar sits left of the diff: dragging right widens it.
+    ui_page.mouse.move(separator_box["x"], separator_box["y"] + 80)
+    ui_page.mouse.down()
+    ui_page.mouse.move(separator_box["x"] + 100, separator_box["y"] + 80)
+    ui_page.mouse.up()
+
+    ui_page.wait_for_function(
+        "([element, width]) => element.getBoundingClientRect().width >= width + 90",
+        arg=[sidebar.element_handle(), initial_width],
+    )
+    resized_box = sidebar.bounding_box()
+    assert resized_box is not None
+    resized_width = resized_box["width"]
+
+    ui_page.reload()
+    expect(ui_page.get_by_test_id("stack-sidebar")).to_have_css(
+        "width", f"{round(resized_width)}px"
+    )
+
+
+def test_stack_sidebar_resizes_with_keyboard(ui_page: Page):
+    """Arrow keys nudge the stack divider; Home snaps to the minimum width."""
+    sidebar = ui_page.get_by_test_id("stack-sidebar")
+    separator = ui_page.get_by_role("separator", name="Resize stack sidebar")
+    expect(separator).to_have_attribute("aria-valuenow", "264")
+
+    separator.press("ArrowRight")
+    expect(separator).to_have_attribute("aria-valuenow", "280")
+    expect(sidebar).to_have_css("width", "280px")
+
+    separator.press("ArrowLeft")
+    separator.press("ArrowLeft")
+    expect(separator).to_have_attribute("aria-valuenow", "248")
+
+    separator.press("Home")
+    expect(sidebar).to_have_css("width", "200px")
+
+    separator.dblclick()
+    expect(sidebar).to_have_css("width", "264px")

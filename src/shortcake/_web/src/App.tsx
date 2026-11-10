@@ -13,6 +13,7 @@ import type { FileTreeRowDecoration, FileTreeSortComparator, GitStatusEntry } fr
 import { prepareFileTreeInput } from '@pierre/trees';
 import { FileTree as PierreFileTree, useFileTree } from '@pierre/trees/react';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { Dialog } from '@base-ui-components/react/dialog';
 import { Popover } from '@base-ui-components/react/popover';
 
 type DiffStyle = 'unified' | 'split';
@@ -88,6 +89,8 @@ type StackBranch = {
   commitShort: string;
   commitSubject: string;
   commitTime: number;
+  /** Files/lines changed vs the parent (`parent...branch`); null if no merge base. */
+  diffStats?: DiffStats | null;
 };
 
 type WorkingStats = {
@@ -246,24 +249,50 @@ const DIFF_SIDEBAR_STORAGE_KEY = 'shortcake-diff-sidebar-width';
 const DEFAULT_DIFF_SIDEBAR_WIDTH = 280;
 const MIN_DIFF_SIDEBAR_WIDTH = 220;
 const MAX_DIFF_SIDEBAR_WIDTH = 560;
+// The files sidebar is shown from this viewport width up.
+const DIFF_SIDEBAR_MIN_VIEWPORT = 1200;
+const STACK_SIDEBAR_STORAGE_KEY = 'shortcake-stack-sidebar-width';
+const DEFAULT_STACK_SIDEBAR_WIDTH = 264;
+const MIN_STACK_SIDEBAR_WIDTH = 200;
+const MAX_STACK_SIDEBAR_WIDTH = 480;
+// The stack sidebar is shown from this viewport width (`md`) up.
+const STACK_SIDEBAR_MIN_VIEWPORT = 768;
 const MIN_DIFF_PANE_WIDTH = 420;
 
-function maxDiffSidebarWidth(): number {
+// Room left for a sidebar once the diff pane keeps its minimum width and the
+// other sidebar (if it is shown at this viewport) keeps its current width.
+function sidebarRoom(otherWidth: number, otherMinViewport: number): number {
+  return window.innerWidth - MIN_DIFF_PANE_WIDTH - (window.innerWidth >= otherMinViewport ? otherWidth : 0);
+}
+
+function maxDiffSidebarWidth(stackSidebarWidth: number): number {
   if (typeof window === 'undefined') return MAX_DIFF_SIDEBAR_WIDTH;
   return Math.max(
     MIN_DIFF_SIDEBAR_WIDTH,
-    Math.min(MAX_DIFF_SIDEBAR_WIDTH, window.innerWidth - MIN_DIFF_PANE_WIDTH),
+    Math.min(MAX_DIFF_SIDEBAR_WIDTH, sidebarRoom(stackSidebarWidth, STACK_SIDEBAR_MIN_VIEWPORT)),
   );
 }
 
-function clampDiffSidebarWidth(width: number): number {
-  return Math.min(maxDiffSidebarWidth(), Math.max(MIN_DIFF_SIDEBAR_WIDTH, width));
+function clampDiffSidebarWidth(width: number, stackSidebarWidth: number): number {
+  return Math.min(maxDiffSidebarWidth(stackSidebarWidth), Math.max(MIN_DIFF_SIDEBAR_WIDTH, width));
 }
 
-function loadDiffSidebarWidth(): number {
-  if (typeof window === 'undefined') return DEFAULT_DIFF_SIDEBAR_WIDTH;
-  const storedWidth = Number.parseFloat(localStorage.getItem(DIFF_SIDEBAR_STORAGE_KEY) ?? '');
-  return clampDiffSidebarWidth(Number.isFinite(storedWidth) ? storedWidth : DEFAULT_DIFF_SIDEBAR_WIDTH);
+function maxStackSidebarWidth(diffSidebarWidth: number): number {
+  if (typeof window === 'undefined') return MAX_STACK_SIDEBAR_WIDTH;
+  return Math.max(
+    MIN_STACK_SIDEBAR_WIDTH,
+    Math.min(MAX_STACK_SIDEBAR_WIDTH, sidebarRoom(diffSidebarWidth, DIFF_SIDEBAR_MIN_VIEWPORT)),
+  );
+}
+
+function clampStackSidebarWidth(width: number, diffSidebarWidth: number): number {
+  return Math.min(maxStackSidebarWidth(diffSidebarWidth), Math.max(MIN_STACK_SIDEBAR_WIDTH, width));
+}
+
+function loadStoredWidth(key: string, fallback: number): number {
+  if (typeof window === 'undefined') return fallback;
+  const storedWidth = Number.parseFloat(localStorage.getItem(key) ?? '');
+  return Number.isFinite(storedWidth) ? storedWidth : fallback;
 }
 
 function hashString(value: string): string {
@@ -380,61 +409,11 @@ function handleDiffPostRender(container: HTMLElement, _instance: unknown, phase:
 
 function buildDiffUnsafeCSS(
   resolvedTheme: 'dark' | 'light',
-  card = false,
   collapsed = false,
 ): string {
-  const headerBg = resolvedTheme === 'light' ? '#ececed' : '#16161c';
-  const headerBorder = resolvedTheme === 'light' ? 'rgba(0, 0, 0, 0.12)' : 'rgba(255, 255, 255, 0.1)';
+  const headerBg = resolvedTheme === 'light' ? '#f5f5f7' : '#16161c';
   const headerShadow = resolvedTheme === 'light' ? '0 2px 5px rgba(0, 0, 0, 0.06)' : '0 2px 6px rgba(0, 0, 0, 0.35)';
   const hunkRule = resolvedTheme === 'light' ? 'rgba(0, 0, 0, 0.14)' : 'rgba(255, 255, 255, 0.14)';
-  // Card mode (the diff review view): headers stick 20px below the scrollport
-  // top, under the page-bg mask strip (.diff-content::before), and keep the
-  // card's rounded top corners while stuck. The corner radius is 9px — the
-  // card's 10px outer radius minus its 1px border — matching the rounded
-  // padding-box the card's overflow: clip cuts content to. The ::before /
-  // ::after wedges paint the page bg outside that radius (extending 1px into
-  // the border area) so, while the header is stuck mid-card, code scrolling
-  // behind its rounded corners is hidden and the card appears to slide under
-  // a rounded window. At rest the wedges fall entirely outside the clip
-  // radius and are clipped away, so they can never create a corner seam.
-  const cardHeaderCSS = card
-    ? `
-    [data-diffs-header] {
-      top: 21px;
-      border-radius: 9px 9px 0 0;
-      /* Above the .diff-file-mask strips (z 15): while a card unsticks, its
-         rounded header stays visible and is pushed off the scrollport edge
-         instead of being flat-cut by the mask — the mask only needs to cover
-         scrolled CODE, which stays below it. */
-      z-index: 30;
-    }
-    [data-diffs-header]::before {
-      content: '';
-      position: absolute;
-      top: -1px;
-      left: -1px;
-      right: -1px;
-      height: 10px;
-      pointer-events: none;
-      background:
-        radial-gradient(circle at 100% 100%, transparent 8.75px, var(--shortcake-card-border) 9.25px 10px, var(--color-bg) 10.5px) left top / 10px 10px no-repeat,
-        radial-gradient(circle at 0% 100%, transparent 8.75px, var(--shortcake-card-border) 9.25px 10px, var(--color-bg) 10.5px) right top / 10px 10px no-repeat,
-        linear-gradient(var(--shortcake-card-border), var(--shortcake-card-border)) top / 100% 1px no-repeat;
-    }
-    [data-diffs-header]::after {
-      content: '';
-      position: absolute;
-      /* Side-border segments riding with the header: at rest they coincide
-         with the card's real borders; while the card departs over the mask
-         (which is above the card but below the header) they keep the left and
-         right borders visible. Start at 9px so the ::before corner arcs own
-         the corner region. */
-      inset: 9px -1px -1px -1px;
-      border-left: 1px solid var(--shortcake-card-border);
-      border-right: 1px solid var(--shortcake-card-border);
-      pointer-events: none;
-    }`
-    : '';
   const tokenCSS = `
     [data-line] span[style*="--diffs-token-light"],
     [data-line] span[style*="--diffs-token-dark"] {
@@ -467,12 +446,11 @@ function buildDiffUnsafeCSS(
       z-index: 10;
       min-height: 44px !important;
       background: var(--shortcake-diff-header-bg, ${headerBg}) !important;
-      /* A collapsed card is header-only: its bottom border would double up
-         with the card's own border. */
-      border-bottom: ${collapsed ? 'none' : `1px solid ${headerBorder}`} !important;
+      /* A collapsed file is header-only: its bottom border would double up
+         with the rule under the file. */
+      border-bottom: ${collapsed ? 'none' : '1px solid var(--shortcake-diff-rule)'} !important;
       box-shadow: ${collapsed ? 'none' : headerShadow};
     }
-    ${cardHeaderCSS}
     [data-code] {
       /* Don't reserve horizontal-scrollbar space: only actually-overflowing
          files get a scrollbar (and no phantom band at the card bottom). */
@@ -1657,7 +1635,7 @@ const DiffFileSection = React.memo(function DiffFileSection({
       enableLineSelection: true,
       onLineSelectionEnd: handleSelectionEnd,
       onPostRender: handleDiffPostRender,
-      unsafeCSS: buildDiffUnsafeCSS(rt, true, isCollapsed ?? false),
+      unsafeCSS: buildDiffUnsafeCSS(rt, isCollapsed ?? false),
     }),
     [diffStyle, handleSelectionEnd, rt, activeTheme, isCollapsed],
   );
@@ -3496,6 +3474,366 @@ type StackListProps = {
 
 const DATE_PREFIX_RE = /^(\d{4}-\d{2}-\d{2}-)(.+)$/;
 
+type StackGroup = {
+  branches: StackBranch[];
+  isActive: boolean;
+  lastTime: number;
+};
+
+// Group the pre-ordered branch list into stacks — a stack root is a branch
+// whose parent is not itself tracked (it hangs off the trunk). Then order
+// stacks: the one holding the checked-out branch first, the rest by most
+// recent commit.
+function groupStacks(branches: StackBranch[]): StackGroup[] {
+  const tracked = new Set(branches.map((b) => b.name));
+  const groups: StackBranch[][] = [];
+  for (const b of branches) {
+    if (!tracked.has(b.parent) || groups.length === 0) groups.push([]);
+    groups[groups.length - 1]!.push(b);
+  }
+  return groups
+    .map((group) => ({
+      branches: group,
+      isActive: group.some((b) => b.isCurrent),
+      lastTime: Math.max(0, ...group.map((b) => b.commitTime ?? 0)),
+    }))
+    .sort((a, b) => Number(b.isActive) - Number(a.isActive) || b.lastTime - a.lastTime);
+}
+
+// The trunk is the shared parent of every stack root, when there is one.
+function findTrunkName(branches: StackBranch[]): string | null {
+  const tracked = new Set(branches.map((b) => b.name));
+  const roots = branches.filter((b) => !tracked.has(b.parent));
+  if (roots.length === 0) return null;
+  const parent = roots[0]!.parent;
+  return roots.every((b) => b.parent === parent) ? parent : null;
+}
+
+function stripDatePrefix(name: string): string {
+  return name.match(DATE_PREFIX_RE)?.[2] ?? name;
+}
+
+function SearchIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true" className="shrink-0">
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </svg>
+  );
+}
+
+type DiffStats = {
+  files: number;
+  additions: number;
+  deletions: number;
+};
+
+// Draggable 1px divider between a sidebar and the diff. `side` is where the
+// sidebar sits, so dragging toward the diff widens it. The parent clamps the
+// widths it receives through `onResize`.
+function SidebarResizeHandle({
+  label,
+  side,
+  width,
+  minWidth,
+  maxWidth,
+  defaultWidth,
+  onResize,
+}: {
+  label: string;
+  side: 'left' | 'right';
+  width: number;
+  minWidth: number;
+  maxWidth: number;
+  defaultWidth: number;
+  onResize: (width: number) => void;
+}) {
+  const [isResizing, setIsResizing] = useState(false);
+  const startRef = useRef<{ clientX: number; width: number } | null>(null);
+  const direction = side === 'left' ? 1 : -1;
+
+  useEffect(() => {
+    if (!isResizing) return undefined;
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+    };
+  }, [isResizing]);
+
+  const handlePointerEnd = (event: React.PointerEvent<HTMLDivElement>) => {
+    startRef.current = null;
+    setIsResizing(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  return (
+    <div
+      role="separator"
+      aria-label={label}
+      aria-orientation="vertical"
+      aria-valuemin={minWidth}
+      aria-valuemax={maxWidth}
+      aria-valuenow={Math.round(width)}
+      tabIndex={0}
+      title="Drag to resize · Double-click to reset"
+      className={`group relative z-20 w-px shrink-0 touch-none cursor-col-resize bg-border outline-none transition-colors after:absolute after:inset-y-0 after:-left-1 after:w-[9px] hover:bg-accent/60 focus-visible:bg-accent ${isResizing ? 'bg-accent' : ''}`}
+      onDoubleClick={() => onResize(defaultWidth)}
+      onKeyDown={(event) => {
+        let nextWidth: number | null = null;
+        if (event.key === 'ArrowRight') nextWidth = width + 16 * direction;
+        if (event.key === 'ArrowLeft') nextWidth = width - 16 * direction;
+        if (event.key === 'Home') nextWidth = minWidth;
+        if (event.key === 'End') nextWidth = maxWidth;
+        if (nextWidth === null) return;
+        event.preventDefault();
+        onResize(nextWidth);
+      }}
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        startRef.current = { clientX: event.clientX, width };
+        setIsResizing(true);
+      }}
+      onPointerMove={(event) => {
+        const start = startRef.current;
+        if (!start) return;
+        onResize(start.width + (event.clientX - start.clientX) * direction);
+      }}
+      onPointerUp={handlePointerEnd}
+      onPointerCancel={handlePointerEnd}
+    >
+      <span
+        aria-hidden="true"
+        className={`pointer-events-none absolute top-1/2 left-1/2 h-9 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent transition-opacity ${isResizing ? 'opacity-100' : 'opacity-0 group-hover:opacity-70 group-focus-visible:opacity-100'}`}
+      />
+    </div>
+  );
+}
+
+type StackSidebarProps = {
+  width: number;
+  branches: StackBranch[];
+  workingStats: WorkingStats | null;
+  selection: DiffSelection | null;
+  isStackLoading: boolean;
+  githubInfo: Record<string, GitHubBranchInfo>;
+  onSelect: (sel: DiffSelection) => void;
+};
+
+// Persistent stack navigator on the left of the diff. Shows the stack holding
+// the viewed branch (falling back to the checked-out one) as a `sc ls`-style
+// rail; every other stack folds away under "Other stacks". Names drop their
+// date prefix; each row shows its commit, commit count and diff stats.
+function StackSidebar({
+  width,
+  branches,
+  workingStats,
+  selection,
+  isStackLoading,
+  githubInfo,
+  onSelect,
+}: StackSidebarProps) {
+  const [showOtherStacks, setShowOtherStacks] = useState(false);
+  const selectedRef = useRef<HTMLDivElement>(null);
+  const groups = useMemo(() => groupStacks(branches), [branches]);
+  const trunkName = useMemo(() => findTrunkName(branches), [branches]);
+
+  const selectedName = selection?.type === 'branch' ? selection.name : null;
+  const focusIndex = Math.max(
+    0,
+    groups.findIndex((g) => g.branches.some((b) => b.name === selectedName)),
+  );
+  const focusGroup = groups[focusIndex];
+  const otherGroups = groups.filter((_, i) => i !== focusIndex);
+  const otherBranchCount = otherGroups.reduce((n, g) => n + g.branches.length, 0);
+
+  useEffect(() => {
+    selectedRef.current?.scrollIntoView({ block: 'nearest' });
+  }, [selectedName]);
+
+  const workingSelected = selection?.type === 'working';
+  const hasWorkingChanges = workingStats != null && workingStats.files > 0;
+
+  const renderRail = (group: StackBranch[], showTrunk: boolean) => (
+    <div className="flex flex-col">
+      {showTrunk && trunkName && (
+        <div className="relative mx-2 flex items-center gap-2 py-[5px] pl-7 pr-2.5 text-text-secondary">
+          <span aria-hidden className="absolute left-[5px] top-[8.5px] text-text-muted"><GitBranchIcon /></span>
+          <span aria-hidden className="pointer-events-none absolute left-[10.5px] top-[24px] bottom-0 w-px bg-guide" />
+          <span className="min-w-0 truncate text-[0.8rem] font-semibold leading-5">{trunkName}</span>
+          <span className="font-mono text-[0.58rem] font-medium uppercase tracking-[0.05em] text-text-secondary bg-surface-hover border border-border px-[5px] py-px rounded-full shrink-0 leading-[1.5]">
+            trunk
+          </span>
+        </div>
+      )}
+      {group.map((branch, i) => {
+        const selected = branch.name === selectedName;
+        const gh = githubInfo[branch.name];
+        const prTone =
+          gh?.prState === 'merged'
+            ? 'text-purple-400'
+            : gh?.prIsDraft
+              ? 'text-text-muted'
+              : 'text-text-secondary';
+        const prLabel =
+          gh?.prState === 'merged' ? 'merged' : gh?.prIsDraft ? 'draft' : 'open';
+        const railAbove = i > 0 || (showTrunk && trunkName != null);
+        const railBelow = i < group.length - 1;
+        return (
+          <div
+            key={branch.name}
+            ref={selected ? selectedRef : undefined}
+            className={`group relative mx-2 flex items-start rounded-md transition-colors duration-100 ${selected ? 'bg-accent-bg' : 'hover:bg-surface-hover'}`}
+          >
+            {railAbove && (
+              <span aria-hidden className="pointer-events-none absolute left-[10.5px] top-0 h-[11px] w-px bg-guide" />
+            )}
+            {railBelow && (
+              <span aria-hidden className="pointer-events-none absolute left-[10.5px] top-[23px] bottom-0 w-px bg-guide" />
+            )}
+            <span aria-hidden className={branch.isCurrent ? 'stack-node stack-node-current' : 'stack-node'} />
+            <button
+              type="button"
+              aria-current={selected ? 'true' : undefined}
+              title={branch.isCurrent ? `${branch.name} (checked out)` : branch.name}
+              className="min-w-0 flex-1 appearance-none rounded-md border-none bg-transparent py-[7px] pl-7 pr-1 text-left cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+              onClick={() => onSelect({ type: 'branch', name: branch.name })}
+            >
+              <span
+                className={`block truncate text-[0.84rem] leading-5 ${selected ? 'font-semibold text-text-primary' : 'font-medium text-text-secondary group-hover:text-text-primary'}`}
+              >
+                {stripDatePrefix(branch.name)}
+              </span>
+              <span
+                className={`mt-0.5 block truncate font-mono text-[0.63rem] leading-4 ${selected ? 'text-text-secondary' : 'text-text-muted'}`}
+              >
+                {branch.commitShort}
+                {branch.commitCount > 0 && (
+                  <> &middot; {branch.commitCount} commit{branch.commitCount === 1 ? '' : 's'}</>
+                )}
+                {branch.diffStats && (
+                  <>
+                    {' '}&middot;{' '}
+                    <span className="text-stat-add">+{branch.diffStats.additions}</span>{' '}
+                    <span className="text-stat-del">&minus;{branch.diffStats.deletions}</span>
+                  </>
+                )}
+              </span>
+            </button>
+            {(gh?.prNumber != null || gh?.checkStatus != null) && (
+              <span className="flex shrink-0 items-center gap-1.5 pt-[9px] pr-2.5 pl-1">
+                {gh?.prNumber != null && gh.prUrl && (
+                  <a
+                    href={gh.prUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title={`PR #${gh.prNumber} (${prLabel})`}
+                    className={`font-mono text-[0.62rem] leading-4 no-underline hover:underline ${prTone}`}
+                  >
+                    #{gh.prNumber}
+                  </a>
+                )}
+                {gh?.checkStatus != null && (
+                  <span
+                    role="img"
+                    aria-label={`Checks ${gh.checkStatus}`}
+                    title={`CI: ${gh.checkStatus}`}
+                    className={`size-1.5 shrink-0 rounded-full ${
+                      gh.checkStatus === 'success'
+                        ? 'bg-green-400'
+                        : gh.checkStatus === 'failure'
+                          ? 'bg-red-400'
+                          : 'bg-yellow-400 animate-pulse'
+                    }`}
+                  />
+                )}
+              </span>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  return (
+    <nav
+      aria-label="Stack"
+      data-testid="stack-sidebar"
+      className="hidden shrink-0 flex-col overflow-hidden md:flex"
+      style={{ width: `${width}px` }}
+    >
+      <div className="min-h-0 flex-1 overflow-y-auto py-2">
+        <button
+          type="button"
+          aria-current={workingSelected ? 'true' : undefined}
+          className={`mx-2 mb-2 flex w-[calc(100%-1rem)] appearance-none items-center gap-2 rounded-md border border-dashed px-2.5 py-[7px] text-left cursor-pointer transition-colors duration-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40 ${workingSelected ? 'border-accent/40 bg-accent-bg' : 'border-border-strong bg-transparent hover:bg-surface-hover'}`}
+          onClick={() => onSelect({ type: 'working' })}
+        >
+          <span
+            aria-hidden
+            className={`size-[7px] shrink-0 rounded-full ${hasWorkingChanges ? 'bg-warning' : 'bg-guide'}`}
+          />
+          <span className="text-[0.82rem] font-semibold text-text-primary whitespace-nowrap">Working changes</span>
+          {workingStats != null && (
+            <span className="ml-auto font-mono text-[0.62rem] tabular-nums whitespace-nowrap">
+              {hasWorkingChanges ? (
+                <>
+                  <span className="text-stat-add">+{workingStats.additions}</span>{' '}
+                  <span className="text-stat-del">&minus;{workingStats.deletions}</span>
+                </>
+              ) : (
+                <span className="text-text-muted">clean</span>
+              )}
+            </span>
+          )}
+        </button>
+
+        {isStackLoading && branches.length === 0 ? (
+          <p className="mx-4 my-2 text-text-muted text-[0.78rem]">Loading stack…</p>
+        ) : null}
+        {!isStackLoading && branches.length === 0 ? (
+          <p className="mx-4 my-2 text-text-muted text-[0.78rem]">No tracked branches yet.</p>
+        ) : null}
+
+        {focusGroup && renderRail(focusGroup.branches, true)}
+
+        {otherGroups.length > 0 && (
+          <>
+            <div className="mx-4 mt-3 mb-1.5 border-t border-border" />
+            <button
+              type="button"
+              aria-expanded={showOtherStacks}
+              className="mx-2 flex w-[calc(100%-1rem)] appearance-none items-center gap-2 rounded-md border-none bg-transparent px-2 py-1.5 text-left text-text-secondary cursor-pointer hover:bg-surface-hover hover:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/40"
+              onClick={() => setShowOtherStacks((v) => !v)}
+            >
+              <span className={`text-text-muted transition-transform duration-150 ${showOtherStacks ? '' : '-rotate-90'}`}>
+                <ChevronDownIcon />
+              </span>
+              <span className="text-[0.78rem] font-semibold">Other stacks</span>
+              <span className="ml-auto font-mono text-[0.62rem] tabular-nums text-text-muted">
+                {otherGroups.length > 1 && <>{otherGroups.length} stacks &middot; </>}
+                {otherBranchCount} branch{otherBranchCount === 1 ? '' : 'es'}
+              </span>
+            </button>
+            {showOtherStacks &&
+              otherGroups.map((g) => (
+                <div key={g.branches[0]!.name} className="mt-1.5">
+                  {renderRail(g.branches, false)}
+                </div>
+              ))}
+          </>
+        )}
+      </div>
+    </nav>
+  );
+}
+
 function StackList({
   rows,
   trunkName,
@@ -3737,7 +4075,6 @@ function StackList({
 }
 
 type DiffSwitcherProps = {
-  diff: DiffResponse | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   selection: DiffSelection | null;
@@ -3747,6 +4084,8 @@ type DiffSwitcherProps = {
   isGithubInfoLoading: boolean;
   githubInfo: Record<string, GitHubBranchInfo>;
   onSelect: (sel: DiffSelection) => void;
+  /** Show a "Jump to branch…" button; otherwise the palette opens only via ⌘K. */
+  showTrigger: boolean;
 };
 
 const IS_MAC = typeof navigator !== 'undefined' && navigator.platform.includes('Mac');
@@ -3754,7 +4093,6 @@ const IS_MAC = typeof navigator !== 'undefined' && navigator.platform.includes('
 const KBD_CLS = 'font-mono text-[0.58rem] bg-surface-hover border border-border rounded px-1 py-px leading-none';
 
 function DiffSwitcher({
-  diff,
   open,
   onOpenChange,
   selection,
@@ -3764,6 +4102,7 @@ function DiffSwitcher({
   isGithubInfoLoading,
   githubInfo,
   onSelect,
+  showTrigger,
 }: DiffSwitcherProps) {
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -3773,37 +4112,9 @@ function DiffSwitcher({
     if (!open) setQuery('');
   }, [open]);
 
-  const isWorking = selection?.type === 'working';
-  const targetMain = isWorking
-    ? 'Uncommitted changes'
-    : diff
-      ? diff.branch
-      : selection?.type === 'branch'
-        ? selection.name
-        : 'Select a branch';
-  const targetParent = !isWorking && diff ? diff.parent : null;
-  const chevronCls = `text-text-muted shrink-0 transition-transform duration-150 ${open ? 'rotate-180' : ''}`;
-
-  // Group the pre-ordered branch list into stacks — a stack root is a branch
-  // whose parent is not itself tracked (it hangs off the trunk). Then order
-  // stacks: the one holding the checked-out branch first, the rest by most
-  // recent commit. Stale stack roots carry a last-commit date label.
+  // Stale stack roots carry a last-commit date label.
   const orderedRows = useMemo<StackRow[]>(() => {
-    const tracked = new Set(branches.map((b) => b.name));
-    const groups: StackBranch[][] = [];
-    for (const b of branches) {
-      if (!tracked.has(b.parent) || groups.length === 0) groups.push([]);
-      groups[groups.length - 1]!.push(b);
-    }
-    const meta = groups.map((group) => ({
-      group,
-      isActive: group.some((b) => b.isCurrent),
-      lastTime: Math.max(0, ...group.map((b) => b.commitTime ?? 0)),
-    }));
-    meta.sort(
-      (a, b) => Number(b.isActive) - Number(a.isActive) || b.lastTime - a.lastTime,
-    );
-    return meta.flatMap(({ group, isActive, lastTime }, stackIndex) =>
+    return groupStacks(branches).flatMap(({ branches: group, isActive, lastTime }, stackIndex) =>
       group.map((branch, indexInGroup) => ({
         branch,
         stackIndex,
@@ -3818,13 +4129,7 @@ function DiffSwitcher({
     );
   }, [branches]);
 
-  const trunkName = useMemo(() => {
-    const tracked = new Set(branches.map((b) => b.name));
-    const roots = branches.filter((b) => !tracked.has(b.parent));
-    if (roots.length === 0) return null;
-    const parent = roots[0]!.parent;
-    return roots.every((b) => b.parent === parent) ? parent : null;
-  }, [branches]);
+  const trunkName = useMemo(() => findTrunkName(branches), [branches]);
 
   const q = query.trim().toLowerCase();
   const tokens = q === '' ? [] : q.split(/\s+/);
@@ -3906,96 +4211,87 @@ function DiffSwitcher({
     }
   };
 
+  // A ⌘K command palette: centered over the page, opened by the shortcut (see
+  // App) or, where the stack sidebar is hidden, the header button.
   return (
-    <Popover.Root open={open} onOpenChange={onOpenChange}>
-      <Popover.Trigger
-        className="group flex items-center min-w-0 max-w-full appearance-none border-none bg-transparent p-0 m-0 text-left cursor-pointer rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30"
-        aria-label="Switch diff"
-      >
-        <span className="inline-flex items-center gap-2.5 border border-border rounded-md bg-surface-hover px-2.5 py-1.5 min-w-0 max-w-full group-hover:bg-surface-active group-hover:border-border-strong transition-colors duration-100">
-          <span className="text-accent shrink-0"><GitBranchIcon /></span>
-          <span className="flex flex-col items-start min-w-0 leading-tight">
-            <span className="font-mono text-[0.56rem] font-medium uppercase tracking-[0.12em] text-text-muted">
-              Viewing diff
-            </span>
-            <span className="flex items-center min-w-0 max-w-full text-[0.92rem] font-bold text-text-primary truncate">
-              {targetMain}
-              {targetParent && (
-                <>
-                  <span className="text-text-muted font-normal mx-1">&rarr;</span>
-                  <span className="text-text-secondary font-semibold">{targetParent}</span>
-                </>
-              )}
-            </span>
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      {showTrigger && (
+        <Dialog.Trigger
+          className="group flex shrink-0 items-center appearance-none border-none bg-transparent p-0 m-0 text-left cursor-pointer rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30"
+          aria-label="Switch diff"
+        >
+          <span className={`inline-flex h-8 w-[15rem] max-w-[40vw] items-center gap-2 rounded-md border px-2.5 transition-colors duration-100 group-hover:border-border-strong group-hover:bg-surface-active group-hover:text-text-secondary ${open ? 'border-border-strong bg-surface-active text-text-secondary' : 'border-border bg-surface-hover text-text-muted'}`}>
+            <SearchIcon />
+            <span className="min-w-0 flex-1 truncate text-[0.8rem]">Jump to branch…</span>
+            <kbd className="hidden sm:inline-flex items-center gap-0.5 font-mono text-[0.58rem] font-medium text-text-muted bg-surface border border-border rounded px-1 py-px leading-none shrink-0">
+              {IS_MAC ? '⌘' : 'Ctrl'}K
+            </kbd>
           </span>
-          <kbd className="hidden sm:inline-flex items-center gap-0.5 ml-1 font-mono text-[0.58rem] font-medium text-text-muted bg-surface border border-border rounded px-1 py-px leading-none shrink-0">
-            {IS_MAC ? '⌘' : 'Ctrl'}K
-          </kbd>
-          <span className={`${chevronCls} ml-0.5`}><ChevronDownIcon /></span>
-        </span>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Positioner side="bottom" align="start" sideOffset={10} className="z-50">
-          <Popover.Popup
-            initialFocus={inputRef}
-            className="w-[440px] max-w-[calc(100vw-2rem)] max-h-[min(560px,70vh)] flex flex-col bg-surface border border-border rounded-lg shadow-lg overflow-hidden outline-none origin-[var(--transform-origin)] transition-[opacity,transform] duration-150 data-[starting-style]:opacity-0 data-[starting-style]:scale-[0.98] data-[ending-style]:opacity-0 data-[ending-style]:scale-[0.98]"
-          >
-            <div className="px-3.5 py-2.5 border-b border-border flex items-center justify-between shrink-0">
-              <span className="font-mono text-[0.62rem] font-medium uppercase tracking-[0.13em] text-accent">
-                Switch diff
-              </span>
-              {branches.length > 0 && (
-                <span className="font-mono text-[0.6rem] text-text-muted bg-surface-hover border border-border px-2 py-[2px] rounded-full">
-                  {isFiltering ? `${filteredRows.length}/${branches.length}` : branches.length} branch{branches.length === 1 ? '' : 'es'}
-                </span>
-              )}
-            </div>
+        </Dialog.Trigger>
+      )}
+      <Dialog.Portal>
+        <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/20 transition-opacity duration-150 data-[starting-style]:opacity-0 data-[ending-style]:opacity-0" />
+        <Dialog.Popup
+          aria-label="Switch diff"
+          initialFocus={inputRef}
+          className="fixed top-[12vh] left-1/2 z-50 w-[560px] max-w-[calc(100vw-2rem)] max-h-[min(600px,76vh)] -translate-x-1/2 flex flex-col bg-surface border border-border rounded-lg shadow-2xl overflow-hidden outline-none transition-[opacity,transform] duration-150 data-[starting-style]:opacity-0 data-[starting-style]:scale-[0.98] data-[ending-style]:opacity-0 data-[ending-style]:scale-[0.98]"
+        >
+          <div className="px-3.5 py-2.5 border-b border-border flex items-center justify-between shrink-0">
+            <span className="font-mono text-[0.62rem] font-medium uppercase tracking-[0.13em] text-accent">
+              Switch diff
+            </span>
             {branches.length > 0 && (
-              <div className="px-2.5 py-2 border-b border-border shrink-0">
-                <input
-                  ref={inputRef}
-                  type="text"
-                  role="combobox"
-                  aria-expanded="true"
-                  aria-controls="sc-diff-listbox"
-                  aria-activedescendant={activeId}
-                  autoComplete="off"
-                  className="w-full appearance-none border border-border rounded-md bg-surface-hover text-text-primary font-mono text-[0.72rem] px-2.5 py-1.5 outline-none transition-[border-color] duration-150 ease-in-out focus:border-accent/40 focus:ring-1 focus:ring-accent/10 placeholder:text-text-muted"
-                  placeholder="Filter branches…"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={handleInputKeyDown}
-                />
-              </div>
+              <span className="font-mono text-[0.6rem] text-text-muted bg-surface-hover border border-border px-2 py-[2px] rounded-full">
+                {isFiltering ? `${filteredRows.length}/${branches.length}` : branches.length} branch{branches.length === 1 ? '' : 'es'}
+              </span>
             )}
-            <StackList
-              rows={filteredRows}
-              trunkName={trunkName}
-              workingStats={workingStats}
-              selection={selection}
-              isStackLoading={isStackLoading}
-              isGithubInfoLoading={isGithubInfoLoading}
-              githubInfo={githubInfo}
-              onSelect={onSelect}
-              isFiltering={isFiltering}
-              workingVisible={workingVisible}
-              activeKey={activeKey}
-              onActivateKey={activateKey}
-            />
-            <div className="shrink-0 border-t border-border px-3.5 py-[6px] flex items-center gap-3.5 font-mono text-[0.6rem] text-text-muted">
-              <span className="flex items-center gap-1"><kbd className={KBD_CLS}>↑↓</kbd> navigate</span>
-              <span className="flex items-center gap-1"><kbd className={KBD_CLS}>↵</kbd> select</span>
-              <span className="flex items-center gap-1"><kbd className={KBD_CLS}>esc</kbd> clear &middot; close</span>
+          </div>
+          {branches.length > 0 && (
+            <div className="px-2.5 py-2 border-b border-border shrink-0">
+              <input
+                ref={inputRef}
+                type="text"
+                role="combobox"
+                aria-expanded="true"
+                aria-controls="sc-diff-listbox"
+                aria-activedescendant={activeId}
+                autoComplete="off"
+                className="w-full appearance-none border border-border rounded-md bg-surface-hover text-text-primary font-mono text-[0.72rem] px-2.5 py-1.5 outline-none transition-[border-color] duration-150 ease-in-out focus:border-accent/40 focus:ring-1 focus:ring-accent/10 placeholder:text-text-muted"
+                placeholder="Filter branches…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleInputKeyDown}
+              />
             </div>
-          </Popover.Popup>
-        </Popover.Positioner>
-      </Popover.Portal>
-    </Popover.Root>
+          )}
+          <StackList
+            rows={filteredRows}
+            trunkName={trunkName}
+            workingStats={workingStats}
+            selection={selection}
+            isStackLoading={isStackLoading}
+            isGithubInfoLoading={isGithubInfoLoading}
+            githubInfo={githubInfo}
+            onSelect={onSelect}
+            isFiltering={isFiltering}
+            workingVisible={workingVisible}
+            activeKey={activeKey}
+            onActivateKey={activateKey}
+          />
+          <div className="shrink-0 border-t border-border px-3.5 py-[6px] flex items-center gap-3.5 font-mono text-[0.6rem] text-text-muted">
+            <span className="flex items-center gap-1"><kbd className={KBD_CLS}>↑↓</kbd> navigate</span>
+            <span className="flex items-center gap-1"><kbd className={KBD_CLS}>↵</kbd> select</span>
+            <span className="flex items-center gap-1"><kbd className={KBD_CLS}>esc</kbd> clear &middot; close</span>
+          </div>
+        </Dialog.Popup>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
 export default function App() {
-  const isWideScreen = useMediaQuery('(min-width: 961px)');
+  const isWideScreen = useMediaQuery(`(min-width: ${DIFF_SIDEBAR_MIN_VIEWPORT}px)`);
+  const isStackSidebarVisible = useMediaQuery(`(min-width: ${STACK_SIDEBAR_MIN_VIEWPORT}px)`);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [stack, setStack] = useState<StackResponse | null>(null);
   const [selection, setSelectionRaw] = useState<DiffSelection | null>(
@@ -4016,11 +4312,22 @@ export default function App() {
   const [isPersistedUIStateLoaded, setIsPersistedUIStateLoaded] = useState(false);
   const [persistedViewedFiles, setPersistedViewedFiles] = useState<Record<string, Record<string, string>>>({});
   const [fileFilter, setFileFilter] = useState('');
-  const [diffSidebarWidth, setDiffSidebarWidth] = useState(loadDiffSidebarWidth);
-  const [isDiffSidebarResizing, setIsDiffSidebarResizing] = useState(false);
+  // The stack sidebar takes its stored width first; the files sidebar gets
+  // what's left of the viewport.
+  const [stackSidebarWidth, setStackSidebarWidth] = useState(() =>
+    clampStackSidebarWidth(
+      loadStoredWidth(STACK_SIDEBAR_STORAGE_KEY, DEFAULT_STACK_SIDEBAR_WIDTH),
+      MIN_DIFF_SIDEBAR_WIDTH,
+    ),
+  );
+  const [diffSidebarWidth, setDiffSidebarWidth] = useState(() =>
+    clampDiffSidebarWidth(
+      loadStoredWidth(DIFF_SIDEBAR_STORAGE_KEY, DEFAULT_DIFF_SIDEBAR_WIDTH),
+      stackSidebarWidth,
+    ),
+  );
   const [activeFileIndex, setActiveFileIndex] = useState<number | null>(null);
   const diffContentRef = useRef<HTMLDivElement>(null);
-  const diffSidebarResizeStartRef = useRef<{ clientX: number; width: number } | null>(null);
   const fileRefs = useRef<Record<number, HTMLDivElement | null>>({});
   const fileScrollCleanupRef = useRef<(() => void) | null>(null);
   const scrollSpyFrameRef = useRef<number | null>(null);
@@ -4096,58 +4403,26 @@ export default function App() {
   }, [diffSidebarWidth]);
 
   useEffect(() => {
+    localStorage.setItem(STACK_SIDEBAR_STORAGE_KEY, String(Math.round(stackSidebarWidth)));
+  }, [stackSidebarWidth]);
+
+  useEffect(() => {
     const handleWindowResize = () => {
-      setDiffSidebarWidth((width) => clampDiffSidebarWidth(width));
+      // Shrink the files sidebar first, then fit the stack sidebar beside it.
+      const nextDiffWidth = clampDiffSidebarWidth(diffSidebarWidth, stackSidebarWidth);
+      setDiffSidebarWidth(nextDiffWidth);
+      setStackSidebarWidth(clampStackSidebarWidth(stackSidebarWidth, nextDiffWidth));
     };
     window.addEventListener('resize', handleWindowResize);
     return () => window.removeEventListener('resize', handleWindowResize);
-  }, []);
+  }, [diffSidebarWidth, stackSidebarWidth]);
 
-  useEffect(() => {
-    if (!isDiffSidebarResizing) return undefined;
-    const previousCursor = document.body.style.cursor;
-    const previousUserSelect = document.body.style.userSelect;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-    return () => {
-      document.body.style.cursor = previousCursor;
-      document.body.style.userSelect = previousUserSelect;
-    };
-  }, [isDiffSidebarResizing]);
+  const resizeDiffSidebar = useCallback((width: number) => {
+    setDiffSidebarWidth(clampDiffSidebarWidth(width, stackSidebarWidth));
+  }, [stackSidebarWidth]);
 
-  const handleDiffSidebarResizeStart = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.currentTarget.setPointerCapture(event.pointerId);
-    diffSidebarResizeStartRef.current = {
-      clientX: event.clientX,
-      width: diffSidebarWidth,
-    };
-    setIsDiffSidebarResizing(true);
-  }, [diffSidebarWidth]);
-
-  const handleDiffSidebarResizeMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    const start = diffSidebarResizeStartRef.current;
-    if (!start) return;
-    setDiffSidebarWidth(clampDiffSidebarWidth(start.width + event.clientX - start.clientX));
-  }, []);
-
-  const handleDiffSidebarResizeEnd = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    diffSidebarResizeStartRef.current = null;
-    setIsDiffSidebarResizing(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  }, []);
-
-  const handleDiffSidebarResizeKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
-    let nextWidth: number | null = null;
-    if (event.key === 'ArrowLeft') nextWidth = diffSidebarWidth - 16;
-    if (event.key === 'ArrowRight') nextWidth = diffSidebarWidth + 16;
-    if (event.key === 'Home') nextWidth = MIN_DIFF_SIDEBAR_WIDTH;
-    if (event.key === 'End') nextWidth = maxDiffSidebarWidth();
-    if (nextWidth === null) return;
-    event.preventDefault();
-    setDiffSidebarWidth(clampDiffSidebarWidth(nextWidth));
+  const resizeStackSidebar = useCallback((width: number) => {
+    setStackSidebarWidth(clampStackSidebarWidth(width, diffSidebarWidth));
   }, [diffSidebarWidth]);
 
   const expandLargeFile = useCallback((path: string) => {
@@ -5024,6 +5299,48 @@ export default function App() {
     selection?.type === 'branch'
       ? branches.find((b) => b.name === selection.name) ?? null
       : null;
+  const selectedParent =
+    selection?.type === 'branch'
+      ? diff?.branch === selection.name
+        ? diff.parent
+        : selectedBranch?.parent ?? null
+      : null;
+  const headerTitle =
+    selection?.type === 'working'
+      ? 'Uncommitted changes'
+      : selection?.type === 'branch'
+        ? selectedBranch?.commitSubject || selection.name
+        : 'Select a branch';
+  const headerMeta =
+    selection?.type === 'working'
+      ? 'git diff'
+      : selection?.type === 'branch'
+        ? [
+            selectedBranch?.commitShort,
+            selectedParent ? `${selection.name} → ${selectedParent}` : selection.name,
+            selectedBranch && selectedBranch.commitCount > 1
+              ? `${selectedBranch.commitCount} commits`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(' · ')
+        : null;
+  // One ⌘K palette instance. Its header button only shows where the stack
+  // sidebar is hidden (small screens, which may have no keyboard).
+  const diffSwitcher = (
+    <DiffSwitcher
+      open={switcherOpen}
+      onOpenChange={setSwitcherOpen}
+      selection={selection}
+      branches={branches}
+      workingStats={stack?.workingStats ?? null}
+      isStackLoading={isStackLoading}
+      isGithubInfoLoading={isGithubInfoLoading}
+      githubInfo={githubInfo}
+      onSelect={(sel) => { setSelection(sel); setSwitcherOpen(false); }}
+      showTrigger={!isStackSidebarVisible && !isRecapRoute}
+    />
+  );
 
   return (
     <WorkerPoolContextProvider
@@ -5045,7 +5362,7 @@ export default function App() {
           onDiffStyleChange={setAndPersistDiffStyle}
         />
         <header className="px-[1.15rem] h-[60px] shrink-0 border-b border-border flex justify-between items-center gap-4">
-          <div className="flex items-center gap-2.5 min-w-0 max-w-[58vw] shrink-0 xl:max-w-none">
+          <div className="flex items-center gap-2.5 min-w-0 flex-[1_1_auto]">
             <img
               src="/favicon.svg"
               alt="Shortcake"
@@ -5066,31 +5383,22 @@ export default function App() {
                   </span>
                 </span>
               </div>
-            ) : (
-              <DiffSwitcher
-                diff={diff}
-                open={switcherOpen}
-                onOpenChange={setSwitcherOpen}
-                selection={selection}
-                branches={branches}
-                workingStats={stack?.workingStats ?? null}
-                isStackLoading={isStackLoading}
-                isGithubInfoLoading={isGithubInfoLoading}
-                githubInfo={githubInfo}
-                onSelect={(sel) => { setSelection(sel); setSwitcherOpen(false); }}
-              />
-            )}
-            {!isRecapRoute && selectedBranch && (
-              <div className="hidden lg:flex min-w-0 flex-col justify-center leading-tight">
+            ) : null}
+            {diffSwitcher}
+            {!isRecapRoute && (
+              <div className="flex min-w-0 flex-col justify-center leading-tight">
                 <span
-                  className="truncate text-[0.8rem] text-text-secondary"
-                  title={selectedBranch.commitSubject}
+                  className="truncate text-[0.88rem] font-semibold text-text-primary"
+                  title={headerTitle}
                 >
-                  {selectedBranch.commitSubject}
+                  {headerTitle}
                 </span>
-                {selectedBranch.commitCount > 1 && (
-                  <span className="font-mono text-[0.6rem] text-text-muted">
-                    +{selectedBranch.commitCount - 1} more commit{selectedBranch.commitCount > 2 ? 's' : ''}
+                {headerMeta && (
+                  <span
+                    className="truncate font-mono text-[0.62rem] text-text-muted"
+                    title={headerMeta}
+                  >
+                    {headerMeta}
                   </span>
                 )}
               </div>
@@ -5190,189 +5498,200 @@ export default function App() {
           />
         ) : null}
 
-        {!isRecapRoute && error ? (
-          <p className="m-[1.15rem] text-danger text-[0.88rem]">{error}</p>
-        ) : null}
-
-        {!isRecapRoute && isDiffLoading ? (
-          <p className="m-[1.15rem] text-text-muted text-[0.88rem]">Loading diff…</p>
-        ) : null}
-
-        {!isRecapRoute && !isDiffLoading && activePatch !== undefined && activePatch !== null && activePatch.trim() === '' ? (
-          <p className="m-[1.15rem] text-text-muted text-[0.88rem]">
-            {selection?.type === 'working'
-              ? 'No uncommitted changes.'
-              : 'No file differences between this branch and its parent.'}
-          </p>
-        ) : null}
-
-        {!isRecapRoute && !isDiffLoading && activePatch && activePatch.trim() !== '' && diffPatches.length === 0 ? (
-          <p className="m-[1.15rem] text-danger text-[0.88rem]">
-            Could not render this diff patch.
-          </p>
-        ) : null}
-
-        {!isRecapRoute && !isDiffLoading && activePatch && diffPatches.length > 0 && (
+        {!isRecapRoute && (
           <div className="flex flex-1 min-h-0">
-            {isWideScreen && (
-            <>
-            <aside
-              data-testid="diff-sidebar"
-              className="flex shrink-0 flex-col overflow-hidden max-[1100px]:hidden"
-              style={{ width: `${diffSidebarWidth}px` }}
-            >
-              <div className="px-4 py-3 border-b border-border">
-                <div className="flex items-center justify-between">
-                  <span className="text-[0.8rem] font-semibold text-text-primary">
-                    Files changed
-                  </span>
-                  <span className="text-[0.65rem] font-mono tabular-nums text-text-muted bg-surface-hover px-2 py-0.5 rounded-full">
-                    {hasActiveFileFilters ? `${visibleDiffEntries.length}/${fileInfos.length}` : fileInfos.length}
-                  </span>
-                </div>
-                {fileInfos.length > 0 && (
-                  <div className="flex gap-2.5 mt-1.5 text-[0.65rem] font-mono">
-                    <span className="text-stat-add">
-                      +{fileInfos.reduce((s, f) => s + f.additions, 0)}
-                    </span>
-                    <span className="text-stat-del">
-                      -{fileInfos.reduce((s, f) => s + f.deletions, 0)}
-                    </span>
-                  </div>
-                )}
-              </div>
-              <ChangedFilesTree
-                fileInfos={treeFileInfos}
-                fileFilter={fileFilter}
-                activeFileIndex={activeTreeFileIndex === -1 ? null : activeTreeFileIndex}
-                viewedFiles={viewedFiles}
-                resolvedTheme={resolvedTheme}
-                onFilterChange={setFileFilter}
-                onFileClick={handleTreeFileClick}
+            <StackSidebar
+              width={stackSidebarWidth}
+              branches={branches}
+              workingStats={stack?.workingStats ?? null}
+              selection={selection}
+              isStackLoading={isStackLoading}
+              githubInfo={githubInfo}
+              onSelect={setSelection}
+            />
+            {isStackSidebarVisible && (
+              <SidebarResizeHandle
+                label="Resize stack sidebar"
+                side="left"
+                width={stackSidebarWidth}
+                minWidth={MIN_STACK_SIDEBAR_WIDTH}
+                maxWidth={maxStackSidebarWidth(diffSidebarWidth)}
+                defaultWidth={DEFAULT_STACK_SIDEBAR_WIDTH}
+                onResize={resizeStackSidebar}
               />
-            </aside>
-            <div
-              role="separator"
-              aria-label="Resize files sidebar"
-              aria-orientation="vertical"
-              aria-valuemin={MIN_DIFF_SIDEBAR_WIDTH}
-              aria-valuemax={maxDiffSidebarWidth()}
-              aria-valuenow={Math.round(diffSidebarWidth)}
-              tabIndex={0}
-              title="Drag to resize · Double-click to reset"
-              className={`group relative z-20 w-px shrink-0 touch-none cursor-col-resize bg-border outline-none transition-colors after:absolute after:inset-y-0 after:-left-1 after:w-[9px] hover:bg-accent/60 focus-visible:bg-accent max-[1100px]:hidden ${isDiffSidebarResizing ? 'bg-accent' : ''}`}
-              onDoubleClick={() => setDiffSidebarWidth(clampDiffSidebarWidth(DEFAULT_DIFF_SIDEBAR_WIDTH))}
-              onKeyDown={handleDiffSidebarResizeKeyDown}
-              onPointerDown={handleDiffSidebarResizeStart}
-              onPointerMove={handleDiffSidebarResizeMove}
-              onPointerUp={handleDiffSidebarResizeEnd}
-              onPointerCancel={handleDiffSidebarResizeEnd}
-            >
-              <span
-                aria-hidden="true"
-                className={`pointer-events-none absolute top-1/2 left-1/2 h-9 w-[3px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-accent transition-opacity ${isDiffSidebarResizing ? 'opacity-100' : 'opacity-0 group-hover:opacity-70 group-focus-visible:opacity-100'}`}
-              />
-            </div>
-            </>
             )}
+            <div className="flex min-w-0 flex-1 flex-col">
+              {error ? (
+                <p className="m-[1.15rem] text-danger text-[0.88rem]">{error}</p>
+              ) : null}
 
-            <div
-              ref={diffContentRef}
-              className="diff-content flex-1 min-w-0 overflow-auto"
-              data-diff-accent={activeDiffTheme.startsWith('github-') ? 'github' : undefined}
-              onScroll={handleDiffScroll}
-            >
-              {reviewSummaries.size > 0 && (
-                <ReviewSummaryPanel
-                  summaries={reviewSummaries}
-                  fixPrompt={reviewFixPrompt}
-                  onClose={() => { setReviewSummaries(new Map()); setReviewFixPrompt(null); }}
-                />
-              )}
-              {visibleDiffEntries.length === 0 && (
-                <div className="flex min-h-48 flex-col items-center justify-center gap-3 px-6 text-center">
-                  <p className="m-0 font-mono text-[0.78rem] text-text-secondary">
-                    No changed files match these filters.
-                  </p>
-                  <button
-                    type="button"
-                    className="h-7 rounded-md border border-border bg-surface-hover px-3 font-mono text-[0.7rem] text-text-secondary hover:border-border-strong hover:text-text-primary"
-                    onClick={() => {
-                      setFileFilter('');
-                      setHideViewedFiles(false);
-                      setHideDeletedFiles(false);
-                    }}
+              {isDiffLoading ? (
+                <p className="m-[1.15rem] text-text-muted text-[0.88rem]">Loading diff…</p>
+              ) : null}
+
+              {!isDiffLoading && activePatch !== undefined && activePatch !== null && activePatch.trim() === '' ? (
+                <p className="m-[1.15rem] text-text-muted text-[0.88rem]">
+                  {selection?.type === 'working'
+                    ? 'No uncommitted changes.'
+                    : 'No file differences between this branch and its parent.'}
+                </p>
+              ) : null}
+
+              {!isDiffLoading && activePatch && activePatch.trim() !== '' && diffPatches.length === 0 ? (
+                <p className="m-[1.15rem] text-danger text-[0.88rem]">
+                  Could not render this diff patch.
+                </p>
+              ) : null}
+
+              {!isDiffLoading && activePatch && diffPatches.length > 0 && (
+                <div className="flex flex-1 min-h-0">
+                  <div
+                    ref={diffContentRef}
+                    className="diff-content flex-1 min-w-0 overflow-auto"
+                    data-diff-accent={activeDiffTheme.startsWith('github-') ? 'github' : undefined}
+                    onScroll={handleDiffScroll}
                   >
-                    Clear filters
-                  </button>
+                    {reviewSummaries.size > 0 && (
+                      <ReviewSummaryPanel
+                        summaries={reviewSummaries}
+                        fixPrompt={reviewFixPrompt}
+                        onClose={() => { setReviewSummaries(new Map()); setReviewFixPrompt(null); }}
+                      />
+                    )}
+                    {visibleDiffEntries.length === 0 && (
+                      <div className="flex min-h-48 flex-col items-center justify-center gap-3 px-6 text-center">
+                        <p className="m-0 font-mono text-[0.78rem] text-text-secondary">
+                          No changed files match these filters.
+                        </p>
+                        <button
+                          type="button"
+                          className="h-7 rounded-md border border-border bg-surface-hover px-3 font-mono text-[0.7rem] text-text-secondary hover:border-border-strong hover:text-text-primary"
+                          onClick={() => {
+                            setFileFilter('');
+                            setHideViewedFiles(false);
+                            setHideDeletedFiles(false);
+                          }}
+                        >
+                          Clear filters
+                        </button>
+                      </div>
+                    )}
+                    {visibleDiffEntries.map(({ patch, info, index }) => {
+                      const isViewed = viewedFiles.has(info.path);
+                      const isCollapsed = manuallyCollapsedFiles.has(info.path) ||
+                        (isViewed && !expandedViewedFiles.has(info.path));
+                      return (
+                        <div
+                          key={`${selection?.type === 'working' ? 'working' : diff?.branch}-${info.path}`}
+                          className="diff-file-group"
+                          data-file-path={info.path}
+                          data-file-index={index}
+                          data-file-collapsed={isCollapsed ? 'true' : 'false'}
+                          ref={(el) => { fileRefs.current[index] = el; }}
+                        >
+                          <div className="diff-file-card">
+                          {isCollapsed ? (
+                            <DiffFileSection
+                              patch={patch}
+                              fileInfo={info}
+                              fileComments={commentsByFile.get(info.path) ?? EMPTY_COMMENTS}
+                              activeInput={activeInput}
+                              editingComment={editingComment}
+                              onRangeSelected={handleRangeSelected}
+                              onStartEdit={handleStartEdit}
+                              onAddComment={handleAddComment}
+                              onUpdateComment={handleUpdateComment}
+                              onDeleteComment={handleDeleteComment}
+                              onCancelInput={handleCancelInput}
+                              diffStyle={diffStyle}
+                              resolvedTheme={resolvedTheme}
+                              diffTheme={activeDiffTheme}
+                              isCollapsed
+                              isViewed={isViewed}
+                              onToggleCollapsed={toggleFileCollapsed}
+                              onToggleViewed={toggleViewed}
+                            />
+                          ) : info.additions + info.deletions >= LARGE_FILE_THRESHOLD && !expandedLargeFiles.has(info.path) ? (
+                            <LargeFilePlaceholder fileInfo={info} onShow={() => expandLargeFile(info.path)} onToggleViewed={toggleViewed} />
+                          ) : (
+                            <LazyDiffFileSection index={index} fileInfo={info} renderContent={() => (
+                              <DiffFileSection
+                                patch={patch}
+                                fileInfo={info}
+                                fileComments={commentsByFile.get(info.path) ?? EMPTY_COMMENTS}
+                                activeInput={activeInput}
+                                editingComment={editingComment}
+                                onRangeSelected={handleRangeSelected}
+                                onStartEdit={handleStartEdit}
+                                onAddComment={handleAddComment}
+                                onUpdateComment={handleUpdateComment}
+                                onDeleteComment={handleDeleteComment}
+                                onCancelInput={handleCancelInput}
+                                diffStyle={diffStyle}
+                                resolvedTheme={resolvedTheme}
+                                diffTheme={activeDiffTheme}
+                                  isCollapsed={false}
+                                isViewed={isViewed}
+                                onToggleCollapsed={toggleFileCollapsed}
+                                onToggleViewed={toggleViewed}
+                              />
+                            )} />
+                          )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {isWideScreen && (
+                    <>
+                    <SidebarResizeHandle
+                      label="Resize files sidebar"
+                      side="right"
+                      width={diffSidebarWidth}
+                      minWidth={MIN_DIFF_SIDEBAR_WIDTH}
+                      maxWidth={maxDiffSidebarWidth(stackSidebarWidth)}
+                      defaultWidth={DEFAULT_DIFF_SIDEBAR_WIDTH}
+                      onResize={resizeDiffSidebar}
+                    />
+                    <aside
+                      data-testid="diff-sidebar"
+                      className="flex shrink-0 flex-col overflow-hidden"
+                      style={{ width: `${diffSidebarWidth}px` }}
+                    >
+                      <div className="px-4 py-3 border-b border-border">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[0.8rem] font-semibold text-text-primary">
+                            Files changed
+                          </span>
+                          <span className="text-[0.65rem] font-mono tabular-nums text-text-muted bg-surface-hover px-2 py-0.5 rounded-full">
+                            {hasActiveFileFilters ? `${visibleDiffEntries.length}/${fileInfos.length}` : fileInfos.length}
+                          </span>
+                        </div>
+                        {fileInfos.length > 0 && (
+                          <div className="flex gap-2.5 mt-1.5 text-[0.65rem] font-mono">
+                            <span className="text-stat-add">
+                              +{fileInfos.reduce((s, f) => s + f.additions, 0)}
+                            </span>
+                            <span className="text-stat-del">
+                              -{fileInfos.reduce((s, f) => s + f.deletions, 0)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <ChangedFilesTree
+                        fileInfos={treeFileInfos}
+                        fileFilter={fileFilter}
+                        activeFileIndex={activeTreeFileIndex === -1 ? null : activeTreeFileIndex}
+                        viewedFiles={viewedFiles}
+                        resolvedTheme={resolvedTheme}
+                        onFilterChange={setFileFilter}
+                        onFileClick={handleTreeFileClick}
+                      />
+                    </aside>
+                    </>
+                  )}
                 </div>
               )}
-              {visibleDiffEntries.map(({ patch, info, index }) => {
-                const isViewed = viewedFiles.has(info.path);
-                const isCollapsed = manuallyCollapsedFiles.has(info.path) ||
-                  (isViewed && !expandedViewedFiles.has(info.path));
-                return (
-                  <div
-                    key={`${selection?.type === 'working' ? 'working' : diff?.branch}-${info.path}`}
-                    className="diff-file-group"
-                    data-file-path={info.path}
-                    data-file-index={index}
-                    data-file-collapsed={isCollapsed ? 'true' : 'false'}
-                    ref={(el) => { fileRefs.current[index] = el; }}
-                  >
-                    <div className="diff-file-mask" aria-hidden="true" />
-                    <div className="diff-file-card">
-                    {isCollapsed ? (
-                      <DiffFileSection
-                        patch={patch}
-                        fileInfo={info}
-                        fileComments={commentsByFile.get(info.path) ?? EMPTY_COMMENTS}
-                        activeInput={activeInput}
-                        editingComment={editingComment}
-                        onRangeSelected={handleRangeSelected}
-                        onStartEdit={handleStartEdit}
-                        onAddComment={handleAddComment}
-                        onUpdateComment={handleUpdateComment}
-                        onDeleteComment={handleDeleteComment}
-                        onCancelInput={handleCancelInput}
-                        diffStyle={diffStyle}
-                        resolvedTheme={resolvedTheme}
-                        diffTheme={activeDiffTheme}
-                        isCollapsed
-                        isViewed={isViewed}
-                        onToggleCollapsed={toggleFileCollapsed}
-                        onToggleViewed={toggleViewed}
-                      />
-                    ) : info.additions + info.deletions >= LARGE_FILE_THRESHOLD && !expandedLargeFiles.has(info.path) ? (
-                      <LargeFilePlaceholder fileInfo={info} onShow={() => expandLargeFile(info.path)} onToggleViewed={toggleViewed} />
-                    ) : (
-                      <LazyDiffFileSection index={index} fileInfo={info} renderContent={() => (
-                        <DiffFileSection
-                          patch={patch}
-                          fileInfo={info}
-                          fileComments={commentsByFile.get(info.path) ?? EMPTY_COMMENTS}
-                          activeInput={activeInput}
-                          editingComment={editingComment}
-                          onRangeSelected={handleRangeSelected}
-                          onStartEdit={handleStartEdit}
-                          onAddComment={handleAddComment}
-                          onUpdateComment={handleUpdateComment}
-                          onDeleteComment={handleDeleteComment}
-                          onCancelInput={handleCancelInput}
-                          diffStyle={diffStyle}
-                          resolvedTheme={resolvedTheme}
-                          diffTheme={activeDiffTheme}
-                            isCollapsed={false}
-                          isViewed={isViewed}
-                          onToggleCollapsed={toggleFileCollapsed}
-                          onToggleViewed={toggleViewed}
-                        />
-                      )} />
-                    )}
-                    </div>
-                  </div>
-                );
-              })}
             </div>
           </div>
         )}

@@ -501,6 +501,26 @@ index 0000000..6f7a8b9
   },
 };
 
+// Per-branch diff stats, as the real /api/stack derives them from git.
+function mockStackWithStats() {
+  return {
+    ...MOCK_STACK,
+    branches: MOCK_STACK.branches.map((branch) => {
+      const patch = MOCK_PATCHES[branch.name]?.patch;
+      if (!patch) return { ...branch, diffStats: null };
+      const lines = patch.split('\n');
+      return {
+        ...branch,
+        diffStats: {
+          files: lines.filter((l) => l.startsWith('diff --git ')).length,
+          additions: lines.filter((l) => l.startsWith('+') && !l.startsWith('+++')).length,
+          deletions: lines.filter((l) => l.startsWith('-') && !l.startsWith('---')).length,
+        },
+      };
+    }),
+  };
+}
+
 // --- Large working changes mock for performance testing ---
 
 function normalizeMockPatch(patch: string): string {
@@ -1491,12 +1511,12 @@ export function mockApi(): Plugin {
         }
 
         if (url.pathname === '/api/stack') {
-          return json(res, 200, MOCK_STACK);
+          return json(res, 200, mockStackWithStats());
         }
 
         if (url.pathname === '/api/state') {
           return json(res, 200, {
-            ...MOCK_STACK,
+            ...mockStackWithStats(),
             workingDiffKey: MOCK_WORKING_DIFF_KEY,
           });
         }
