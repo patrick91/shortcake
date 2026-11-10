@@ -219,16 +219,18 @@ body::before {
   --diffs-font-family: 'Monaspace Neon', 'JetBrains Mono', monospace;
 }
 
-/* File header background (read by buildDiffUnsafeCSS) and the rule between
-   files in the diff pane. */
+/* File header background (read by buildDiffUnsafeCSS), and the rule under
+   file headers, between files, and under the stack sidebar's search row (which
+   lines up with the file headers). Opaque so it renders the same shade over
+   any background. */
 :root {
   --shortcake-diff-header-bg: #16161c;
-  --shortcake-card-border: #2c2c32;
+  --shortcake-diff-rule: #2c2c32;
 }
 
 :root[data-theme="light"] {
   --shortcake-diff-header-bg: #ececed;
-  --shortcake-card-border: #cbcbcd;
+  --shortcake-diff-rule: #cbcbcd;
 }
 
 /* GitHub Primer diff row colors, applied when a github-* diff theme is
@@ -282,6 +284,6 @@ body::before {
    between them; each file's header sticks to the top of the diff pane. */
 .diff-file-card {
   position: relative;
-  border-bottom: 1px solid var(--shortcake-card-border);
+  border-bottom: 1px solid var(--shortcake-diff-rule);
   background: var(--color-surface);
 }

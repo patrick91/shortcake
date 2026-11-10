@@ -411,7 +411,6 @@ function buildDiffUnsafeCSS(
   collapsed = false,
 ): string {
   const headerBg = resolvedTheme === 'light' ? '#ececed' : '#16161c';
-  const headerBorder = resolvedTheme === 'light' ? 'rgba(0, 0, 0, 0.12)' : 'rgba(255, 255, 255, 0.1)';
   const headerShadow = resolvedTheme === 'light' ? '0 2px 5px rgba(0, 0, 0, 0.06)' : '0 2px 6px rgba(0, 0, 0, 0.35)';
   const hunkRule = resolvedTheme === 'light' ? 'rgba(0, 0, 0, 0.14)' : 'rgba(255, 255, 255, 0.14)';
   const tokenCSS = `
@@ -448,7 +447,7 @@ function buildDiffUnsafeCSS(
       background: var(--shortcake-diff-header-bg, ${headerBg}) !important;
       /* A collapsed file is header-only: its bottom border would double up
          with the rule under the file. */
-      border-bottom: ${collapsed ? 'none' : `1px solid ${headerBorder}`} !important;
+      border-bottom: ${collapsed ? 'none' : '1px solid var(--shortcake-diff-rule)'} !important;
       box-shadow: ${collapsed ? 'none' : headerShadow};
     }
     [data-code] {
@@ -3774,7 +3773,7 @@ function StackSidebar({
       {/* 44px including the border: lines up with the file headers (min-height
           44px in buildDiffUnsafeCSS) so both rules sit at the same height. */}
       {switcher && (
-        <div className="h-11 shrink-0 border-b border-border">{switcher}</div>
+        <div className="h-11 shrink-0 border-b border-[var(--shortcake-diff-rule)]">{switcher}</div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto py-2">
         <button
