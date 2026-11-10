@@ -3774,7 +3774,7 @@ function StackSidebar({
       {/* 44px including the border: lines up with the file headers (min-height
           44px in buildDiffUnsafeCSS) so both rules sit at the same height. */}
       {switcher && (
-        <div className="flex h-11 shrink-0 items-center border-b border-border px-2.5">{switcher}</div>
+        <div className="h-11 shrink-0 border-b border-border">{switcher}</div>
       )}
       <div className="min-h-0 flex-1 overflow-y-auto py-2">
         <button
@@ -4092,8 +4092,8 @@ type DiffSwitcherProps = {
   isGithubInfoLoading: boolean;
   githubInfo: Record<string, GitHubBranchInfo>;
   onSelect: (sel: DiffSelection) => void;
-  /** Stretch the trigger to its container (the stack sidebar). */
-  fullWidth?: boolean;
+  /** Render the trigger as the stack sidebar's full-width top row. */
+  inSidebar?: boolean;
 };
 
 const IS_MAC = typeof navigator !== 'undefined' && navigator.platform.includes('Mac');
@@ -4110,7 +4110,7 @@ function DiffSwitcher({
   isGithubInfoLoading,
   githubInfo,
   onSelect,
-  fullWidth = false,
+  inSidebar = false,
 }: DiffSwitcherProps) {
   const [query, setQuery] = useState('');
   const [activeIndex, setActiveIndex] = useState(0);
@@ -4219,20 +4219,36 @@ function DiffSwitcher({
     }
   };
 
+  const shortcutHint = (
+    <kbd className="hidden sm:inline-flex items-center gap-0.5 font-mono text-[0.58rem] font-medium text-text-muted bg-surface border border-border rounded px-1 py-px leading-none shrink-0">
+      {IS_MAC ? '⌘' : 'Ctrl'}K
+    </kbd>
+  );
+
   return (
     <Popover.Root open={open} onOpenChange={onOpenChange}>
-      <Popover.Trigger
-        className={`group flex items-center appearance-none border-none bg-transparent p-0 m-0 text-left cursor-pointer rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30 ${fullWidth ? 'w-full' : 'shrink-0'}`}
-        aria-label="Switch diff"
-      >
-        <span className={`inline-flex h-8 items-center ${fullWidth ? 'w-full' : 'w-[15rem] max-w-[40vw]'} gap-2 rounded-md border px-2.5 transition-colors duration-100 group-hover:border-border-strong group-hover:bg-surface-active group-hover:text-text-secondary ${open ? 'border-border-strong bg-surface-active text-text-secondary' : 'border-border bg-surface-hover text-text-muted'}`}>
+      {inSidebar ? (
+        // The whole row is the button: no inner box, just a hover wash.
+        <Popover.Trigger
+          className={`flex h-full w-full items-center gap-2 appearance-none border-none m-0 px-3.5 text-left cursor-pointer outline-none transition-colors duration-100 hover:bg-surface-hover hover:text-text-secondary focus-visible:bg-surface-hover focus-visible:text-text-secondary ${open ? 'bg-surface-hover text-text-secondary' : 'bg-transparent text-text-muted'}`}
+          aria-label="Switch diff"
+        >
           <SearchIcon />
           <span className="min-w-0 flex-1 truncate text-[0.8rem]">Jump to branch…</span>
-          <kbd className="hidden sm:inline-flex items-center gap-0.5 font-mono text-[0.58rem] font-medium text-text-muted bg-surface border border-border rounded px-1 py-px leading-none shrink-0">
-            {IS_MAC ? '⌘' : 'Ctrl'}K
-          </kbd>
-        </span>
-      </Popover.Trigger>
+          {shortcutHint}
+        </Popover.Trigger>
+      ) : (
+        <Popover.Trigger
+          className="group flex shrink-0 items-center appearance-none border-none bg-transparent p-0 m-0 text-left cursor-pointer rounded-md focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-accent/30"
+          aria-label="Switch diff"
+        >
+          <span className={`inline-flex h-8 w-[15rem] max-w-[40vw] items-center gap-2 rounded-md border px-2.5 transition-colors duration-100 group-hover:border-border-strong group-hover:bg-surface-active group-hover:text-text-secondary ${open ? 'border-border-strong bg-surface-active text-text-secondary' : 'border-border bg-surface-hover text-text-muted'}`}>
+            <SearchIcon />
+            <span className="min-w-0 flex-1 truncate text-[0.8rem]">Jump to branch…</span>
+            {shortcutHint}
+          </span>
+        </Popover.Trigger>
+      )}
       <Popover.Portal>
         <Popover.Positioner side="bottom" align="start" sideOffset={10} className="z-50">
           <Popover.Popup
@@ -5342,7 +5358,7 @@ export default function App() {
       isGithubInfoLoading={isGithubInfoLoading}
       githubInfo={githubInfo}
       onSelect={(sel) => { setSelection(sel); setSwitcherOpen(false); }}
-      fullWidth={isStackSidebarVisible}
+      inSidebar={isStackSidebarVisible}
     />
   );
 
