@@ -130,10 +130,15 @@ def test_stack_search_row_lines_up_with_file_header(ui_page: Page):
     bottoms = ui_page.evaluate(
         """
         () => {
-          const row = document.querySelector('[data-testid=stack-sidebar]').firstElementChild;
-          const host = [...document.querySelectorAll('.diff-file-card *')].find((el) => el.shadowRoot);
+          const sidebar = document.querySelector('[data-testid=stack-sidebar]');
+          const row = sidebar.firstElementChild;
+          const host = [...document.querySelectorAll('.diff-file-card *')]
+            .find((el) => el.shadowRoot);
           const header = host.shadowRoot.querySelector('[data-diffs-header]');
-          return [row.getBoundingClientRect().bottom, header.getBoundingClientRect().bottom];
+          return [
+            row.getBoundingClientRect().bottom,
+            header.getBoundingClientRect().bottom,
+          ];
         }
         """
     )
