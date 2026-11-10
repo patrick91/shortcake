@@ -410,7 +410,7 @@ function buildDiffUnsafeCSS(
   resolvedTheme: 'dark' | 'light',
   collapsed = false,
 ): string {
-  const headerBg = resolvedTheme === 'light' ? '#ececed' : '#16161c';
+  const headerBg = resolvedTheme === 'light' ? '#f5f5f7' : '#16161c';
   const headerShadow = resolvedTheme === 'light' ? '0 2px 5px rgba(0, 0, 0, 0.06)' : '0 2px 6px rgba(0, 0, 0, 0.35)';
   const hunkRule = resolvedTheme === 'light' ? 'rgba(0, 0, 0, 0.14)' : 'rgba(255, 255, 255, 0.14)';
   const tokenCSS = `
@@ -4227,9 +4227,9 @@ function DiffSwitcher({
   return (
     <Popover.Root open={open} onOpenChange={onOpenChange}>
       {inSidebar ? (
-        // The whole row is the button: no inner box, just a hover wash.
+        // The whole row is the button: no inner box, just the accent tint on hover.
         <Popover.Trigger
-          className={`flex h-full w-full items-center gap-2 appearance-none border-none m-0 px-3.5 text-left cursor-pointer outline-none transition-colors duration-100 hover:bg-surface-hover hover:text-text-secondary focus-visible:bg-surface-hover focus-visible:text-text-secondary ${open ? 'bg-surface-hover text-text-secondary' : 'bg-transparent text-text-muted'}`}
+          className={`flex h-full w-full items-center gap-2 appearance-none border-none m-0 px-3.5 text-left cursor-pointer outline-none transition-colors duration-100 hover:bg-accent-bg hover:text-accent focus-visible:bg-accent-bg focus-visible:text-accent ${open ? 'bg-accent-bg text-accent' : 'bg-transparent text-text-muted'}`}
           aria-label="Switch diff"
         >
           <SearchIcon />

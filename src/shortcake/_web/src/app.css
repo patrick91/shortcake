@@ -221,16 +221,17 @@ body::before {
 
 /* File header background (read by buildDiffUnsafeCSS), and the rule under
    file headers, between files, and under the stack sidebar's search row (which
-   lines up with the file headers). Opaque so it renders the same shade over
-   any background. */
+   lines up with the file headers). The rule is the opaque shade that
+   --color-border renders over the surface, so these horizontal rules match the
+   vertical dividers and the app header's bottom border over any background. */
 :root {
   --shortcake-diff-header-bg: #16161c;
-  --shortcake-diff-rule: #2c2c32;
+  --shortcake-diff-rule: #1d1d20;
 }
 
 :root[data-theme="light"] {
-  --shortcake-diff-header-bg: #ececed;
-  --shortcake-diff-rule: #cbcbcd;
+  --shortcake-diff-header-bg: #f5f5f7;
+  --shortcake-diff-rule: #ebebeb;
 }
 
 /* GitHub Primer diff row colors, applied when a github-* diff theme is
