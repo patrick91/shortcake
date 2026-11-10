@@ -3771,7 +3771,11 @@ function StackSidebar({
       className="hidden shrink-0 flex-col overflow-hidden md:flex"
       style={{ width: `${width}px` }}
     >
-      {switcher && <div className="border-b border-border p-2.5">{switcher}</div>}
+      {/* 44px including the border: lines up with the file headers (min-height
+          44px in buildDiffUnsafeCSS) so both rules sit at the same height. */}
+      {switcher && (
+        <div className="flex h-11 shrink-0 items-center border-b border-border px-2.5">{switcher}</div>
+      )}
       <div className="min-h-0 flex-1 overflow-y-auto py-2">
         <button
           type="button"
