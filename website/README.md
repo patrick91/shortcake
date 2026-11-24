@@ -14,8 +14,7 @@ Visit http://localhost:8000
 
 ### Deploy
 
-The site runs on Laravel Cloud (app `shortcake-website`, root directory
-`website/`). Every push to `main` deploys it.
+Every push to `main` deploys the site.
 
 ## Project Structure
 
@@ -26,4 +25,3 @@ The site runs on Laravel Cloud (app `shortcake-website`, root directory
 ## Learn More
 
 - [FastAPI Documentation](https://fastapi.tiangolo.com)
-- [Laravel Cloud](https://cloud.laravel.com/docs)
